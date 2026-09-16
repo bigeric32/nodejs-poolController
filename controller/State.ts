@@ -3783,8 +3783,20 @@ export class AutoSwgState extends EqState {
     public set pending(val: boolean) { this.setDataVal('pending', val); }
     public get currentPct(): number { return this.data.currentPct; }
     public set currentPct(val: number) { this.setDataVal('currentPct', val); }
+    // The number the Apply button actually sends to the chlorinator: the duty
+    // cycle needed to reach targetFc within targetDays (see
+    // AutoSwgService.computeRecommendation's recommendedPctForTarget). This is
+    // a strict generalization of maintenancePct below -- when the pool is
+    // already sitting exactly at targetFc, the two are equal.
     public get recommendedPct(): number { return this.data.recommendedPct; }
     public set recommendedPct(val: number) { this.setDataVal('recommendedPct', val); }
+    // FYI-only duty cycle that would just replace ongoing FC consumption
+    // (AutoSwgService.computeRecommendation's recommendedPct) without
+    // correcting toward targetFc. Not what Apply uses -- shown so the user can
+    // see how much of the applied recommendedPct is "catch-up" versus
+    // steady-state maintenance.
+    public get maintenancePct(): number { return this.data.maintenancePct; }
+    public set maintenancePct(val: number) { this.setDataVal('maintenancePct', val); }
     public get avgConsumptionPpmPerDay(): number { return this.data.avgConsumptionPpmPerDay; }
     public set avgConsumptionPpmPerDay(val: number) { this.setDataVal('avgConsumptionPpmPerDay', val); }
     public get projectedCurrentFc(): number { return this.data.projectedCurrentFc; }

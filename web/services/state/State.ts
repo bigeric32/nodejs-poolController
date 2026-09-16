@@ -568,7 +568,13 @@ export class StateRoute {
                 if (scheduleNote) result.rationale.unshift(scheduleNote);
                 state.autoSwg.lastCheckedAt = new Date().toISOString();
                 state.autoSwg.currentPct = schlor ? schlor.targetOutput : result.currentPct;
-                state.autoSwg.recommendedPct = result.recommendedPct;
+                // recommendedPct is what Apply sends to the chlorinator, so it needs to be
+                // the duty cycle that actually reaches targetFc within targetDays -- not
+                // just the one that treads water at the current level. Plain steady-state
+                // "match demand" is kept as maintenancePct for context only (it's also
+                // still spelled out in the rationale text below).
+                state.autoSwg.recommendedPct = result.recommendedPctForTarget;
+                state.autoSwg.maintenancePct = result.recommendedPct;
                 state.autoSwg.avgConsumptionPpmPerDay = result.avgConsumptionPpmPerDay;
                 state.autoSwg.projectedCurrentFc = result.projectedCurrentFc;
                 state.autoSwg.rationale = result.rationale;
