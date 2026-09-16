@@ -56,6 +56,7 @@ export interface AutoSwgResult {
     recommendedPct: number;          // recommended duty cycle to match ongoing demand
     recommendedPctForTarget: number; // recommended duty cycle to hit targetFc in targetDays
     avgConsumptionPpmPerDay: number;
+    avgConsumptionSummary: string;   // human-readable form of avgConsumptionPpmPerDay, e.g. for a dashboard tile
     projectedCurrentFc: number;
     mostRecentFc?: { value: number; ts: string };
     mostRecentCya?: { value: number; ts: string };
@@ -436,7 +437,11 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         weightedTotal += iv.perDay * overlapDays;
     }
     const avgPerDay = weightedTotal / params.windowDays;
-    rationale.push(`Running ${params.windowDays}-day average FC consumption: ${avgPerDay.toFixed(2)} ppm/day (from ${fcEvents.length} FC readings, ${swgEvents.length} SWG log entries).`);
+    // Captured verbatim (not just re-derived from avgConsumptionPpmPerDay) so a
+    // dashboard tile can show exactly this sentence without duplicating the
+    // windowDays/fcEvents.length/swgEvents.length formatting logic itself.
+    const avgConsumptionSummary = `Running ${params.windowDays}-day average FC consumption: ${avgPerDay.toFixed(2)} ppm/day (from ${fcEvents.length} FC readings, ${swgEvents.length} SWG log entries).`;
+    rationale.push(avgConsumptionSummary);
 
     // SWG capacity, in ppm/day at 100% duty cycle over the configured run window.
     const maxDailyPpmAtFull = (params.swgLbsPerDay * 1_000_000) / (params.gallons * 8.34);
@@ -480,6 +485,7 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         recommendedPct: roundDutyCyclePct(recommendedPct),
         recommendedPctForTarget: roundDutyCyclePct(recommendedPctForTarget),
         avgConsumptionPpmPerDay: Math.round(avgPerDay * 100) / 100,
+        avgConsumptionSummary,
         projectedCurrentFc: Math.round(projectedCurrentFc * 100) / 100,
         mostRecentFc: { value: lastFc.value, ts: lastFc.ts.toISOString() },
         mostRecentCya: cyaEvents.length ? { value: cyaEvents[cyaEvents.length - 1].value, ts: cyaEvents[cyaEvents.length - 1].ts.toISOString() } : undefined,
