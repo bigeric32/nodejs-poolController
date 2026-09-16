@@ -220,6 +220,11 @@ export class State implements IState {
             freeze: utils.makeBool(self.data.freeze),
             vacation: utils.makeBool(self.data.vacation),
             valveMode: self.data.valveMode || {},
+            // Included (like appVersionState above) so a fresh page load has the
+            // last-known AutoSwg recommendation immediately, instead of waiting
+            // for the next 'autoSwg' socket emit (which only fires after a new
+            // Check Now/Apply).
+            autoSwg: self.autoSwg.get(true) || {},
         };
     }
     public emitAllEquipmentChanges() {
@@ -3799,6 +3804,11 @@ export class AutoSwgState extends EqState {
     public set maintenancePct(val: number) { this.setDataVal('maintenancePct', val); }
     public get avgConsumptionPpmPerDay(): number { return this.data.avgConsumptionPpmPerDay; }
     public set avgConsumptionPpmPerDay(val: number) { this.setDataVal('avgConsumptionPpmPerDay', val); }
+    // Human-readable form of avgConsumptionPpmPerDay (e.g. "Running 21-day
+    // average FC consumption: 1.77 ppm/day (from 34 FC readings, 16 SWG log
+    // entries)."), used verbatim by the dashboard's Chemistry summary tile.
+    public get avgConsumptionSummary(): string { return this.data.avgConsumptionSummary; }
+    public set avgConsumptionSummary(val: string) { this.setDataVal('avgConsumptionSummary', val); }
     public get projectedCurrentFc(): number { return this.data.projectedCurrentFc; }
     public set projectedCurrentFc(val: number) { this.setDataVal('projectedCurrentFc', val); }
     public get lastAppliedAt(): string { return this.data.lastAppliedAt; }
