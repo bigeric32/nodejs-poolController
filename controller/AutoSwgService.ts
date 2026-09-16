@@ -389,6 +389,17 @@ function fetchHtml(shareCodeOrUrl: string): Promise<string> {
 // Main entry point
 // ---------------------------------------------------------------------------
 
+// The chlorinator's pool setpoint only accepts whole-number percentages. Round
+// up only when the fractional part is genuinely more than half (e.g. 19.7 ->
+// 20), and round down otherwise (e.g. 19.3 -> 19, and a tie at exactly .5
+// rounds down too) -- this avoids always ceiling small fractional overshoots
+// up a full point while still preferring to slightly over- rather than
+// under-shoot when the fraction is meaningfully large.
+function roundDutyCyclePct(pct: number): number {
+    const floor = Math.floor(pct);
+    return (pct - floor) > 0.5 ? floor + 1 : floor;
+}
+
 export async function computeRecommendation(params: AutoSwgParams, html?: string): Promise<AutoSwgResult> {
     const rationale: string[] = [];
     const swgStart = parseTimeOfDay(params.swgStartTime);
@@ -466,11 +477,8 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
 
     return {
         currentPct: latestSwg.pct,
-        // The chlorinator's pool setpoint only accepts whole-number percentages,
-        // and it's safer to slightly overshoot the target than fall short of it,
-        // so round up rather than to nearest.
-        recommendedPct: Math.ceil(recommendedPct),
-        recommendedPctForTarget: Math.ceil(recommendedPctForTarget),
+        recommendedPct: roundDutyCyclePct(recommendedPct),
+        recommendedPctForTarget: roundDutyCyclePct(recommendedPctForTarget),
         avgConsumptionPpmPerDay: Math.round(avgPerDay * 100) / 100,
         projectedCurrentFc: Math.round(projectedCurrentFc * 100) / 100,
         mostRecentFc: { value: lastFc.value, ts: lastFc.ts.toISOString() },
