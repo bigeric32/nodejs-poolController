@@ -2393,6 +2393,11 @@ export class AutoSwg extends EqItem {
     public initData() {
         if (typeof this.data.enabled === 'undefined') this.data.enabled = false;
         if (typeof this.data.chlorinatorId === 'undefined') this.data.chlorinatorId = -1;
+        // When set (>= 0), the recommendation's run window is derived from this
+        // schedule's startTime/endTime instead of the manual swgStartTime/
+        // swgStopTime fields below, so it can't drift out of sync with the
+        // pump's actual schedule. -1 means "use the manual fields".
+        if (typeof this.data.scheduleId === 'undefined') this.data.scheduleId = -1;
         if (typeof this.data.shareCode === 'undefined') this.data.shareCode = '';
         if (typeof this.data.poolName === 'undefined') this.data.poolName = '';
         if (typeof this.data.gallons === 'undefined') this.data.gallons = 12000;
@@ -2409,6 +2414,10 @@ export class AutoSwg extends EqItem {
     // The id of the sys.chlorinators record this recommendation should be applied to.
     public get chlorinatorId(): number { return this.data.chlorinatorId; }
     public set chlorinatorId(val: number) { this.setDataVal('chlorinatorId', val); }
+    // The Schedule record (see ScheduleCollection) whose startTime/endTime should
+    // be used as the SWG run window; -1 falls back to swgStartTime/swgStopTime.
+    public get scheduleId(): number { return this.data.scheduleId; }
+    public set scheduleId(val: number) { this.setDataVal('scheduleId', val); }
     // PoolMath (troublefreepool.com) share code, e.g. 'tfp-452124', or a full share URL.
     public get shareCode(): string { return this.data.shareCode; }
     public set shareCode(val: string) { this.setDataVal('shareCode', val); }

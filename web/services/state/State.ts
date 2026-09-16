@@ -27,7 +27,7 @@ import { conn } from "../../../controller/comms/Comms";
 import { config } from "../../../config/Config";
 
 import { ServiceParameterError } from "../../../controller/Errors";
-import { computeRecommendation } from "../../../controller/AutoSwgService";
+import { computeRecommendation, minutesToHHMM } from "../../../controller/AutoSwgService";
 
 export class StateRoute {
     public static initRoutes(app: express.Application) {
@@ -528,19 +528,44 @@ export class StateRoute {
             try {
                 let cfg = sys.autoSwg;
                 if (!cfg.shareCode) throw new ServiceParameterError('AutoSwg is not configured: shareCode is required.', 'autoSwg', 'shareCode', cfg.shareCode);
-                let schlor = cfg.chlorinatorId >= 0 ? state.chlorinators.getItemById(cfg.chlorinatorId, false) : undefined;
+
+                // Prefer the actual configured schedule's run window over the
+                // hand-typed swgStartTime/swgStopTime fields, so the capacity
+                // calculation can't silently drift out of sync with when the
+                // pump/SWG really runs. The pump is guaranteed to run at least
+                // as long as the SWG schedule, so the schedule's start/end
+                // times are the more reliable source of truth when one is
+                // configured (see AutoSwg.scheduleId in controller/Equipment.ts).
+                let swgStartTime = cfg.swgStartTime;
+                let swgStopTime = cfg.swgStopTime;
+                let scheduleNote: string;
+                if (cfg.scheduleId >= 0) {
+                    let sched = sys.schedules.toArray().find(s => s.id === cfg.scheduleId);
+                    if (sched && !sched.disabled && typeof sched.startTime === 'number' && typeof sched.endTime === 'number' && sched.endTime > sched.startTime) {
+                        swgStartTime = minutesToHHMM(sched.startTime);
+                        swgStopTime = minutesToHHMM(sched.endTime);
+                        scheduleNote = `Run window ${swgStartTime}-${swgStopTime} taken from schedule #${sched.id} (circuit ${sched.circuit}).`;
+                    }
+                    else {
+                        scheduleNote = `Configured schedule #${cfg.scheduleId} is missing or disabled -- falling back to the manually-entered run window (${swgStartTime}-${swgStopTime}).`;
+                    }
+                }
+
+                let chlorRecord = sys.chlorinators.toArray().find(c => c.id === cfg.chlorinatorId);
+                let schlor = chlorRecord ? state.chlorinators.getItemById(chlorRecord.id, false) : undefined;
                 let result = await computeRecommendation({
                     shareCode: cfg.shareCode,
                     poolName: cfg.poolName || undefined,
                     gallons: cfg.gallons,
                     swgLbsPerDay: cfg.swgLbsPerDay,
-                    swgStartTime: cfg.swgStartTime,
-                    swgStopTime: cfg.swgStopTime,
+                    swgStartTime: swgStartTime,
+                    swgStopTime: swgStopTime,
                     timezone: cfg.timezone,
                     windowDays: cfg.windowDays,
                     targetFc: cfg.targetFc,
                     targetDays: cfg.targetDays,
                 });
+                if (scheduleNote) result.rationale.unshift(scheduleNote);
                 state.autoSwg.lastCheckedAt = new Date().toISOString();
                 state.autoSwg.currentPct = schlor ? schlor.targetOutput : result.currentPct;
                 state.autoSwg.recommendedPct = result.recommendedPct;
