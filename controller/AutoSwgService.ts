@@ -477,5 +477,15 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     };
 }
 
+// Converts minutes-since-midnight (njsPC's Schedule.startTime/endTime unit) to
+// an 'HH:MM' string usable as swgStartTime/swgStopTime, so a recommendation can
+// be driven by an actual configured schedule instead of a hand-typed time.
+export function minutesToHHMM(minutes: number): string {
+    const m = ((Math.round(minutes) % 1440) + 1440) % 1440;
+    const hh = Math.floor(m / 60).toString().padStart(2, '0');
+    const mm = (m % 60).toString().padStart(2, '0');
+    return `${hh}:${mm}`;
+}
+
 // Exported for unit testing / offline debugging against a saved copy of the page.
 export const __testables = { parseCards, generatedBetween, dailyWindowOverlapHours, parseTimeOfDay, durationHours, fetchHtml };
