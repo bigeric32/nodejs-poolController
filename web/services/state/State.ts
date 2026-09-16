@@ -27,6 +27,7 @@ import { conn } from "../../../controller/comms/Comms";
 import { config } from "../../../config/Config";
 
 import { ServiceParameterError } from "../../../controller/Errors";
+import { computeRecommendation } from "../../../controller/AutoSwgService";
 
 export class StateRoute {
     public static initRoutes(app: express.Application) {
@@ -513,6 +514,62 @@ export class StateRoute {
                 let obj = { id: req.body.id, superChlorinate: utils.makeBool(req.body.superChlorinate) }
                 let schlor = await sys.board.chlorinator.setChlorAsync(obj);
                 return res.status(200).send(schlor.get(true));
+            }
+            catch (err) { next(err); }
+        });
+        // AutoSwg: computes (and, on confirmation, applies) a recommended SWG%
+        // from the configured PoolMath share page. See controller/AutoSwgService.ts
+        // for the calculation and controller/Equipment.ts's AutoSwg class for the
+        // persisted settings (exposed under /config/autoSwg).
+        app.get('/state/autoSwg', (req, res) => {
+            return res.status(200).send(state.autoSwg.get(true));
+        });
+        app.post('/state/autoSwg/recommend', async (req, res, next) => {
+            try {
+                let cfg = sys.autoSwg;
+                if (!cfg.shareCode) throw new ServiceParameterError('AutoSwg is not configured: shareCode is required.', 'autoSwg', 'shareCode', cfg.shareCode);
+                let schlor = cfg.chlorinatorId >= 0 ? state.chlorinators.getItemById(cfg.chlorinatorId, false) : undefined;
+                let result = await computeRecommendation({
+                    shareCode: cfg.shareCode,
+                    poolName: cfg.poolName || undefined,
+                    gallons: cfg.gallons,
+                    swgLbsPerDay: cfg.swgLbsPerDay,
+                    swgStartTime: cfg.swgStartTime,
+                    swgStopTime: cfg.swgStopTime,
+                    timezone: cfg.timezone,
+                    windowDays: cfg.windowDays,
+                    targetFc: cfg.targetFc,
+                    targetDays: cfg.targetDays,
+                });
+                state.autoSwg.lastCheckedAt = new Date().toISOString();
+                state.autoSwg.currentPct = schlor ? schlor.targetOutput : result.currentPct;
+                state.autoSwg.recommendedPct = result.recommendedPct;
+                state.autoSwg.avgConsumptionPpmPerDay = result.avgConsumptionPpmPerDay;
+                state.autoSwg.projectedCurrentFc = result.projectedCurrentFc;
+                state.autoSwg.rationale = result.rationale;
+                state.autoSwg.error = undefined;
+                state.autoSwg.pending = true;
+                state.autoSwg.emitEquipmentChange();
+                return res.status(200).send(state.autoSwg.get(true));
+            }
+            catch (err) {
+                state.autoSwg.error = err.message;
+                state.autoSwg.pending = false;
+                state.autoSwg.emitEquipmentChange();
+                next(err);
+            }
+        });
+        app.put('/state/autoSwg/apply', async (req, res, next) => {
+            try {
+                if (!state.autoSwg.pending) throw new ServiceParameterError('There is no pending AutoSwg recommendation to apply. Run /state/autoSwg/recommend first.', 'autoSwg', 'pending', state.autoSwg.pending);
+                if (sys.autoSwg.chlorinatorId < 0) throw new ServiceParameterError('AutoSwg is not configured with a target chlorinatorId.', 'autoSwg', 'chlorinatorId', sys.autoSwg.chlorinatorId);
+                let pct = typeof req.body.poolSetpoint !== 'undefined' ? parseInt(req.body.poolSetpoint, 10) : state.autoSwg.recommendedPct;
+                let schlor = await sys.board.chlorinator.setChlorAsync({ id: sys.autoSwg.chlorinatorId, poolSetpoint: pct });
+                state.autoSwg.lastAppliedAt = new Date().toISOString();
+                state.autoSwg.lastAppliedPct = pct;
+                state.autoSwg.pending = false;
+                state.autoSwg.emitEquipmentChange();
+                return res.status(200).send({ chlorinator: schlor.get(true), autoSwg: state.autoSwg.get(true) });
             }
             catch (err) { next(err); }
         });

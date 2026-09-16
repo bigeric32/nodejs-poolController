@@ -64,6 +64,7 @@ interface IPoolSystem {
     security: Security;
     alerts: Alerts;
     chemControllers: ChemControllerCollection;
+    autoSwg: AutoSwg;
     board: SystemBoard;
     updateControllerDateTimeAsync(
         hour: number,
@@ -218,6 +219,7 @@ export class PoolSystem implements IPoolSystem {
         this.chemControllers = new ChemControllerCollection(this.data, 'chemControllers');
         this.chemDosers = new ChemDoserCollection(this.data, 'chemDosers');
         this.filters = new FilterCollection(this.data, 'filters');
+        this.autoSwg = new AutoSwg(this.data, 'autoSwgConfig');
         this.board = BoardFactory.fromControllerType(this.controllerType, this);
         this.anslq25Board = MockBoardFactory.fromControllerType(this.data.anslq25.controllerType, this);
         this.virtualEquipment = virtualEquipmentManager;
@@ -445,6 +447,7 @@ export class PoolSystem implements IPoolSystem {
     public chemControllers: ChemControllerCollection;
     public chemDosers: ChemDoserCollection;
     public filters: FilterCollection;
+    public autoSwg: AutoSwg;
     public screenlogic: ScreenLogicComms;
     public appVersion: string;
     public get dirty(): boolean { return this._isDirty; }
@@ -2380,6 +2383,58 @@ export class Alerts extends EqItem {
         this.data.raw[`selector${selector}`] = Array.isArray(raw) ? [...raw] : [];
         this.hasChanged = true;
     }
+}
+export class AutoSwg extends EqItem {
+    // Singleton settings for the PoolMath-driven SWG% recommendation feature.
+    // Persisted config only -- the computed recommendation itself lives in
+    // state.autoSwg (controller/State.ts) since it is not equipment config,
+    // it is a runtime result that gets recomputed on demand.
+    public dataName = 'autoSwgConfig';
+    public initData() {
+        if (typeof this.data.enabled === 'undefined') this.data.enabled = false;
+        if (typeof this.data.chlorinatorId === 'undefined') this.data.chlorinatorId = -1;
+        if (typeof this.data.shareCode === 'undefined') this.data.shareCode = '';
+        if (typeof this.data.poolName === 'undefined') this.data.poolName = '';
+        if (typeof this.data.gallons === 'undefined') this.data.gallons = 12000;
+        if (typeof this.data.swgLbsPerDay === 'undefined') this.data.swgLbsPerDay = 1.45;
+        if (typeof this.data.swgStartTime === 'undefined') this.data.swgStartTime = '07:00';
+        if (typeof this.data.swgStopTime === 'undefined') this.data.swgStopTime = '19:00';
+        if (typeof this.data.timezone === 'undefined') this.data.timezone = 'America/New_York';
+        if (typeof this.data.windowDays === 'undefined') this.data.windowDays = 14;
+        if (typeof this.data.targetFc === 'undefined') this.data.targetFc = 9.0;
+        if (typeof this.data.targetDays === 'undefined') this.data.targetDays = 3.0;
+    }
+    public get enabled(): boolean { return this.data.enabled; }
+    public set enabled(val: boolean) { this.setDataVal('enabled', val); }
+    // The id of the sys.chlorinators record this recommendation should be applied to.
+    public get chlorinatorId(): number { return this.data.chlorinatorId; }
+    public set chlorinatorId(val: number) { this.setDataVal('chlorinatorId', val); }
+    // PoolMath (troublefreepool.com) share code, e.g. 'tfp-452124', or a full share URL.
+    public get shareCode(): string { return this.data.shareCode; }
+    public set shareCode(val: string) { this.setDataVal('shareCode', val); }
+    // Restricts parsing to this water body's section on the share page (e.g. 'Kentshire').
+    public get poolName(): string { return this.data.poolName; }
+    public set poolName(val: string) { this.setDataVal('poolName', val); }
+    public get gallons(): number { return this.data.gallons; }
+    public set gallons(val: number) { this.setDataVal('gallons', val); }
+    // SWG's rated chlorine production in lbs/day at 100% duty cycle over the run window below.
+    public get swgLbsPerDay(): number { return this.data.swgLbsPerDay; }
+    public set swgLbsPerDay(val: number) { this.setDataVal('swgLbsPerDay', val); }
+    // Daily SWG run window, e.g. '07:00' to '19:00', interpreted in `timezone`.
+    public get swgStartTime(): string { return this.data.swgStartTime; }
+    public set swgStartTime(val: string) { this.setDataVal('swgStartTime', val); }
+    public get swgStopTime(): string { return this.data.swgStopTime; }
+    public set swgStopTime(val: string) { this.setDataVal('swgStopTime', val); }
+    // IANA time zone name that swgStartTime/swgStopTime are given in.
+    public get timezone(): string { return this.data.timezone; }
+    public set timezone(val: string) { this.setDataVal('timezone', val); }
+    // Running-average window (days) used for the FC-consumption calculation.
+    public get windowDays(): number { return this.data.windowDays; }
+    public set windowDays(val: number) { this.setDataVal('windowDays', val); }
+    public get targetFc(): number { return this.data.targetFc; }
+    public set targetFc(val: number) { this.setDataVal('targetFc', val); }
+    public get targetDays(): number { return this.data.targetDays; }
+    public set targetDays(val: number) { this.setDataVal('targetDays', val); }
 }
 export class ChemControllerCollection extends EqItemCollection<ChemController> {
     constructor(data: any, name?: string) { super(data, name || "chemControllers"); }
