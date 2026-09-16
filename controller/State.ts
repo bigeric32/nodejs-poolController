@@ -451,6 +451,7 @@ export class State implements IState {
         this.comms = new CommsState();
         this.heliotrope = new Heliotrope();
         this.appVersion = new AppVersionState(this.data, 'appVersion');
+        this.autoSwg = new AutoSwgState(this.data, 'autoSwg');
         this.data.startTime = Timestamp.toISOLocal(new Date());
         versionCheck.checkGitLocal();
     }
@@ -500,6 +501,7 @@ export class State implements IState {
     public chemDosers: ChemDoserStateCollection;
     public comms: CommsState;
     public appVersion: AppVersionState;
+    public autoSwg: AutoSwgState;
 
     // This performs a safe load of the state file.  If the file gets corrupt or actually does not exist
     // it will not break the overall system and allow hardened recovery.
@@ -553,6 +555,7 @@ interface IState {
     chemControllers: ChemControllerStateCollection;
     filters: FilterStateCollection;
     comms: CommsState;
+    autoSwg: AutoSwgState;
 }
 export interface ICircuitState {
     id: number;
@@ -3768,6 +3771,34 @@ export class AppVersionState extends EqState {
     public set gitLocalBranch(val: string) { this.data.gitLocalBranch = val; }
     public get gitLocalCommit() { return this.data.gitLocalCommit; }
     public set gitLocalCommit(val: string) { this.data.gitLocalCommit = val; }
+}
+export class AutoSwgState extends EqState {
+    // Runtime result of the last PoolMath-driven SWG% calculation. Not persisted
+    // to poolConfig.json (it's a computed value, recomputed on every "Check Now"),
+    // but does live in state.data so it emits over the socket and survives until
+    // the next check or process restart clears it.
+    public get lastCheckedAt(): string { return this.data.lastCheckedAt; }
+    public set lastCheckedAt(val: string) { this.setDataVal('lastCheckedAt', val); }
+    public get pending(): boolean { return this.data.pending; }
+    public set pending(val: boolean) { this.setDataVal('pending', val); }
+    public get currentPct(): number { return this.data.currentPct; }
+    public set currentPct(val: number) { this.setDataVal('currentPct', val); }
+    public get recommendedPct(): number { return this.data.recommendedPct; }
+    public set recommendedPct(val: number) { this.setDataVal('recommendedPct', val); }
+    public get avgConsumptionPpmPerDay(): number { return this.data.avgConsumptionPpmPerDay; }
+    public set avgConsumptionPpmPerDay(val: number) { this.setDataVal('avgConsumptionPpmPerDay', val); }
+    public get projectedCurrentFc(): number { return this.data.projectedCurrentFc; }
+    public set projectedCurrentFc(val: number) { this.setDataVal('projectedCurrentFc', val); }
+    public get lastAppliedAt(): string { return this.data.lastAppliedAt; }
+    public set lastAppliedAt(val: string) { this.setDataVal('lastAppliedAt', val); }
+    public get lastAppliedPct(): number { return this.data.lastAppliedPct; }
+    public set lastAppliedPct(val: number) { this.setDataVal('lastAppliedPct', val); }
+    // Free-form breakdown lines describing how the recommendation was derived,
+    // shown in the UI so the user can sanity-check the number before applying it.
+    public get rationale(): string[] { return this.data.rationale; }
+    public set rationale(val: string[]) { this.setDataVal('rationale', val); }
+    public get error(): string { return this.data.error; }
+    public set error(val: string) { this.setDataVal('error', val); }
 }
 export class CommsState {
     public keepAlives: number;

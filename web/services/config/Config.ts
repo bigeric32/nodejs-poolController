@@ -1013,6 +1013,19 @@ export class ConfigRoute {
             }
             catch (err) { next(err); }
         });
+        // AutoSwg: persisted settings for the PoolMath-driven SWG% recommendation
+        // feature. The computed recommendation itself is runtime state, exposed
+        // under /state/autoSwg/* (see web/services/state/State.ts).
+        app.get('/config/autoSwg', (req, res) => {
+            return res.status(200).send(sys.autoSwg.get(true));
+        });
+        app.put('/config/autoSwg', async (req, res, next) => {
+            try {
+                sys.autoSwg.set(req.body);
+                return res.status(200).send(sys.autoSwg.get(true));
+            }
+            catch (err) { next(err); }
+        });
         app.put('/config/heater', async (req, res, next) => {
             try {
                 let heater = await sys.board.heaters.setHeaterAsync(req.body);
