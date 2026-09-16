@@ -466,8 +466,11 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
 
     return {
         currentPct: latestSwg.pct,
-        recommendedPct: Math.round(recommendedPct),
-        recommendedPctForTarget: Math.round(recommendedPctForTarget),
+        // The chlorinator's pool setpoint only accepts whole-number percentages,
+        // and it's safer to slightly overshoot the target than fall short of it,
+        // so round up rather than to nearest.
+        recommendedPct: Math.ceil(recommendedPct),
+        recommendedPctForTarget: Math.ceil(recommendedPctForTarget),
         avgConsumptionPpmPerDay: Math.round(avgPerDay * 100) / 100,
         projectedCurrentFc: Math.round(projectedCurrentFc * 100) / 100,
         mostRecentFc: { value: lastFc.value, ts: lastFc.ts.toISOString() },
