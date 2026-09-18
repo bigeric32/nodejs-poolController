@@ -3806,7 +3806,10 @@ export class AutoSwgState extends EqState {
     public set avgConsumptionPpmPerDay(val: number) { this.setDataVal('avgConsumptionPpmPerDay', val); }
     // Human-readable form of avgConsumptionPpmPerDay (e.g. "Running 21-day
     // average FC consumption: 1.77 ppm/day (from 34 FC readings, 16 SWG log
-    // entries)."), used verbatim by the dashboard's Chemistry summary tile.
+    // entries)."), used verbatim by the dashboard's Chemistry summary tile. When the
+    // window had to be extended back to include 3 FC readings, the sentence says so,
+    // e.g. "Running 23.4-day average FC consumption (window extended back from 14
+    // days because it held fewer than 3 FC readings): ...".
     public get avgConsumptionSummary(): string { return this.data.avgConsumptionSummary; }
     public set avgConsumptionSummary(val: string) { this.setDataVal('avgConsumptionSummary', val); }
     public get projectedCurrentFc(): number { return this.data.projectedCurrentFc; }

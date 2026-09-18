@@ -2438,7 +2438,9 @@ export class AutoSwg extends EqItem {
     // IANA time zone name that swgStartTime/swgStopTime are given in.
     public get timezone(): string { return this.data.timezone; }
     public set timezone(val: string) { this.setDataVal('timezone', val); }
-    // Running-average window (days) used for the FC-consumption calculation.
+    // Running-average window (days) used for the FC-consumption calculation. The
+    // window ends at calculation time; if it holds fewer than 3 FC readings it is
+    // extended back to the third-most-recent reading (and the summary says so).
     public get windowDays(): number { return this.data.windowDays; }
     public set windowDays(val: number) { this.setDataVal('windowDays', val); }
     public get targetFc(): number { return this.data.targetFc; }

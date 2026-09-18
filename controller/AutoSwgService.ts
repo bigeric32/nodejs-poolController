@@ -33,7 +33,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 // readings (t1,fc1)->(t2,fc2): generated_ppm = integral of the SWG rate over
 // [t1,t2]; consumed_ppm = generated_ppm - (fc2-fc1); consumed_ppm_per_day =
 // consumed_ppm / (t2-t1 in days). The running N-day figure is time-weighted
-// over the last N days (clipping any interval that only partially overlaps).
+// over the last N days, ending at calculation time (clipping any interval that
+// only partially overlaps) and divided by the days actually spanned by
+// consecutive FC readings. If that window holds fewer than 3 FC readings it is
+// extended back to the third-most-recent reading, and the summary line says so.
 
 import * as https from 'https';
 import { logger } from '../logger/Logger';
@@ -67,7 +70,11 @@ export interface AutoSwgResult {
 interface FcEvent { ts: Date; value: number; }
 interface SwgEvent { ts: Date; ppmPerDay: number; hrs: number; pct: number; }
 
-const SWG_PATTERN = /([\d.]+)\s*ppm\s*FC[\s\S]*?SWG\s*([\d.]+)\s*hrs?\s*@\s*([\d.]+)\s*%/i;
+// The running-average window is extended back in time, if needed, until it holds
+// at least this many FC readings.
+const MIN_FC_READINGS_IN_WINDOW = 3;
+
+const SWG_PATTERN =/([\d.]+)\s*ppm\s*FC[\s\S]*?SWG\s*([\d.]+)\s*hrs?\s*@\s*([\d.]+)\s*%/i;
 
 // ---------------------------------------------------------------------------
 // Minimal, dependency-free HTML helpers
@@ -428,12 +435,12 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
 
     const rightNow = new Date();
     let windowStart = new Date(rightNow.getTime() - params.windowDays * 86400000);
-    // A consumption rate needs at least two FC readings. If the configured window
-    // (which ends at calculation time) holds fewer, reach back to the
-    // second-most-recent reading instead.
+    // Require at least MIN_FC_READINGS_IN_WINDOW readings so the average spans
+    // more than a single interval. If the configured window (which ends at
+    // calculation time) holds fewer, reach back to the Nth-most-recent reading.
     const readingsInWindow = fcEvents.filter(e => e.ts.getTime() >= windowStart.getTime() && e.ts.getTime() <= rightNow.getTime()).length;
-    const windowExtended = readingsInWindow < 2 && fcEvents.length >= 2;
-    if (windowExtended) windowStart = fcEvents[fcEvents.length - 2].ts;
+    const windowExtended = readingsInWindow < MIN_FC_READINGS_IN_WINDOW && fcEvents.length >= MIN_FC_READINGS_IN_WINDOW;
+    if (windowExtended) windowStart = fcEvents[fcEvents.length - MIN_FC_READINGS_IN_WINDOW].ts;
     const windowDaysUsed = windowExtended ? (rightNow.getTime() - windowStart.getTime()) / 86400000 : params.windowDays;
     let weightedTotal = 0;
     let coveredDays = 0;
@@ -454,7 +461,7 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     // windowDays/fcEvents.length/swgEvents.length formatting logic itself.
     const windowLabel = windowExtended ? windowDaysUsed.toFixed(1) : `${params.windowDays}`;
     const extensionNote = windowExtended
-        ? ` (window extended back from ${params.windowDays} days because it held fewer than 2 FC readings)`
+        ? ` (window extended back from ${params.windowDays} days because it held fewer than ${MIN_FC_READINGS_IN_WINDOW} FC readings)`
         : '';
     const avgConsumptionSummary = `Running ${windowLabel}-day average FC consumption${extensionNote}: ${avgPerDay.toFixed(2)} ppm/day (from ${fcEvents.length} FC readings, ${swgEvents.length} SWG log entries).`;
     rationale.push(avgConsumptionSummary);
