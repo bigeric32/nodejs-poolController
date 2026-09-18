@@ -18,7 +18,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 import * as express from "express";
 import * as extend from "extend";
 
-import { state, ICircuitState, LightGroupState, ICircuitGroupState, ChemicalDoseState } from "../../../controller/State";
+import { state, ICircuitState, LightGroupState, ICircuitGroupState, ChemicalDoseState, ChlorinatorState } from "../../../controller/State";
 import { sys } from "../../../controller/Equipment";
 import { utils } from '../../../controller/Constants';
 import { logger } from "../../../logger/Logger";
@@ -27,10 +27,75 @@ import { conn } from "../../../controller/comms/Comms";
 import { config } from "../../../config/Config";
 
 import { ServiceParameterError } from "../../../controller/Errors";
-import { computeRecommendation, minutesToHHMM } from "../../../controller/AutoSwgService";
+import { computeRecommendation, computeSwgCapacity, minutesToHHMM } from "../../../controller/AutoSwgService";
+import { appendAutoSwgHistory, readAutoSwgHistory, toLocalSwgEntries } from "../../../controller/AutoSwgHistory";
+
+// Prefer the actual configured schedule's run window over the hand-typed
+// swgStartTime/swgStopTime fields, so the capacity calculation can't silently drift
+// out of sync with when the pump/SWG really runs. The pump is guaranteed to run at
+// least as long as the SWG schedule, so the schedule's start/end times are the more
+// reliable source of truth when one is configured (see AutoSwg.scheduleId in
+// controller/Equipment.ts).
+function resolveAutoSwgRunWindow(cfg: typeof sys.autoSwg): { swgStartTime: string; swgStopTime: string; scheduleNote?: string } {
+    let swgStartTime = cfg.swgStartTime;
+    let swgStopTime = cfg.swgStopTime;
+    let scheduleNote: string;
+    if (cfg.scheduleId >= 0) {
+        let sched = sys.schedules.toArray().find(s => s.id === cfg.scheduleId);
+        if (sched && !sched.disabled && typeof sched.startTime === 'number' && typeof sched.endTime === 'number' && sched.endTime > sched.startTime) {
+            swgStartTime = minutesToHHMM(sched.startTime);
+            swgStopTime = minutesToHHMM(sched.endTime);
+            scheduleNote = `Run window ${swgStartTime}-${swgStopTime} taken from schedule #${sched.id} (circuit ${sched.circuit}).`;
+        }
+        else {
+            scheduleNote = `Configured schedule #${cfg.scheduleId} is missing or disabled -- falling back to the manually-entered run window (${swgStartTime}-${swgStopTime}).`;
+        }
+    }
+    return { swgStartTime, swgStopTime, scheduleNote };
+}
+
+// Set just before the AutoSwg apply route changes the setpoint, so the change it
+// causes (which the setpoint hook below would otherwise see, possibly again when
+// the panel echoes it back) isn't also logged as a manual one.
+let autoSwgApplyInFlight: { pct: number; at: number } | undefined;
+const AUTO_SWG_APPLY_ECHO_MS = 2 * 60 * 1000;
+
+// Logs a change to the AutoSwg chlorinator's pool setpoint that didn't come from
+// the apply route (API, socket, MQTT, or a panel message).
+function logManualSwgChange(previousPct: number, pct: number) {
+    try {
+        let cfg = sys.autoSwg;
+        let win = resolveAutoSwgRunWindow(cfg);
+        let capacity: { ppmPerDayAtFull: number; hours: number };
+        try { capacity = computeSwgCapacity({ gallons: cfg.gallons, swgLbsPerDay: cfg.swgLbsPerDay, swgStartTime: win.swgStartTime, swgStopTime: win.swgStopTime }); }
+        catch (err) { logger.warn(`AutoSwg: logging a manual SWG % change without a ppm/day figure: ${err.message}`); }
+        appendAutoSwgHistory({
+            source: 'manual',
+            appliedAt: new Date().toISOString(),
+            appliedPct: pct,
+            previousPct: previousPct,
+            ppmPerDay: capacity && isFinite(capacity.ppmPerDayAtFull) ? Math.round(capacity.ppmPerDayAtFull * pct) / 100 : undefined,
+            hrs: capacity ? capacity.hours : undefined,
+            inputs: {
+                gallons: cfg.gallons,
+                swgLbsPerDay: cfg.swgLbsPerDay,
+                swgStartTime: win.swgStartTime,
+                swgStopTime: win.swgStopTime,
+                timezone: cfg.timezone,
+                runWindowNote: win.scheduleNote,
+            },
+        });
+    }
+    catch (err) { logger.error(`AutoSwg: SWG % changed to ${pct}% but could not write the history log: ${err.message}`); }
+}
 
 export class StateRoute {
     public static initRoutes(app: express.Application) {
+        ChlorinatorState.onPoolSetpointChanged = (chlor, previous, current) => {
+            if (sys.autoSwg.chlorinatorId !== chlor.id) return;
+            if (autoSwgApplyInFlight && autoSwgApplyInFlight.pct === current && Date.now() - autoSwgApplyInFlight.at < AUTO_SWG_APPLY_ECHO_MS) return;
+            logManualSwgChange(previous, current);
+        };
         app.get('/state/rs485Port/:id', async (req, res, next) => {
             try {
                 let portId = parseInt(req.params.id, 10);
@@ -524,32 +589,18 @@ export class StateRoute {
         app.get('/state/autoSwg', (req, res) => {
             return res.status(200).send(state.autoSwg.get(true));
         });
+        // SWG % changes -- applied recommendations (with the inputs/outputs behind
+        // each) and manual changes -- oldest first; kept for 18 months. See
+        // controller/AutoSwgHistory.ts.
+        app.get('/state/autoSwg/history', (req, res) => {
+            return res.status(200).send(readAutoSwgHistory());
+        });
         app.post('/state/autoSwg/recommend', async (req, res, next) => {
             try {
                 let cfg = sys.autoSwg;
                 if (!cfg.shareCode) throw new ServiceParameterError('AutoSwg is not configured: shareCode is required.', 'autoSwg', 'shareCode', cfg.shareCode);
 
-                // Prefer the actual configured schedule's run window over the
-                // hand-typed swgStartTime/swgStopTime fields, so the capacity
-                // calculation can't silently drift out of sync with when the
-                // pump/SWG really runs. The pump is guaranteed to run at least
-                // as long as the SWG schedule, so the schedule's start/end
-                // times are the more reliable source of truth when one is
-                // configured (see AutoSwg.scheduleId in controller/Equipment.ts).
-                let swgStartTime = cfg.swgStartTime;
-                let swgStopTime = cfg.swgStopTime;
-                let scheduleNote: string;
-                if (cfg.scheduleId >= 0) {
-                    let sched = sys.schedules.toArray().find(s => s.id === cfg.scheduleId);
-                    if (sched && !sched.disabled && typeof sched.startTime === 'number' && typeof sched.endTime === 'number' && sched.endTime > sched.startTime) {
-                        swgStartTime = minutesToHHMM(sched.startTime);
-                        swgStopTime = minutesToHHMM(sched.endTime);
-                        scheduleNote = `Run window ${swgStartTime}-${swgStopTime} taken from schedule #${sched.id} (circuit ${sched.circuit}).`;
-                    }
-                    else {
-                        scheduleNote = `Configured schedule #${cfg.scheduleId} is missing or disabled -- falling back to the manually-entered run window (${swgStartTime}-${swgStopTime}).`;
-                    }
-                }
+                let { swgStartTime, swgStopTime, scheduleNote } = resolveAutoSwgRunWindow(cfg);
 
                 let chlorRecord = sys.chlorinators.toArray().find(c => c.id === cfg.chlorinatorId);
                 let schlor = chlorRecord ? state.chlorinators.getItemById(chlorRecord.id, false) : undefined;
@@ -564,7 +615,7 @@ export class StateRoute {
                     windowDays: cfg.windowDays,
                     targetFc: cfg.targetFc,
                     targetDays: cfg.targetDays,
-                });
+                }, undefined, toLocalSwgEntries(readAutoSwgHistory()));
                 if (scheduleNote) result.rationale.unshift(scheduleNote);
                 state.autoSwg.lastCheckedAt = new Date().toISOString();
                 state.autoSwg.currentPct = schlor ? schlor.targetOutput : result.currentPct;
@@ -580,6 +631,17 @@ export class StateRoute {
                 state.autoSwg.avgWindowStart = result.avgWindowStart;
                 state.autoSwg.avgWindowEnd = result.avgWindowEnd;
                 state.autoSwg.projectedCurrentFc = result.projectedCurrentFc;
+                state.autoSwg.details = {
+                    inputs: result.inputs,
+                    swgCapacityPpmPerDay: result.swgCapacityPpmPerDay,
+                    swgRunHours: result.swgRunHours,
+                    avgWindowExtended: result.avgWindowExtended,
+                    mostRecentFc: result.mostRecentFc,
+                    mostRecentCya: result.mostRecentCya,
+                    mostRecentSwg: result.mostRecentSwg,
+                    localSwgEntriesUsed: result.localSwgEntriesUsed,
+                    poolMathSwgEntriesReplaced: result.poolMathSwgEntriesReplaced,
+                };
                 state.autoSwg.rationale = result.rationale;
                 state.autoSwg.error = undefined;
                 state.autoSwg.pending = true;
@@ -598,9 +660,35 @@ export class StateRoute {
                 if (!state.autoSwg.pending) throw new ServiceParameterError('There is no pending AutoSwg recommendation to apply. Run /state/autoSwg/recommend first.', 'autoSwg', 'pending', state.autoSwg.pending);
                 if (sys.autoSwg.chlorinatorId < 0) throw new ServiceParameterError('AutoSwg is not configured with a target chlorinatorId.', 'autoSwg', 'chlorinatorId', sys.autoSwg.chlorinatorId);
                 let pct = typeof req.body.poolSetpoint !== 'undefined' ? parseInt(req.body.poolSetpoint, 10) : state.autoSwg.recommendedPct;
-                let schlor = await sys.board.chlorinator.setChlorAsync({ id: sys.autoSwg.chlorinatorId, poolSetpoint: pct });
+                autoSwgApplyInFlight = { pct: pct, at: Date.now() };
+                let schlor: ChlorinatorState;
+                try { schlor = await sys.board.chlorinator.setChlorAsync({ id: sys.autoSwg.chlorinatorId, poolSetpoint: pct }); }
+                catch (err) { autoSwgApplyInFlight = undefined; throw err; }
                 state.autoSwg.lastAppliedAt = new Date().toISOString();
                 state.autoSwg.lastAppliedPct = pct;
+                // Log the inputs and outputs behind this change. The setpoint is already
+                // on the chlorinator, so a logging failure must not fail the request.
+                try {
+                    let details = state.autoSwg.details || {};
+                    let capacity: number = details.swgCapacityPpmPerDay;
+                    let stateSnapshot = Object.assign({}, state.autoSwg.get(true));
+                    delete stateSnapshot.details;
+                    let calcOutputs = Object.assign({}, details);
+                    delete calcOutputs.inputs; // recorded separately as `inputs`
+                    let outputs = Object.assign(stateSnapshot, calcOutputs);
+                    appendAutoSwgHistory({
+                        source: 'auto',
+                        appliedAt: state.autoSwg.lastAppliedAt,
+                        appliedPct: pct,
+                        recommendedPct: state.autoSwg.recommendedPct,
+                        previousPct: state.autoSwg.currentPct,
+                        ppmPerDay: typeof capacity === 'number' ? Math.round(capacity * pct) / 100 : undefined,
+                        hrs: details.swgRunHours,
+                        inputs: details.inputs,
+                        outputs: outputs,
+                    });
+                }
+                catch (err) { logger.error(`AutoSwg: applied ${pct}% but could not write the history log: ${err.message}`); }
                 state.autoSwg.pending = false;
                 state.autoSwg.emitEquipmentChange();
                 return res.status(200).send({ chlorinator: schlor.get(true), autoSwg: state.autoSwg.get(true) });

@@ -37,6 +37,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 // only partially overlaps) and divided by the days actually spanned by
 // consecutive FC readings. If that window holds fewer than 3 FC readings it is
 // extended back to the third-most-recent reading, and the summary line says so.
+//
+// SWG log entries come from two places: PoolMath's log and the local SWG % change
+// log (applied recommendations and manual setpoint changes; see AutoSwgHistory.ts).
+// The local log takes precedence: a PoolMath SWG entry within an hour of a local
+// entry is ignored, while PoolMath entries with no local counterpart are used.
 
 import * as https from 'https';
 import { logger } from '../logger/Logger';
@@ -62,21 +67,38 @@ export interface AutoSwgResult {
     avgConsumptionSummary: string;   // human-readable form of avgConsumptionPpmPerDay, e.g. for a dashboard tile
     avgWindowStart: string;          // ISO start of the running-average window actually used (after any extension)
     avgWindowEnd: string;            // ISO end of that window (calculation time)
+    avgWindowExtended: boolean;      // true if the window was extended back to include MIN_FC_READINGS_IN_WINDOW readings
     projectedCurrentFc: number;
     mostRecentFc?: { value: number; ts: string };
     mostRecentCya?: { value: number; ts: string };
-    mostRecentSwg?: { ppmPerDay: number; hrs: number; pct: number; ts: string };
+    mostRecentSwg?: { ppmPerDay: number; hrs: number; pct: number; ts: string; source: SwgSource };
+    inputs: AutoSwgParams;           // the parameters this result was computed from
+    swgCapacityPpmPerDay: number;    // ppm/day at 100% duty cycle over swgRunHours
+    swgRunHours: number;             // length of the daily run window used
+    localSwgEntriesUsed: number;     // entries from the local SWG % change log that fed the calculation
+    poolMathSwgEntriesReplaced: number; // PoolMath SWG entries ignored because a local entry was within an hour
     rationale: string[];
 }
 
+// A past SWG % change (an applied recommendation or a manual change), as recorded
+// in the local history log (see AutoSwgHistory.ts). Shaped like a PoolMath SWG log
+// entry so the two can be merged into a single step function of SWG rate over time.
+export interface LocalSwgEntry { ts: string; ppmPerDay: number; hrs: number; pct: number; }
+
+type SwgSource = 'poolmath' | 'local';
+
 interface FcEvent { ts: Date; value: number; }
-interface SwgEvent { ts: Date; ppmPerDay: number; hrs: number; pct: number; }
+interface SwgEvent { ts: Date; ppmPerDay: number; hrs: number; pct: number; source: SwgSource; }
+
+// A PoolMath SWG entry within this long of a local entry is treated as the same
+// event, and the local entry wins.
+const LOCAL_SWG_MATCH_MS = 60 * 60 * 1000;
 
 // The running-average window is extended back in time, if needed, until it holds
 // at least this many FC readings.
 const MIN_FC_READINGS_IN_WINDOW = 3;
 
-const SWG_PATTERN =/([\d.]+)\s*ppm\s*FC[\s\S]*?SWG\s*([\d.]+)\s*hrs?\s*@\s*([\d.]+)\s*%/i;
+const SWG_PATTERN = /([\d.]+)\s*ppm\s*FC[\s\S]*?SWG\s*([\d.]+)\s*hrs?\s*@\s*([\d.]+)\s*%/i;
 
 // ---------------------------------------------------------------------------
 // Minimal, dependency-free HTML helpers
@@ -209,6 +231,7 @@ function parseCards(html: string, poolHeading?: string): ParsedCards {
                 ppmPerDay: parseFloat(swgMatch[1]),
                 hrs: parseFloat(swgMatch[2]),
                 pct: parseFloat(swgMatch[3]),
+                source: 'poolmath',
             });
             continue;
         }
@@ -246,6 +269,21 @@ function parseCards(html: string, poolHeading?: string): ParsedCards {
         cyaEvents: sortDedupe(cyaEvents),
         ccEvents: sortDedupe(ccEvents),
     };
+}
+
+// Combines PoolMath SWG entries with locally logged applied recommendations. Local
+// entries always count; a PoolMath entry is dropped only if a local entry lies
+// within LOCAL_SWG_MATCH_MS of it (i.e. they describe the same change).
+function mergeSwgEvents(poolMath: SwgEvent[], local: LocalSwgEntry[]): { events: SwgEvent[]; replaced: number; localUsed: number } {
+    const localEvents: SwgEvent[] = [];
+    for (const l of local) {
+        const ts = new Date(l.ts);
+        if (isNaN(ts.getTime()) || !isFinite(l.ppmPerDay) || !isFinite(l.hrs) || !isFinite(l.pct)) continue;
+        localEvents.push({ ts, ppmPerDay: l.ppmPerDay, hrs: l.hrs, pct: l.pct, source: 'local' });
+    }
+    const kept = poolMath.filter(p => !localEvents.some(l => Math.abs(l.ts.getTime() - p.ts.getTime()) <= LOCAL_SWG_MATCH_MS));
+    const events = [...kept, ...localEvents].sort((a, b) => a.ts.getTime() - b.ts.getTime());
+    return { events, replaced: poolMath.length - kept.length, localUsed: localEvents.length };
 }
 
 function swgRateAt(swgEvents: SwgEvent[], t: Date): number {
@@ -422,17 +460,34 @@ function roundDutyCyclePct(pct: number): number {
     return (pct - floor) > 0.5 ? floor + 1 : floor;
 }
 
-export async function computeRecommendation(params: AutoSwgParams, html?: string): Promise<AutoSwgResult> {
+// ppm/day the SWG can add at 100% duty cycle over a `swgHours`-long daily run
+// window. swgLbsPerDay is the manufacturer's rated output over a full 24h day, so
+// only swgHours/24 of it is achievable within the window.
+function ppmPerDayAtFullDuty(gallons: number, swgLbsPerDay: number, swgHours: number): number {
+    const ratedPpmPer24h = (swgLbsPerDay * 1_000_000) / (gallons * 8.34);
+    return ratedPpmPer24h * (swgHours / 24);
+}
+
+// SWG capacity for a configured run window, e.g. to convert a logged SWG % into a
+// PoolMath-style "X ppm FC per day" figure. Throws if a time can't be parsed.
+export function computeSwgCapacity(p: { gallons: number; swgLbsPerDay: number; swgStartTime: string; swgStopTime: string }): { ppmPerDayAtFull: number; hours: number } {
+    const hours = durationHours(parseTimeOfDay(p.swgStartTime), parseTimeOfDay(p.swgStopTime));
+    return { ppmPerDayAtFull: ppmPerDayAtFullDuty(p.gallons, p.swgLbsPerDay, hours), hours };
+}
+
+export async function computeRecommendation(params: AutoSwgParams, html?: string, localSwgEntries: LocalSwgEntry[] = []): Promise<AutoSwgResult> {
     const rationale: string[] = [];
     const swgStart = parseTimeOfDay(params.swgStartTime);
     const swgStop = parseTimeOfDay(params.swgStopTime);
     const swgHours = durationHours(swgStart, swgStop);
 
     const pageHtml = html || await fetchHtml(params.shareCode);
-    const { fcEvents, swgEvents, cyaEvents } = parseCards(pageHtml, params.poolName);
+    const { fcEvents, swgEvents: poolMathSwgEvents, cyaEvents } = parseCards(pageHtml, params.poolName);
 
     if (fcEvents.length === 0) throw new Error('No FC test readings found on the PoolMath page. The page markup may have changed, or the share code/pool name may be wrong.');
-    if (swgEvents.length === 0) throw new Error('No SWG log entries found on the PoolMath page. The page markup may have changed, or the share code/pool name may be wrong.');
+    const swgMerge = mergeSwgEvents(poolMathSwgEvents, localSwgEntries);
+    const swgEvents = swgMerge.events;
+    if (swgEvents.length === 0) throw new Error('No SWG log entries found on the PoolMath page or in the local SWG % change log. The page markup may have changed, or the share code/pool name may be wrong.');
 
     // Time-weighted running average FC consumption over the last windowDays.
     const intervals: { t1: Date; t2: Date; perDay: number }[] = [];
@@ -478,14 +533,16 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     const extensionNote = windowExtended
         ? `; window extended back from ${params.windowDays} days because it held fewer than ${MIN_FC_READINGS_IN_WINDOW} FC readings`
         : '';
-    const avgConsumptionSummary = `Running ${windowLabel}-day average FC consumption (${windowRange}${extensionNote}):${avgPerDay.toFixed(2)} ppm/day (from ${fcEvents.length} FC readings, ${swgEvents.length} SWG log entries).`;
+    const avgConsumptionSummary = `Running ${windowLabel}-day average FC consumption (${windowRange}${extensionNote}): ${avgPerDay.toFixed(2)} ppm/day (from ${fcEvents.length} FC readings, ${swgEvents.length} SWG log entries).`;
     rationale.push(avgConsumptionSummary);
+    if (swgMerge.localUsed > 0) {
+        rationale.push(`SWG entries: ${swgMerge.localUsed} from the local SWG % change log,${poolMathSwgEvents.length - swgMerge.replaced} from PoolMath; ${swgMerge.replaced} PoolMath ${swgMerge.replaced === 1 ? 'entry' : 'entries'} within 1h of a local entry ignored in favor of the local one.`);
+    }
 
     // SWG capacity. swgLbsPerDay is the manufacturer's rated output at 100% duty
     // over a full 24h day; scale it down to what's actually achievable at 100%
     // duty within the shorter configured run window.
-    const ratedPpmPer24h = (params.swgLbsPerDay * 1_000_000) / (params.gallons * 8.34);
-    const maxDailyPpmAtFull = ratedPpmPer24h * (swgHours / 24);
+    const maxDailyPpmAtFull = ppmPerDayAtFullDuty(params.gallons, params.swgLbsPerDay, swgHours);
     rationale.push(`SWG capacity: ${params.swgLbsPerDay} lbs/day (rated over 24h) -> ${maxDailyPpmAtFull.toFixed(2)} ppm/day at 100% duty cycle over ${swgHours}h/day (${params.swgStartTime}-${params.swgStopTime} ${params.timezone}).`);
 
     let recommendedPct = 0;
@@ -527,10 +584,16 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         avgConsumptionSummary,
         avgWindowStart: windowStart.toISOString(),
         avgWindowEnd: rightNow.toISOString(),
+        avgWindowExtended: windowExtended,
         projectedCurrentFc: Math.round(projectedCurrentFc * 100) / 100,
         mostRecentFc: { value: lastFc.value, ts: lastFc.ts.toISOString() },
         mostRecentCya: cyaEvents.length ? { value: cyaEvents[cyaEvents.length - 1].value, ts: cyaEvents[cyaEvents.length - 1].ts.toISOString() } : undefined,
-        mostRecentSwg: { ppmPerDay: latestSwg.ppmPerDay, hrs: latestSwg.hrs, pct: latestSwg.pct, ts: latestSwg.ts.toISOString() },
+        mostRecentSwg: { ppmPerDay: latestSwg.ppmPerDay, hrs: latestSwg.hrs, pct: latestSwg.pct, ts: latestSwg.ts.toISOString(), source: latestSwg.source },
+        inputs: params,
+        swgCapacityPpmPerDay: maxDailyPpmAtFull,
+        swgRunHours: swgHours,
+        localSwgEntriesUsed: swgMerge.localUsed,
+        poolMathSwgEntriesReplaced: swgMerge.replaced,
         rationale,
     };
 }
