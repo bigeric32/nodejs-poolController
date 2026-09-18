@@ -577,6 +577,8 @@ export class StateRoute {
                 state.autoSwg.maintenancePct = result.recommendedPct;
                 state.autoSwg.avgConsumptionPpmPerDay = result.avgConsumptionPpmPerDay;
                 state.autoSwg.avgConsumptionSummary = result.avgConsumptionSummary;
+                state.autoSwg.avgWindowStart = result.avgWindowStart;
+                state.autoSwg.avgWindowEnd = result.avgWindowEnd;
                 state.autoSwg.projectedCurrentFc = result.projectedCurrentFc;
                 state.autoSwg.rationale = result.rationale;
                 state.autoSwg.error = undefined;
