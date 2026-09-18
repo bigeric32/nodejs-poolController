@@ -2375,8 +2375,19 @@ export class ChlorinatorState extends EqState {
             this.hasChanged = true;
         }
     }
+    // Called after the pool setpoint (the SWG %) changes from one number to another,
+    // whatever the source (API, socket, MQTT, or a panel message). Registered by
+    // the AutoSwg routes so direct changes get logged.
+    public static onPoolSetpointChanged: (chlor: ChlorinatorState, previous: number, current: number) => void;
     public get poolSetpoint(): number { return this.data.poolSetpoint; }
-    public set poolSetpoint(val: number) { this.setDataVal('poolSetpoint', val); }
+    public set poolSetpoint(val: number) {
+        const previous = this.data.poolSetpoint;
+        this.setDataVal('poolSetpoint', val);
+        if (typeof previous === 'number' && typeof val === 'number' && previous !== val && typeof ChlorinatorState.onPoolSetpointChanged === 'function') {
+            try { ChlorinatorState.onPoolSetpointChanged(this, previous, val); }
+            catch (err) { logger.error(`Error handling chlorinator pool setpoint change: ${err.message}`); }
+        }
+    }
     public get spaSetpoint(): number { return this.data.spaSetpoint; }
     public set spaSetpoint(val: number) { this.setDataVal('spaSetpoint', val); }
     public get superChlorHours(): number { return this.data.superChlorHours; }
@@ -3819,6 +3830,12 @@ export class AutoSwgState extends EqState {
     public set avgWindowStart(val: string) { this.setDataVal('avgWindowStart', val); }
     public get avgWindowEnd(): string { return this.data.avgWindowEnd; }
     public set avgWindowEnd(val: string) { this.setDataVal('avgWindowEnd', val); }
+    // Inputs and by-products of the last calculation that aren't surfaced as their
+    // own fields above (config parameters, SWG capacity and run window, most recent
+    // FC/CYA/SWG data points, how many SWG entries came from the local log). Written
+    // to the history log when the recommendation is applied.
+    public get details(): any { return this.data.details; }
+    public set details(val: any) { this.setDataVal('details', val); }
     public get projectedCurrentFc(): number { return this.data.projectedCurrentFc; }
     public set projectedCurrentFc(val: number) { this.setDataVal('projectedCurrentFc', val); }
     public get lastAppliedAt(): string { return this.data.lastAppliedAt; }
