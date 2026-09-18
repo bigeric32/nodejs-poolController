@@ -27,7 +27,7 @@ import { conn } from "../../../controller/comms/Comms";
 import { config } from "../../../config/Config";
 
 import { ServiceParameterError } from "../../../controller/Errors";
-import { computeRecommendation, computeSwgCapacity, minutesToHHMM } from "../../../controller/AutoSwgService";
+import { buildCombinedHistory, computeRecommendation, computeSwgCapacity, minutesToHHMM } from "../../../controller/AutoSwgService";
 import { appendAutoSwgHistory, readAutoSwgHistory, toLocalSwgEntries } from "../../../controller/AutoSwgHistory";
 
 // Prefer the actual configured schedule's run window over the hand-typed
@@ -594,6 +594,18 @@ export class StateRoute {
         // controller/AutoSwgHistory.ts.
         app.get('/state/autoSwg/history', (req, res) => {
             return res.status(200).send(readAutoSwgHistory());
+        });
+        // The same history merged with PoolMath's, as a calculation would see it: FC
+        // readings from PoolMath and SWG % entries from the local log plus PoolMath's
+        // (a PoolMath SWG entry within an hour of a local one is left out). Each entry
+        // is labeled with its source. Falls back to local-only data if PoolMath can't
+        // be read (see poolMathError in the response).
+        app.get('/state/autoSwg/history/combined', async (req, res, next) => {
+            try {
+                let combined = await buildCombinedHistory({ shareCode: sys.autoSwg.shareCode, poolName: sys.autoSwg.poolName || undefined }, undefined, toLocalSwgEntries(readAutoSwgHistory()));
+                return res.status(200).send(combined);
+            }
+            catch (err) { next(err); }
         });
         app.post('/state/autoSwg/recommend', async (req, res, next) => {
             try {
