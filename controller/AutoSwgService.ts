@@ -426,21 +426,37 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         intervals.push({ t1, t2, perDay: days > 0 ? consumed / days : 0 });
     }
 
-    const now = fcEvents[fcEvents.length - 1].ts;
-    const windowStart = new Date(now.getTime() - params.windowDays * 86400000);
+    const rightNow = new Date();
+    let windowStart = new Date(rightNow.getTime() - params.windowDays * 86400000);
+    // A consumption rate needs at least two FC readings. If the configured window
+    // (which ends at calculation time) holds fewer, reach back to the
+    // second-most-recent reading instead.
+    const readingsInWindow = fcEvents.filter(e => e.ts.getTime() >= windowStart.getTime() && e.ts.getTime() <= rightNow.getTime()).length;
+    const windowExtended = readingsInWindow < 2 && fcEvents.length >= 2;
+    if (windowExtended) windowStart = fcEvents[fcEvents.length - 2].ts;
+    const windowDaysUsed = windowExtended ? (rightNow.getTime() - windowStart.getTime()) / 86400000 : params.windowDays;
     let weightedTotal = 0;
+    let coveredDays = 0;
     for (const iv of intervals) {
         const clipStart = new Date(Math.max(iv.t1.getTime(), windowStart.getTime()));
-        const clipEnd = new Date(Math.min(iv.t2.getTime(), now.getTime()));
+        const clipEnd = new Date(Math.min(iv.t2.getTime(), rightNow.getTime()));
         if (clipEnd.getTime() <= clipStart.getTime()) continue;
         const overlapDays = (clipEnd.getTime() - clipStart.getTime()) / 86400000;
         weightedTotal += iv.perDay * overlapDays;
+        coveredDays += overlapDays;
     }
-    const avgPerDay = weightedTotal / params.windowDays;
+    // Average over the time actually spanned by consecutive FC readings. The
+    // stretch since the last reading has no measured consumption, so dividing by
+    // the whole window would understate the rate.
+    const avgPerDay = coveredDays > 0 ? weightedTotal / coveredDays : 0;
     // Captured verbatim (not just re-derived from avgConsumptionPpmPerDay) so a
     // dashboard tile can show exactly this sentence without duplicating the
     // windowDays/fcEvents.length/swgEvents.length formatting logic itself.
-    const avgConsumptionSummary = `Running ${params.windowDays}-day average FC consumption: ${avgPerDay.toFixed(2)} ppm/day (from ${fcEvents.length} FC readings, ${swgEvents.length} SWG log entries).`;
+    const windowLabel = windowExtended ? windowDaysUsed.toFixed(1) : `${params.windowDays}`;
+    const extensionNote = windowExtended
+        ? ` (window extended back from ${params.windowDays} days because it held fewer than 2 FC readings)`
+        : '';
+    const avgConsumptionSummary = `Running ${windowLabel}-day average FC consumption${extensionNote}: ${avgPerDay.toFixed(2)} ppm/day (from ${fcEvents.length} FC readings, ${swgEvents.length} SWG log entries).`;
     rationale.push(avgConsumptionSummary);
 
     // SWG capacity. swgLbsPerDay is the manufacturer's rated output at 100% duty
@@ -462,7 +478,6 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     // recent SWG entry (not the configured capacity window) for the generation
     // credit since the last FC reading -- see swg_percent_calcv5.py for why.
     const lastFc = fcEvents[fcEvents.length - 1];
-    const rightNow = new Date();
     const elapsedDays = (rightNow.getTime() - lastFc.ts.getTime()) / 86400000;
     const latestSwg = swgEvents[swgEvents.length - 1];
     const runHoursElapsed = dailyWindowOverlapHours(lastFc.ts, rightNow, swgStart, latestSwg.hrs, params.timezone);
