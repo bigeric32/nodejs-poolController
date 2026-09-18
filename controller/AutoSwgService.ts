@@ -443,10 +443,12 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     const avgConsumptionSummary = `Running ${params.windowDays}-day average FC consumption: ${avgPerDay.toFixed(2)} ppm/day (from ${fcEvents.length} FC readings, ${swgEvents.length} SWG log entries).`;
     rationale.push(avgConsumptionSummary);
 
-    // SWG capacity, in ppm/day at 100% duty cycle over the configured run window.
-    const maxDailyPpmAtFull = (params.swgLbsPerDay * 1_000_000) / (params.gallons * 8.34);
-    const ppmPerHourFull = swgHours > 0 ? maxDailyPpmAtFull / swgHours : 0;
-    rationale.push(`SWG capacity: ${params.swgLbsPerDay} lbs/day -> ${maxDailyPpmAtFull.toFixed(2)} ppm/day at 100% duty cycle over ${swgHours}h/day (${params.swgStartTime}-${params.swgStopTime} ${params.timezone}).`);
+    // SWG capacity. swgLbsPerDay is the manufacturer's rated output at 100% duty
+    // over a full 24h day; scale it down to what's actually achievable at 100%
+    // duty within the shorter configured run window.
+    const ratedPpmPer24h = (params.swgLbsPerDay * 1_000_000) / (params.gallons * 8.34);
+    const maxDailyPpmAtFull = ratedPpmPer24h * (swgHours / 24);
+    rationale.push(`SWG capacity: ${params.swgLbsPerDay} lbs/day (rated over 24h) -> ${maxDailyPpmAtFull.toFixed(2)} ppm/day at 100% duty cycle over ${swgHours}h/day (${params.swgStartTime}-${params.swgStopTime} ${params.timezone}).`);
 
     let recommendedPct = 0;
     if (maxDailyPpmAtFull > 0) {
