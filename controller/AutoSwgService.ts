@@ -60,6 +60,8 @@ export interface AutoSwgResult {
     recommendedPctForTarget: number; // recommended duty cycle to hit targetFc in targetDays
     avgConsumptionPpmPerDay: number;
     avgConsumptionSummary: string;   // human-readable form of avgConsumptionPpmPerDay, e.g. for a dashboard tile
+    avgWindowStart: string;          // ISO start of the running-average window actually used (after any extension)
+    avgWindowEnd: string;            // ISO end of that window (calculation time)
     projectedCurrentFc: number;
     mostRecentFc?: { value: number; ts: string };
     mostRecentCya?: { value: number; ts: string };
@@ -330,6 +332,18 @@ function zonedTimeToUtc(year: number, month: number, day: number, t: TimeOfDay, 
     return guess;
 }
 
+// 'YYYY-MM-DD HH:mm' wall-clock time of `instant` in `timeZone`.
+function formatLocalDateTime(instant: Date, timeZone: string): string {
+    const dtf = new Intl.DateTimeFormat('en-US', {
+        timeZone, hourCycle: 'h23',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit',
+    });
+    const parts: any = {};
+    for (const p of dtf.formatToParts(instant)) parts[p.type] = p.value;
+    return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
+}
+
 function localYmd(instant: Date, timeZone: string): { year: number; month: number; day: number } {
     const dtf = new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' });
     const parts: any = {};
@@ -460,10 +474,11 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     // dashboard tile can show exactly this sentence without duplicating the
     // windowDays/fcEvents.length/swgEvents.length formatting logic itself.
     const windowLabel = windowExtended ? windowDaysUsed.toFixed(1) : `${params.windowDays}`;
+    const windowRange = `${formatLocalDateTime(windowStart, params.timezone)} to ${formatLocalDateTime(rightNow, params.timezone)} ${params.timezone}`;
     const extensionNote = windowExtended
-        ? ` (window extended back from ${params.windowDays} days because it held fewer than ${MIN_FC_READINGS_IN_WINDOW} FC readings)`
+        ? `; window extended back from ${params.windowDays} days because it held fewer than ${MIN_FC_READINGS_IN_WINDOW} FC readings`
         : '';
-    const avgConsumptionSummary = `Running ${windowLabel}-day average FC consumption${extensionNote}: ${avgPerDay.toFixed(2)} ppm/day (from ${fcEvents.length} FC readings, ${swgEvents.length} SWG log entries).`;
+    const avgConsumptionSummary = `Running ${windowLabel}-day average FC consumption (${windowRange}${extensionNote}):${avgPerDay.toFixed(2)} ppm/day (from ${fcEvents.length} FC readings, ${swgEvents.length} SWG log entries).`;
     rationale.push(avgConsumptionSummary);
 
     // SWG capacity. swgLbsPerDay is the manufacturer's rated output at 100% duty
@@ -510,6 +525,8 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         recommendedPctForTarget: roundDutyCyclePct(recommendedPctForTarget),
         avgConsumptionPpmPerDay: Math.round(avgPerDay * 100) / 100,
         avgConsumptionSummary,
+        avgWindowStart: windowStart.toISOString(),
+        avgWindowEnd: rightNow.toISOString(),
         projectedCurrentFc: Math.round(projectedCurrentFc * 100) / 100,
         mostRecentFc: { value: lastFc.value, ts: lastFc.ts.toISOString() },
         mostRecentCya: cyaEvents.length ? { value: cyaEvents[cyaEvents.length - 1].value, ts: cyaEvents[cyaEvents.length - 1].ts.toISOString() } : undefined,

@@ -3804,14 +3804,21 @@ export class AutoSwgState extends EqState {
     public set maintenancePct(val: number) { this.setDataVal('maintenancePct', val); }
     public get avgConsumptionPpmPerDay(): number { return this.data.avgConsumptionPpmPerDay; }
     public set avgConsumptionPpmPerDay(val: number) { this.setDataVal('avgConsumptionPpmPerDay', val); }
-    // Human-readable form of avgConsumptionPpmPerDay (e.g. "Running 21-day
-    // average FC consumption: 1.77 ppm/day (from 34 FC readings, 16 SWG log
+    // Human-readable form of avgConsumptionPpmPerDay (e.g. "Running 14-day
+    // average FC consumption (2026-09-04 09:10 to 2026-09-18 09:10
+    // America/New_York): 1.77 ppm/day (from 34 FC readings, 16 SWG log
     // entries)."), used verbatim by the dashboard's Chemistry summary tile. When the
-    // window had to be extended back to include 3 FC readings, the sentence says so,
-    // e.g. "Running 23.4-day average FC consumption (window extended back from 14
-    // days because it held fewer than 3 FC readings): ...".
+    // window had to be extended back to include 3 FC readings, the parenthetical
+    // says so, e.g. "(2026-08-26 14:05 to 2026-09-18 09:10 America/New_York; window
+    // extended back from 14 days because it held fewer than 3 FC readings)".
     public get avgConsumptionSummary(): string { return this.data.avgConsumptionSummary; }
     public set avgConsumptionSummary(val: string) { this.setDataVal('avgConsumptionSummary', val); }
+    // ISO start/end of the running-average window actually used (start reflects any
+    // extension back to 3 FC readings; end is calculation time).
+    public get avgWindowStart(): string { return this.data.avgWindowStart; }
+    public set avgWindowStart(val: string) { this.setDataVal('avgWindowStart', val); }
+    public get avgWindowEnd(): string { return this.data.avgWindowEnd; }
+    public set avgWindowEnd(val: string) { this.setDataVal('avgWindowEnd', val); }
     public get projectedCurrentFc(): number { return this.data.projectedCurrentFc; }
     public set projectedCurrentFc(val: number) { this.setDataVal('projectedCurrentFc', val); }
     public get lastAppliedAt(): string { return this.data.lastAppliedAt; }
