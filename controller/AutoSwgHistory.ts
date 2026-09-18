@@ -87,7 +87,7 @@ export function toLocalSwgEntries(records: AutoSwgHistoryRecord[]): LocalSwgEntr
     const entries: LocalSwgEntry[] = [];
     for (const r of records) {
         if (typeof r.ppmPerDay !== 'number' || typeof r.hrs !== 'number' || typeof r.appliedPct !== 'number') continue;
-        entries.push({ ts: r.appliedAt, ppmPerDay: r.ppmPerDay, hrs: r.hrs, pct: r.appliedPct });
+        entries.push({ ts: r.appliedAt, ppmPerDay: r.ppmPerDay, hrs: r.hrs, pct: r.appliedPct, kind: r.source === 'manual' ? 'manual' : 'auto', record: r });
     }
     return entries;
 }

@@ -83,12 +83,16 @@ export interface AutoSwgResult {
 // A past SWG % change (an applied recommendation or a manual change), as recorded
 // in the local history log (see AutoSwgHistory.ts). Shaped like a PoolMath SWG log
 // entry so the two can be merged into a single step function of SWG rate over time.
-export interface LocalSwgEntry { ts: string; ppmPerDay: number; hrs: number; pct: number; }
+export interface LocalSwgEntry {
+    ts: string; ppmPerDay: number; hrs: number; pct: number;
+    kind?: 'auto' | 'manual'; // applied recommendation vs manual change (default 'auto')
+    record?: any;             // the full history record, carried along for display/export
+}
 
-type SwgSource = 'poolmath' | 'local';
+export type SwgSource = 'poolmath' | 'local-auto' | 'local-manual';
 
 interface FcEvent { ts: Date; value: number; }
-interface SwgEvent { ts: Date; ppmPerDay: number; hrs: number; pct: number; source: SwgSource; }
+interface SwgEvent { ts: Date; ppmPerDay: number; hrs: number; pct: number; source: SwgSource; record?: any; }
 
 // A PoolMath SWG entry within this long of a local entry is treated as the same
 // event, and the local entry wins.
@@ -279,7 +283,7 @@ function mergeSwgEvents(poolMath: SwgEvent[], local: LocalSwgEntry[]): { events:
     for (const l of local) {
         const ts = new Date(l.ts);
         if (isNaN(ts.getTime()) || !isFinite(l.ppmPerDay) || !isFinite(l.hrs) || !isFinite(l.pct)) continue;
-        localEvents.push({ ts, ppmPerDay: l.ppmPerDay, hrs: l.hrs, pct: l.pct, source: 'local' });
+        localEvents.push({ ts, ppmPerDay: l.ppmPerDay, hrs: l.hrs, pct: l.pct, source: l.kind === 'manual' ? 'local-manual' : 'local-auto', record: l.record });
     }
     const kept = poolMath.filter(p => !localEvents.some(l => Math.abs(l.ts.getTime() - p.ts.getTime()) <= LOCAL_SWG_MATCH_MS));
     const events = [...kept, ...localEvents].sort((a, b) => a.ts.getTime() - b.ts.getTime());
@@ -536,7 +540,7 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     const avgConsumptionSummary = `Running ${windowLabel}-day average FC consumption (${windowRange}${extensionNote}): ${avgPerDay.toFixed(2)} ppm/day (from ${fcEvents.length} FC readings, ${swgEvents.length} SWG log entries).`;
     rationale.push(avgConsumptionSummary);
     if (swgMerge.localUsed > 0) {
-        rationale.push(`SWG entries: ${swgMerge.localUsed} from the local SWG % change log,${poolMathSwgEvents.length - swgMerge.replaced} from PoolMath; ${swgMerge.replaced} PoolMath ${swgMerge.replaced === 1 ? 'entry' : 'entries'} within 1h of a local entry ignored in favor of the local one.`);
+        rationale.push(`SWG entries: ${swgMerge.localUsed} from the local SWG % change log, ${poolMathSwgEvents.length - swgMerge.replaced} from PoolMath; ${swgMerge.replaced} PoolMath ${swgMerge.replaced === 1 ? 'entry' : 'entries'} within 1h of a local entry ignored in favor of the local one.`);
     }
 
     // SWG capacity. swgLbsPerDay is the manufacturer's rated output at 100% duty
@@ -596,6 +600,51 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         poolMathSwgEntriesReplaced: swgMerge.replaced,
         rationale,
     };
+}
+
+export interface CombinedHistoryEntry {
+    ts: string;                  // ISO
+    type: 'SWG' | 'FC';
+    source: SwgSource;           // FC readings always come from PoolMath
+    pct?: number;                // SWG %
+    ppmPerDay?: number;          // SWG: PoolMath-style "X ppm FC" per day
+    hrs?: number;                // SWG: run hours
+    value?: number;              // FC ppm
+    record?: any;                // local SWG entries only: the full history record (inputs/outputs)
+}
+
+export interface CombinedHistory {
+    entries: CombinedHistoryEntry[];      // oldest first
+    localSwgEntriesUsed: number;
+    poolMathSwgEntriesReplaced: number;   // PoolMath SWG entries left out because a local entry is within an hour
+    poolMathError?: string;               // set if PoolMath couldn't be read; entries then hold local data only
+}
+
+// The SWG % and FC history exactly as a calculation would see it: FC readings
+// from PoolMath, and SWG entries from the local log plus PoolMath's, with a
+// PoolMath SWG entry dropped when a local one is within an hour of it. If
+// PoolMath can't be read, the local SWG entries are still returned.
+export async function buildCombinedHistory(params: { shareCode?: string; poolName?: string }, html?: string, localSwgEntries: LocalSwgEntry[] = []): Promise<CombinedHistory> {
+    let fcEvents: FcEvent[] = [];
+    let poolMathSwgEvents: SwgEvent[] = [];
+    let poolMathError: string;
+    try {
+        if (!html && !params.shareCode) throw new Error('No PoolMath share code is configured.');
+        const parsed = parseCards(html || await fetchHtml(params.shareCode), params.poolName);
+        fcEvents = parsed.fcEvents;
+        poolMathSwgEvents = parsed.swgEvents;
+    }
+    catch (err) { poolMathError = err.message; }
+    const swgMerge = mergeSwgEvents(poolMathSwgEvents, localSwgEntries);
+    const entries: CombinedHistoryEntry[] = [
+        ...fcEvents.map(e => ({ ts: e.ts.toISOString(), type: 'FC' as const, source: 'poolmath' as SwgSource, value: e.value })),
+        ...swgEventsToEntries(swgMerge.events),
+    ].sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime());
+    return { entries, localSwgEntriesUsed: swgMerge.localUsed, poolMathSwgEntriesReplaced: swgMerge.replaced, poolMathError };
+}
+
+function swgEventsToEntries(events: SwgEvent[]): CombinedHistoryEntry[] {
+    return events.map(e => ({ ts: e.ts.toISOString(), type: 'SWG' as const, source: e.source, pct: e.pct, ppmPerDay: e.ppmPerDay, hrs: e.hrs, record: e.record }));
 }
 
 // Converts minutes-since-midnight (njsPC's Schedule.startTime/endTime unit) to
