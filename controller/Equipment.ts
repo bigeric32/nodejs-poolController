@@ -2426,7 +2426,8 @@ export class AutoSwg extends EqItem {
     public set poolName(val: string) { this.setDataVal('poolName', val); }
     public get gallons(): number { return this.data.gallons; }
     public set gallons(val: number) { this.setDataVal('gallons', val); }
-    // SWG's rated chlorine production in lbs/day at 100% duty cycle over the run window below.
+    // SWG's manufacturer-rated chlorine production in lbs/day, at 100% duty cycle over a
+    // full 24h day (the standard spec-sheet basis) -- not scoped to the run window below.
     public get swgLbsPerDay(): number { return this.data.swgLbsPerDay; }
     public set swgLbsPerDay(val: number) { this.setDataVal('swgLbsPerDay', val); }
     // Daily SWG run window, e.g. '07:00' to '19:00', interpreted in `timezone`.
