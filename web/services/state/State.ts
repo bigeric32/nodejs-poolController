@@ -30,22 +30,55 @@ import { ServiceParameterError } from "../../../controller/Errors";
 import { buildCombinedHistory, computeRecommendation, computeSwgCapacity, minutesToHHMM } from "../../../controller/AutoSwgService";
 import { appendAutoSwgHistory, readAutoSwgHistory, toLocalSwgEntries } from "../../../controller/AutoSwgHistory";
 
+// 'HH:MM' wall-clock time of `dt` in `timeZone`.
+function formatHHMMInZone(dt: Date, timeZone: string): string {
+    const dtf = new Intl.DateTimeFormat('en-US', { timeZone, hourCycle: 'h23', hour: '2-digit', minute: '2-digit' });
+    const parts: any = {};
+    for (const p of dtf.formatToParts(dt)) parts[p.type] = p.value;
+    return `${parts.hour}:${parts.minute}`;
+}
+
 // Prefer the actual configured schedule's run window over the hand-typed
 // swgStartTime/swgStopTime fields, so the capacity calculation can't silently drift
 // out of sync with when the pump/SWG really runs. The pump is guaranteed to run at
 // least as long as the SWG schedule, so the schedule's start/end times are the more
 // reliable source of truth when one is configured (see AutoSwg.scheduleId in
 // controller/Equipment.ts).
+//
+// For a sunrise/sunset-based schedule, the schedule's own startTime/endTime config
+// fields are just static minutes-of-day (whatever sunrise/sunset happened to be when
+// the schedule was last saved) -- the actual daily run window is recalculated by
+// ScheduleTime.calcSchedule() (see controller/State.ts) from the day's real sunrise/
+// sunset. Prefer that live, already-calculated window so the capacity/duty-cycle math
+// tracks the real (seasonally shifting) window instead of drifting away from it; fall
+// back to the static minutes only if today's window hasn't been calculated yet.
 function resolveAutoSwgRunWindow(cfg: typeof sys.autoSwg): { swgStartTime: string; swgStopTime: string; scheduleNote?: string } {
     let swgStartTime = cfg.swgStartTime;
     let swgStopTime = cfg.swgStopTime;
     let scheduleNote: string;
     if (cfg.scheduleId >= 0) {
         let sched = sys.schedules.toArray().find(s => s.id === cfg.scheduleId);
-        if (sched && !sched.disabled && typeof sched.startTime === 'number' && typeof sched.endTime === 'number' && sched.endTime > sched.startTime) {
-            swgStartTime = minutesToHHMM(sched.startTime);
-            swgStopTime = minutesToHHMM(sched.endTime);
-            scheduleNote = `Run window ${swgStartTime}-${swgStopTime} taken from schedule #${sched.id} (circuit ${sched.circuit}).`;
+        if (sched && !sched.disabled) {
+            let ssched = state.schedules.getItemById(sched.id, false);
+            // Force today's window to be (re)calculated now rather than trusting the
+            // periodic status-check timer to have already refreshed it recently --
+            // calcSchedule() is a no-op if it's already current for today.
+            ssched.scheduleTime.calcSchedule(state.time, sched);
+            let calcStart = ssched.scheduleTime.startTime;
+            let calcEnd = ssched.scheduleTime.endTime;
+            if (calcStart && calcEnd && calcEnd.getTime() > calcStart.getTime()) {
+                swgStartTime = formatHHMMInZone(calcStart, cfg.timezone);
+                swgStopTime = formatHHMMInZone(calcEnd, cfg.timezone);
+                scheduleNote = `Run window ${swgStartTime}-${swgStopTime} taken from today's calculated window for schedule #${sched.id} (circuit ${sched.circuit}).`;
+            }
+            else if (typeof sched.startTime === 'number' && typeof sched.endTime === 'number' && sched.endTime > sched.startTime) {
+                swgStartTime = minutesToHHMM(sched.startTime);
+                swgStopTime = minutesToHHMM(sched.endTime);
+                scheduleNote = `Run window ${swgStartTime}-${swgStopTime} taken from schedule #${sched.id}'s configured (not yet recalculated) times (circuit ${sched.circuit}).`;
+            }
+            else {
+                scheduleNote = `Configured schedule #${cfg.scheduleId} has no calculable run window -- falling back to the manually-entered run window (${swgStartTime}-${swgStopTime}).`;
+            }
         }
         else {
             scheduleNote = `Configured schedule #${cfg.scheduleId} is missing or disabled -- falling back to the manually-entered run window (${swgStartTime}-${swgStopTime}).`;
