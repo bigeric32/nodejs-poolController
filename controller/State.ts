@@ -163,17 +163,9 @@ export class State implements IState {
         try {
             if (this._timerDirty) clearTimeout(this._timerDirty);
             this.persist();
-/*             if (sys.controllerType === ControllerType.Virtual) {
-                for (let i = 0; i < state.temps.bodies.length; i++) {
-                    state.temps.bodies.getItemByIndex(i).isOn = false;
-                }
-                for (let i = 0; i < state.circuits.length; i++) {
-                    state.circuits.getItemByIndex(i).isOn = false;
-                }
-                for (let i = 0; i < state.features.length; i++) {
-                    state.features.getItemByIndex(i).isOn = false;
-                }
-            } */
+            // Circuit/feature/body isOn is reset on the next startup instead (see the Nixie
+            // controller block in init()) so it also covers an ungraceful restart/crash, not
+            // just a clean shutdown.
             logger.info('State process shut down');
         } catch (err) { logger.error(`Error shutting down state process: ${err.message}`); }
     }
@@ -387,6 +379,21 @@ export class State implements IState {
                 let ssched = sdata.schedules[i];
                 ssched.manualPriorityActive = ssched.isOn = ssched.triggered = false;
                 if (typeof ssched.scheduleTime !== 'undefined') ssched.scheduleTime.calculated = false;
+            }
+        }
+        // On a Nixie (virtual) controller, circuit/feature/body "isOn" is our own bookkeeping --
+        // there is no physical board to report the real relay state back to us on reconnect like
+        // IntelliCenter/*Touch do. If a persisted "isOn: true" survives a restart, triggerSchedules()
+        // (see controller/nixie/schedules/Schedule.ts) sees the circuit as already on and never
+        // re-issues the command to actually energize the relay -- e.g. a sunrise-to-sunset SWG
+        // schedule restarted mid-day never re-triggers. Clearing isOn here (schedules are reset
+        // above, so shouldBeOn will re-trigger them) forces a real re-assertion of the relay state
+        // on every startup, regardless of whether the previous process exited cleanly.
+        if (sys.controllerType === ControllerType.Nixie) {
+            if (typeof sdata.circuits !== 'undefined') for (let i = 0; i < sdata.circuits.length; i++) sdata.circuits[i].isOn = false;
+            if (typeof sdata.features !== 'undefined') for (let i = 0; i < sdata.features.length; i++) sdata.features[i].isOn = false;
+            if (typeof sdata.temps !== 'undefined' && typeof sdata.temps.bodies !== 'undefined') {
+                for (let i = 0; i < sdata.temps.bodies.length; i++) sdata.temps.bodies[i].isOn = false;
             }
         }
         var self = this;
