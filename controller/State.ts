@@ -1300,7 +1300,7 @@ export class ScheduleTime extends ChildEqState {
                     let ss = state.heliotrope.calcAdjustedTimes(sod.toDate(), 0, sched.endTimeOffset);
                     if (!ss.isValid) return times;
                     ytimes.endTime = ytimes.startTime >= ss.prevSunset ? ss.sunset : ss.prevSunset;
-                    ttimes.endTime = ttimes.startTime >= ss.sunset ? ss.nextSunset : ss.nextSunset;
+                    ttimes.endTime = ttimes.startTime >= ss.sunset ? ss.nextSunset : ss.sunset;
                     ntimes.endTime = ntimes.startTime >= ss.nextSunset ? new Timestamp(ss.nextSunset).addHours(24).toDate() : ss.nextSunset;
                     break;
                 }
