@@ -115,10 +115,17 @@ export class NixieScheduleCollection extends NixieEquipmentCollection<NixieSched
                         else ssched.isOn = ssched.scheduleTime.shouldBeOn && !ssched.manualPriorityActive;
                     }
                 }
-                // 3. If the schedule should be on and it isn't and the schedule has not been triggered then we need to 
-                // turn the schedule and circuit on.
+                // 3. If the schedule should be on and it isn't then we need to turn the circuit on. This can be
+                // a schedule genuinely starting for the first time, or the daemon having just restarted mid-schedule
+                // (isOn resets to false at boot for Nixie controllers -- see State.ts's init() -- so the relay needs
+                // reasserting either way). Always reassert the relay for this; only apply each schedule's one-time
+                // heat mode/setpoint push when it hasn't already triggered. State.init() preserves `triggered` across
+                // a restart for a schedule that was already inside its window, so a mid-schedule restart reasserts the
+                // relay without re-pushing (and clobbering) a heat setpoint the user changed after the schedule
+                // actually started.
                 else if (!c.cstate.isOn && shouldBeOn) {
-                    // The circuit is not on but it should be. Check to ensure all schedules have been triggered.
+                    await sys.board.circuits.setCircuitStateAsync(c.circuitId, true);
+                    c.cstate.priority = 'scheduled';
                     let untriggered = false;
                     // If this schedule has been triggered then mOP comes into play if manualPriority has been set in the config.
                     for (let j = 0; j < c.sscheds.length; j++) {
@@ -128,12 +135,13 @@ export class NixieScheduleCollection extends NixieEquipmentCollection<NixieSched
                         if (mOP && ssched.scheduleTime.shouldBeOn && ssched.triggered) {
                             ssched.manualPriorityActive = true;
                         }
-                        // The reason we check to see if anything has not been triggered is so we do not have to perform the circuit changes
-                        // if the schedule has already been triggered.
+                        // The reason we check to see if anything has not been triggered is so we do not have to perform the heat
+                        // mode/setpoint push again if the schedule has already been triggered.
                         else if (!ssched.triggered) untriggered = true;
                     }
                     let heatSource = { heatMode: 'nochange', heatSetpoint: undefined, coolSetpoint: undefined };
-                    // Check to see if any of the schedules have not been triggered.  If they haven't then trigger them and turn the circuit on.
+                    // Check to see if any of the schedules have not been triggered.  If they haven't then apply their
+                    // one-time heat mode/setpoint push.
                     if (untriggered) {
                         // Get the heat modes and temps for all the schedules that have not been triggered.
                         let body = sys.bodies.find(elem => elem.circuit === c.circuitId);
@@ -141,9 +149,9 @@ export class NixieScheduleCollection extends NixieEquipmentCollection<NixieSched
                             // If this is a body circuit then we need to set the heat mode and the temperature but only do this once. If
                             // the user changes it later then that is on them.
                             for (let j = 0; j < c.sscheds.length; j++) {
-                                if (sscheds[j].triggered) continue;
-                                let ssched = sscheds[j];
-                                let hs = sys.board.valueMaps.heatSources.transform(c.sscheds[i].heatSource);
+                                if (c.sscheds[j].triggered) continue;
+                                let ssched = c.sscheds[j];
+                                let hs = sys.board.valueMaps.heatSources.transform(ssched.heatSource);
                                 switch (hs.name) {
                                     case 'nochange':
                                     case 'dontchange':
@@ -172,18 +180,13 @@ export class NixieScheduleCollection extends NixieEquipmentCollection<NixieSched
                                 }
                             }
                         }
-                        // By now we have everything we need to turn on the circuit.
-                        for (let j = 0; j < c.sscheds.length; j++) {
-                            let ssched = c.sscheds[j];
-                            if (!ssched.triggered && ssched.scheduleTime.shouldBeOn) {
-                                if (!c.cstate.isOn) {
-                                    await sys.board.circuits.setCircuitStateAsync(c.circuitId, true);
-                                }
-                                let ssched = c.sscheds[j];
-                                c.cstate.priority = 'scheduled';
-                                ssched.triggered = ssched.isOn = ssched.scheduleTime.shouldBeOn;
-                                ssched.manualPriorityActive = false;
-                            }
+                    }
+                    // By now the relay is on; mark every schedule that should be on as triggered.
+                    for (let j = 0; j < c.sscheds.length; j++) {
+                        let ssched = c.sscheds[j];
+                        if (ssched.scheduleTime.shouldBeOn) {
+                            ssched.triggered = ssched.isOn = true;
+                            ssched.manualPriorityActive = false;
                         }
                     }
                 }

@@ -380,10 +380,23 @@ export class State implements IState {
         EqStateCollection.removeNullIds(sdata.filters);
         // Initialize the schedules.
         if (typeof sdata.schedules !== 'undefined') {
+            let nowMs = new Date().getTime();
             for (let i = 0; i < sdata.schedules.length; i++) {
                 let ssched = sdata.schedules[i];
-                ssched.manualPriorityActive = ssched.isOn = ssched.triggered = false;
-                if (typeof ssched.scheduleTime !== 'undefined') ssched.scheduleTime.calculated = false;
+                let st = ssched.scheduleTime;
+                // A schedule already inside its last-calculated active window is resuming
+                // after a restart, not starting fresh -- preserve `triggered` so
+                // triggerSchedules() (see controller/nixie/schedules/Schedule.ts) only
+                // reasserts the relay on the next pass instead of also re-running the
+                // schedule's one-time heat mode/setpoint push, which would clobber whatever
+                // the user set manually since the schedule actually started. A schedule
+                // outside its window (or never calculated) still starts clean.
+                let withinWindow = st && typeof st.startTime === 'string' && st.startTime !== '' && typeof st.endTime === 'string' && st.endTime !== ''
+                    && new Date(st.startTime).getTime() <= nowMs && nowMs <= new Date(st.endTime).getTime();
+                ssched.manualPriorityActive = false;
+                ssched.isOn = false;
+                ssched.triggered = withinWindow;
+                if (typeof st !== 'undefined') st.calculated = false;
             }
         }
         // On a Nixie (virtual) controller, circuit/feature/body "isOn" is our own bookkeeping --
