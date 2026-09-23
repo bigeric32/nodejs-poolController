@@ -123,13 +123,88 @@ function logManualSwgChange(previousPct: number, pct: number) {
     catch (err) { logger.error(`AutoSwg: SWG % changed to ${pct}% but could not write the history log: ${err.message}`); }
 }
 
+// Automatic step-down: after applying a catch-up % (above maintenance), drop back
+// to the maintenance % once targetDays have passed. The due time and % live in
+// state.autoSwg (persisted); this timer is re-armed from them at startup.
+const AUTO_SWG_STEPDOWN_MIN_DELAY_MS = 60 * 1000;
+const AUTO_SWG_STEPDOWN_RETRY_MS = 5 * 60 * 1000;
+const AUTO_SWG_TIMER_MAX_MS = 2 * 24 * 60 * 60 * 1000;
+let autoSwgStepDownTimer: NodeJS.Timeout | undefined;
+
+function clearAutoSwgStepDown() {
+    if (autoSwgStepDownTimer) clearTimeout(autoSwgStepDownTimer);
+    autoSwgStepDownTimer = undefined;
+    if (state.autoSwg.stepDownAt || typeof state.autoSwg.stepDownPct !== 'undefined') {
+        state.autoSwg.stepDownAt = undefined;
+        state.autoSwg.stepDownPct = undefined;
+        state.autoSwg.emitEquipmentChange();
+    }
+}
+
+function armAutoSwgStepDown(minDelayMs: number = 0) {
+    if (autoSwgStepDownTimer) clearTimeout(autoSwgStepDownTimer);
+    autoSwgStepDownTimer = undefined;
+    let at = state.autoSwg.stepDownAt ? new Date(state.autoSwg.stepDownAt).getTime() : NaN;
+    if (isNaN(at) || typeof state.autoSwg.stepDownPct !== 'number') return;
+    // Wake at least every couple of days so a long targetDays never overflows setTimeout.
+    let delay = Math.min(Math.max(at - Date.now(), minDelayMs), AUTO_SWG_TIMER_MAX_MS);
+    autoSwgStepDownTimer = setTimeout(() => { runAutoSwgStepDown().catch(err => logger.error(`AutoSwg: step-down failed: ${err.message}`)); }, delay);
+}
+
+async function runAutoSwgStepDown() {
+    autoSwgStepDownTimer = undefined;
+    let at = state.autoSwg.stepDownAt ? new Date(state.autoSwg.stepDownAt).getTime() : NaN;
+    let pct = state.autoSwg.stepDownPct;
+    if (isNaN(at) || typeof pct !== 'number') return;
+    if (!sys.autoSwg.stepDownEnabled) { clearAutoSwgStepDown(); return; }
+    if (Date.now() < at) { armAutoSwgStepDown(); return; }
+    let cfg = sys.autoSwg;
+    if (cfg.chlorinatorId < 0) { clearAutoSwgStepDown(); return; }
+    let previous = state.autoSwg.currentPct;
+    autoSwgApplyInFlight = { pct: pct, at: Date.now() };
+    try { await sys.board.chlorinator.setChlorAsync({ id: cfg.chlorinatorId, poolSetpoint: pct }); }
+    catch (err) {
+        autoSwgApplyInFlight = undefined;
+        logger.error(`AutoSwg: step-down to ${pct}% failed (${err.message}); retrying in ${AUTO_SWG_STEPDOWN_RETRY_MS / 60000} minutes.`);
+        armAutoSwgStepDown(AUTO_SWG_STEPDOWN_RETRY_MS);
+        return;
+    }
+    logger.info(`AutoSwg: stepped SWG down to the maintenance ${pct}% after the ${cfg.targetDays}-day target period.`);
+    state.autoSwg.lastAppliedAt = new Date().toISOString();
+    state.autoSwg.lastAppliedPct = pct;
+    state.autoSwg.currentPct = pct;
+    try {
+        let win = resolveAutoSwgRunWindow(cfg);
+        let capacity: { ppmPerDayAtFull: number; hours: number };
+        try { capacity = computeSwgCapacity({ gallons: cfg.gallons, swgLbsPerDay: cfg.swgLbsPerDay, swgStartTime: win.swgStartTime, swgStopTime: win.swgStopTime }); }
+        catch (err) { logger.warn(`AutoSwg: logging the step-down without a ppm/day figure: ${err.message}`); }
+        appendAutoSwgHistory({
+            source: 'auto',
+            appliedAt: state.autoSwg.lastAppliedAt,
+            appliedPct: pct,
+            recommendedPct: pct,
+            previousPct: previous,
+            ppmPerDay: capacity && isFinite(capacity.ppmPerDayAtFull) ? Math.round(capacity.ppmPerDayAtFull * pct) / 100 : undefined,
+            hrs: capacity ? capacity.hours : undefined,
+            inputs: { gallons: cfg.gallons, swgLbsPerDay: cfg.swgLbsPerDay, swgStartTime: win.swgStartTime, swgStopTime: win.swgStopTime, timezone: cfg.timezone, runWindowNote: win.scheduleNote },
+            outputs: { stepDown: true, targetFc: cfg.targetFc, targetDays: cfg.targetDays },
+        });
+    }
+    catch (err) { logger.error(`AutoSwg: stepped down to ${pct}% but could not write the history log: ${err.message}`); }
+    clearAutoSwgStepDown();
+}
+
 export class StateRoute {
     public static initRoutes(app: express.Application) {
         ChlorinatorState.onPoolSetpointChanged = (chlor, previous, current) => {
             if (sys.autoSwg.chlorinatorId !== chlor.id) return;
             if (autoSwgApplyInFlight && autoSwgApplyInFlight.pct === current && Date.now() - autoSwgApplyInFlight.at < AUTO_SWG_APPLY_ECHO_MS) return;
+            // Someone changed the setpoint by hand: they've taken over, so don't step it down later.
+            if (state.autoSwg.stepDownAt) logger.info(`AutoSwg: SWG % changed manually to ${current}%; cancelling the pending step-down.`);
+            clearAutoSwgStepDown();
             logManualSwgChange(previous, current);
         };
+        armAutoSwgStepDown(AUTO_SWG_STEPDOWN_MIN_DELAY_MS);
         app.get('/state/rs485Port/:id', async (req, res, next) => {
             try {
                 let portId = parseInt(req.params.id, 10);
@@ -752,6 +827,14 @@ export class StateRoute {
                 }
                 catch (err) { logger.error(`AutoSwg: applied ${pct}% but could not write the history log: ${err.message}`); }
                 state.autoSwg.pending = false;
+                // Catch-up % above maintenance: schedule the drop back to maintenance.
+                let maintenancePct = state.autoSwg.maintenancePct;
+                if (sys.autoSwg.stepDownEnabled && typeof maintenancePct === 'number' && pct > maintenancePct && sys.autoSwg.targetDays > 0) {
+                    state.autoSwg.stepDownAt = new Date(Date.now() + sys.autoSwg.targetDays * 86400000).toISOString();
+                    state.autoSwg.stepDownPct = maintenancePct;
+                    armAutoSwgStepDown();
+                }
+                else clearAutoSwgStepDown();
                 state.autoSwg.emitEquipmentChange();
                 return res.status(200).send({ chlorinator: schlor.get(true), autoSwg: state.autoSwg.get(true) });
             }

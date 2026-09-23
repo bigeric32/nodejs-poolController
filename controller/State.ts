@@ -3881,6 +3881,12 @@ export class AutoSwgState extends EqState {
     public set rationale(val: string[]) { this.setDataVal('rationale', val); }
     public get error(): string { return this.data.error; }
     public set error(val: string) { this.setDataVal('error', val); }
+    // Pending automatic step-down (see AutoSwg.stepDownEnabled): when to drop the
+    // setpoint, and to what. Persisted so it survives a restart.
+    public get stepDownAt(): string { return this.data.stepDownAt; }
+    public set stepDownAt(val: string) { this.setDataVal('stepDownAt', val); }
+    public get stepDownPct(): number { return this.data.stepDownPct; }
+    public set stepDownPct(val: number) { this.setDataVal('stepDownPct', val); }
 }
 export class CommsState {
     public keepAlives: number;
