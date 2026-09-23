@@ -1414,7 +1414,14 @@ export class ScheduleTime extends ChildEqState {
                 }
                 this.startTime = times.startTime;
                 this.endTime = times.endTime;
-                this.calculated = true;
+                // A failed calculation (e.g. heliotrope not ready yet) must not be cached as "calculated for
+                // today" -- with null times nothing else would ever trigger a recalculation until midnight, and
+                // the schedule would be dropped from getActiveSchedules() all day.  Retry on the next pass.
+                if (times.startTime && times.endTime) this.calculated = true;
+                else {
+                    this.calculated = false;
+                    logger.warn(`Schedule ${sched.id} window could not be calculated (heliotrope valid: ${state.heliotrope.isValid}); will retry.`);
+                }
             }
             return this.shouldBeOn;
         } catch (err) {
