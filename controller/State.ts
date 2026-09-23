@@ -419,9 +419,7 @@ export class State implements IState {
         this.equipment.messages.clear();
 
         //this.onchange(state, function () { self.dirty = true; });
-        this._dt.emitter.on('change', function () {
-            self.data.time = self._dt.format();
-            self.hasChanged = true;
+        const syncHeliotrope = function () {
             self.heliotrope.date = self._dt.toDate();
             // Provide safe access & environment fallback for coordinates
             const loc = sys?.general?.location || {} as any;
@@ -449,8 +447,16 @@ export class State implements IState {
             self.data.nextSunset = times.isValid ? Timestamp.toISOLocal(times.nextSunset) : '';
             self.data.prevSunrise = times.isValid ? Timestamp.toISOLocal(times.prevSunrise) : '';
             self.data.prevSunset = times.isValid ? Timestamp.toISOLocal(times.prevSunset) : '';
+        };
+        this._dt.emitter.on('change', function () {
+            self.data.time = self._dt.format();
+            self.hasChanged = true;
+            syncHeliotrope();
             versionCheck.checkGitRemote();
         });
+        // The clock only emits 'change' when the minute rolls over, so without this the heliotrope
+        // (and the sunrise/sunset schedule windows that depend on it) isn't valid until then.
+        syncHeliotrope();
         this.status = 0; // Initializing
         this.equipment.controllerType = this._controllerType;
         this.temps = new TemperatureState(this.data, 'temps');
