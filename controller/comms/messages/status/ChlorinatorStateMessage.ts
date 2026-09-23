@@ -20,10 +20,37 @@ import { state, BodyTempState, ChlorinatorState } from "../../../State";
 import { sys, ControllerType, Chlorinator } from "../../../Equipment";
 import { logger } from "../../../../logger/Logger";
 
+// The most recent message of one kind (by action) received from a chlorinator.
+export interface ChlorinatorRxRecord {
+    action: number;
+    receivedAt: string;     // ISO
+    packet: number[];       // the full packet as received
+    payload: number[];
+    description: string;    // what the payload means, where it is known
+}
 export class ChlorinatorStateMessage {
     // Ephemeral, session-only set of model strings we have already warned about.  Prevents the unrecognized-model
     // log below from repeating on every poll cycle, since getModelAsync() runs inside the Nixie poll loop.
     private static _loggedUnknownModels: Set<string> = new Set<string>();
+    // Ephemeral, session-only: the latest message of each action received from each chlorinator (keyed by
+    // chlorinator id).  This is a diagnostic view of the RS485 traffic and is intentionally not persisted.
+    private static _lastReceived: Map<number, Map<number, ChlorinatorRxRecord>> = new Map<number, Map<number, ChlorinatorRxRecord>>();
+    public static getLastReceived(chlorId: number): ChlorinatorRxRecord[] {
+        let recs = ChlorinatorStateMessage._lastReceived.get(chlorId);
+        return typeof recs === 'undefined' ? [] : Array.from(recs.values()).sort((a, b) => a.action - b.action);
+    }
+    private static describeReceived(msg: Inbound): string {
+        try {
+            switch (msg.action) {
+                case 1: return 'Ack of a control command';
+                case 3: return `Model: ${msg.extractPayloadString(1, 16).trimEnd()}`;
+                case 18: return `Salt level ${msg.extractPayloadByte(0) * 50} ppm; status: ${sys.board.valueMaps.chlorinatorStatus.transform(msg.extractPayloadByte(1) & 0x007F).desc}`;
+                case 19: return 'Keep alive (no payload)';
+                case 22: return `Output ${msg.extractPayloadByte(1)}%; water temp ${msg.extractPayloadByte(2)}`;
+                default: return `Action ${msg.action}`;
+            }
+        } catch (err) { return `Action ${msg.action}`; }
+    }
     public static process(msg: Inbound) {
         if (msg.protocol === Protocol.Chlorinator) {
             // RKS: 03-29-22 A lot of water has gone under the bridge at this point and we know much more.  First there are two types of messages.  Those inbound
@@ -58,6 +85,9 @@ export class ChlorinatorStateMessage {
                     cstate.status = 0;
                     state.equipment.messages.removeItemByCode(`chlorinator:${chlor.id}:comms`);
                 }
+                let recs = ChlorinatorStateMessage._lastReceived.get(chlor.id);
+                if (typeof recs === 'undefined') { recs = new Map<number, ChlorinatorRxRecord>(); ChlorinatorStateMessage._lastReceived.set(chlor.id, recs); }
+                recs.set(msg.action, { action: msg.action, receivedAt: new Date().toISOString(), packet: msg.toPacket(), payload: msg.payload.slice(), description: ChlorinatorStateMessage.describeReceived(msg) });
             }
             cstate.body = chlor.body;
             switch (msg.action) {

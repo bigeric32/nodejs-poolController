@@ -27,6 +27,7 @@ import { conn } from "../../../controller/comms/Comms";
 import { config } from "../../../config/Config";
 
 import { ServiceParameterError } from "../../../controller/Errors";
+import { ChlorinatorStateMessage } from "../../../controller/comms/messages/status/ChlorinatorStateMessage";
 import { buildCombinedHistory, computeRecommendation, computeSwgCapacity, minutesToHHMM } from "../../../controller/AutoSwgService";
 import { appendAutoSwgHistory, readAutoSwgHistory, toLocalSwgEntries } from "../../../controller/AutoSwgHistory";
 
@@ -581,6 +582,22 @@ export class StateRoute {
             try {
                 let schlor = await sys.board.chlorinator.setChlorAsync(req.body);
                 return res.status(200).send(schlor.get(true));
+            } catch (err) { next(err); }
+        });
+        // The latest message of each kind received from the chlorinator over RS485 since njsPC
+        // started (diagnostic; not persisted).
+        app.get('/state/chlorinator/:id/rs485', (req, res, next) => {
+            try {
+                let id = parseInt(req.params.id, 10);
+                let chlor = sys.chlorinators.toArray().find(c => c.id === id);
+                if (typeof chlor === 'undefined') return next(new ServiceParameterError(`Cannot find a chlorinator with id ${req.params.id}`, 'chlorinator', 'id', req.params.id));
+                let cstate = state.chlorinators.getItemById(id, false);
+                return res.status(200).send({
+                    id: id,
+                    name: chlor.name,
+                    lastComm: typeof cstate.lastComm === 'number' && cstate.lastComm > 0 ? new Date(cstate.lastComm).toISOString() : undefined,
+                    records: ChlorinatorStateMessage.getLastReceived(id)
+                });
             } catch (err) { next(err); }
         });
         app.put('/state/chlorinator/poolSetpoint', async (req, res, next) => {
