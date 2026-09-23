@@ -454,9 +454,6 @@ export class State implements IState {
             syncHeliotrope();
             versionCheck.checkGitRemote();
         });
-        // The clock only emits 'change' when the minute rolls over, so without this the heliotrope
-        // (and the sunrise/sunset schedule windows that depend on it) isn't valid until then.
-        syncHeliotrope();
         this.status = 0; // Initializing
         this.equipment.controllerType = this._controllerType;
         this.temps = new TemperatureState(this.data, 'temps');
@@ -476,6 +473,9 @@ export class State implements IState {
         this.filters = new FilterStateCollection(this.data, 'filters');
         this.comms = new CommsState();
         this.heliotrope = new Heliotrope();
+        // The clock only emits 'change' when the minute rolls over, so without this the heliotrope
+        // (and the sunrise/sunset schedule windows that depend on it) isn't valid until then.
+        syncHeliotrope();
         this.appVersion = new AppVersionState(this.data, 'appVersion');
         this.data.startTime = Timestamp.toISOLocal(new Date());
         versionCheck.checkGitLocal();
