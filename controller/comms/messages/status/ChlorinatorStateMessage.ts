@@ -53,18 +53,33 @@ export class ChlorinatorStateMessage {
     public static recordSent(chlorId: number, msg: Outbound) {
         ChlorinatorStateMessage.record(chlorId, msg);
     }
+    // extractPayloadByte/extractPayloadString are only defined on Inbound, but describeReceived
+    // also has to handle Outbound (Nixie-originated commands -- see recordSent above), so these
+    // read straight off msg.payload (a plain number[] on both) instead, replicating the same logic.
+    private static byteAt(payload: number[], ndx: number): number {
+        return ndx < payload.length ? payload[ndx] : undefined;
+    }
+    private static stringAt(payload: number[], start: number, length: number): string {
+        let s = '';
+        for (let i = start; i < payload.length && i < start + length; i++) {
+            if (payload[i] <= 0) break;
+            s += String.fromCharCode(payload[i]);
+        }
+        return s;
+    }
     private static describeReceived(msg: Message): string {
         try {
+            const p = msg.payload;
             switch (msg.action) {
-                case 0: return `Set control: ${msg.extractPayloadByte(0)}`;
+                case 0: return `Set control: ${ChlorinatorStateMessage.byteAt(p, 0)}`;
                 case 1: return 'Ack of a control command';
-                case 3: return `Model: ${msg.extractPayloadString(1, 16).trimEnd()}`;
-                case 17: return `Set output to ${msg.extractPayloadByte(0)}% (SWG % setpoint)`;
-                case 18: return `Salt level ${msg.extractPayloadByte(0) * 50} ppm; status: ${sys.board.valueMaps.chlorinatorStatus.transform(msg.extractPayloadByte(1) & 0x007F).desc}`;
+                case 3: return `Model: ${ChlorinatorStateMessage.stringAt(p, 1, 16).trimEnd()}`;
+                case 17: return `Set output to ${ChlorinatorStateMessage.byteAt(p, 0)}% (SWG % setpoint)`;
+                case 18: return `Salt level ${ChlorinatorStateMessage.byteAt(p, 0) * 50} ppm; status: ${sys.board.valueMaps.chlorinatorStatus.transform(ChlorinatorStateMessage.byteAt(p, 1) & 0x007F).desc}`;
                 case 19: return 'Keep alive (no payload)';
                 case 20: return 'Get model (request)';
-                case 21: return `Set output to ${(msg.extractPayloadByte(0) / 10).toFixed(1)}% (SWG % setpoint)`;
-                case 22: return `Output ${msg.extractPayloadByte(1)}%; water temp ${msg.extractPayloadByte(2)}`;
+                case 21: return `Set output to ${(ChlorinatorStateMessage.byteAt(p, 0) / 10).toFixed(1)}% (SWG % setpoint)`;
+                case 22: return `Output ${ChlorinatorStateMessage.byteAt(p, 1)}%; water temp ${ChlorinatorStateMessage.byteAt(p, 2)}`;
                 default: return `Action ${msg.action}`;
             }
         } catch (err) { return `Action ${msg.action}`; }
