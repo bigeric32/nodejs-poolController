@@ -3853,6 +3853,10 @@ export class AutoSwgState extends EqState {
     // behind what's actually running on the chlorinator right now stays available.
     public get lastAppliedRationale(): string[] { return this.data.lastAppliedRationale; }
     public set lastAppliedRationale(val: string[]) { this.setDataVal('lastAppliedRationale', val); }
+    // AutoSwg.targetFc as of the last apply -- config.targetFc may have changed since, so this
+    // is what a pending step (which is chasing THIS target) should be explained against.
+    public get lastAppliedTargetFc(): number { return this.data.lastAppliedTargetFc; }
+    public set lastAppliedTargetFc(val: number) { this.setDataVal('lastAppliedTargetFc', val); }
     public get error(): string { return this.data.error; }
     public set error(val: string) { this.setDataVal('error', val); }
     // Pending automatic step (see AutoSwg.autoStepEnabled): when to change the setpoint,

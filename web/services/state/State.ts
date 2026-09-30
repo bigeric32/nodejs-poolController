@@ -797,6 +797,7 @@ export class StateRoute {
                 // overwritten by the next Check Now even if that one is never applied -- this is
                 // what stays available as "the text behind what's actually running right now".
                 state.autoSwg.lastAppliedRationale = state.autoSwg.rationale;
+                state.autoSwg.lastAppliedTargetFc = sys.autoSwg.targetFc;
                 // Log the inputs and outputs behind this change. The setpoint is already
                 // on the chlorinator, so a logging failure must not fail the request.
                 try {
