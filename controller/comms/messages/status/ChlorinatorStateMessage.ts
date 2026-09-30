@@ -15,7 +15,7 @@ GNU Affero General Public License for more details.
 You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
-import { Inbound, Protocol } from "../Messages";
+import { Inbound, Message, Outbound, Protocol } from "../Messages";
 import { state, BodyTempState, ChlorinatorState } from "../../../State";
 import { sys, ControllerType, Chlorinator } from "../../../Equipment";
 import { logger } from "../../../../logger/Logger";
@@ -41,7 +41,19 @@ export class ChlorinatorStateMessage {
         let recs = ChlorinatorStateMessage._lastReceived.get(chlorId);
         return typeof recs === 'undefined' ? [] : Array.from(recs.values()).sort((a, b) => a.action - b.action);
     }
-    private static describeReceived(msg: Inbound): string {
+    private static record(chlorId: number, msg: Message) {
+        let recs = ChlorinatorStateMessage._lastReceived.get(chlorId);
+        if (typeof recs === 'undefined') { recs = new Map<number, ChlorinatorRxRecord>(); ChlorinatorStateMessage._lastReceived.set(chlorId, recs); }
+        recs.set(msg.action, { action: msg.action, receivedAt: new Date().toISOString(), packet: msg.toPacket(), payload: msg.payload.slice(), description: ChlorinatorStateMessage.describeReceived(msg) });
+    }
+    // Nixie/virtual-controller boards originate commands to the chlorinator themselves (see
+    // controller/nixie/chemistry/Chlorinator.ts) by writing an Outbound directly to the port --
+    // unlike an OCP's commands, these never come back around through process() below as a
+    // received message, so they have to be recorded here at the point they're sent instead.
+    public static recordSent(chlorId: number, msg: Outbound) {
+        ChlorinatorStateMessage.record(chlorId, msg);
+    }
+    private static describeReceived(msg: Message): string {
         try {
             switch (msg.action) {
                 case 0: return `Set control: ${msg.extractPayloadByte(0)}`;
@@ -95,11 +107,7 @@ export class ChlorinatorStateMessage {
             // Diagnostic view of the RS485 traffic: record every message seen for this chlorinator,
             // regardless of direction, so the "recent messages" popup shows the full conversation
             // (OCP->Chlorinator commands like Set Output/SWG % setpoint, not just responses).
-            {
-                let recs = ChlorinatorStateMessage._lastReceived.get(chlor.id);
-                if (typeof recs === 'undefined') { recs = new Map<number, ChlorinatorRxRecord>(); ChlorinatorStateMessage._lastReceived.set(chlor.id, recs); }
-                recs.set(msg.action, { action: msg.action, receivedAt: new Date().toISOString(), packet: msg.toPacket(), payload: msg.payload.slice(), description: ChlorinatorStateMessage.describeReceived(msg) });
-            }
+            ChlorinatorStateMessage.record(chlor.id, msg);
             cstate.body = chlor.body;
             switch (msg.action) {
                 case 0: // Set control OCP->Chlorinator: [16,2,80,0][0][98,16,3]
