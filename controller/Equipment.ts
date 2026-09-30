@@ -2408,7 +2408,7 @@ export class AutoSwg extends EqItem {
         if (typeof this.data.windowDays === 'undefined') this.data.windowDays = 14;
         if (typeof this.data.targetFc === 'undefined') this.data.targetFc = 9.0;
         if (typeof this.data.targetDays === 'undefined') this.data.targetDays = 3.0;
-        if (typeof this.data.stepDownEnabled === 'undefined') this.data.stepDownEnabled = false;
+        if (typeof this.data.autoStepEnabled === 'undefined') this.data.autoStepEnabled = false;
     }
     public get enabled(): boolean { return this.data.enabled; }
     public set enabled(val: boolean) { this.setDataVal('enabled', val); }
@@ -2448,11 +2448,12 @@ export class AutoSwg extends EqItem {
     public set targetFc(val: number) { this.setDataVal('targetFc', val); }
     public get targetDays(): number { return this.data.targetDays; }
     public set targetDays(val: number) { this.setDataVal('targetDays', val); }
-    // When true, applying a recommendation that is above the maintenance duty cycle
-    // schedules an automatic drop to the maintenance % after targetDays, so the
-    // catch-up % doesn't keep pushing FC past targetFc.
-    public get stepDownEnabled(): boolean { return this.data.stepDownEnabled; }
-    public set stepDownEnabled(val: boolean) { this.setDataVal('stepDownEnabled', val); }
+    // When true, applying a recommendation that differs from the maintenance duty cycle
+    // (catching up toward targetFc, or backing off toward it from above) schedules an
+    // automatic step to the maintenance % after targetDays, so the applied % doesn't keep
+    // pushing FC past targetFc indefinitely.
+    public get autoStepEnabled(): boolean { return this.data.autoStepEnabled; }
+    public set autoStepEnabled(val: boolean) { this.setDataVal('autoStepEnabled', val); }
 }
 export class ChemControllerCollection extends EqItemCollection<ChemController> {
     constructor(data: any, name?: string) { super(data, name || "chemControllers"); }
