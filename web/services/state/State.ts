@@ -209,6 +209,14 @@ export class StateRoute {
             if (state.autoSwg.stepAt) logger.info(`AutoSwg: SWG % changed manually to ${current}%; cancelling the pending step.`);
             clearAutoSwgStep();
             logManualSwgChange(previous, current);
+            // Keep "last applied" in sync with what's actually running -- otherwise the status
+            // popup/panel keeps showing the stale recommendation's %, date, and rationale after
+            // a manual override, even though this is now what the chlorinator is running.
+            state.autoSwg.lastAppliedAt = new Date().toISOString();
+            state.autoSwg.lastAppliedPct = current;
+            state.autoSwg.currentPct = current;
+            state.autoSwg.lastAppliedRationale = [`Manually changed from ${previous}% to ${current}%.`];
+            state.autoSwg.emitEquipmentChange();
         };
         armAutoSwgStep(AUTO_SWG_STEP_MIN_DELAY_MS);
         app.get('/state/rs485Port/:id', async (req, res, next) => {
