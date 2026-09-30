@@ -837,11 +837,25 @@ export class StateRoute {
             }
             catch (err) { next(err); }
         });
-        // Dismisses the current Check Now result without applying it. This isn't just a
-        // client-side hide: clearing `pending` here also stops a stale PUT /apply (from this
-        // client or another) from silently applying a calculation the user chose to discard.
+        // Dismisses the current Check Now result without applying it. This clears every field
+        // /recommend sets (mirrored below) rather than just `pending` -- otherwise the next
+        // load would still see lastCheckedAt newer than lastAppliedAt and show the "cancelled"
+        // calculation right back again as if it were a fresh, not-yet-applied one. What was
+        // actually applied (lastApplied*) and any pending step (step*) are untouched.
         app.put('/state/autoSwg/cancel', (req, res) => {
             state.autoSwg.pending = false;
+            state.autoSwg.lastCheckedAt = undefined;
+            state.autoSwg.currentPct = undefined;
+            state.autoSwg.recommendedPct = undefined;
+            state.autoSwg.maintenancePct = undefined;
+            state.autoSwg.avgConsumptionPpmPerDay = undefined;
+            state.autoSwg.avgConsumptionSummary = undefined;
+            state.autoSwg.avgWindowStart = undefined;
+            state.autoSwg.avgWindowEnd = undefined;
+            state.autoSwg.projectedCurrentFc = undefined;
+            state.autoSwg.details = undefined;
+            state.autoSwg.rationale = undefined;
+            state.autoSwg.error = undefined;
             state.autoSwg.emitEquipmentChange();
             return res.status(200).send(state.autoSwg.get(true));
         });
