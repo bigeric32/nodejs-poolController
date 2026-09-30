@@ -389,6 +389,17 @@ export class State implements IState {
                 if (typeof ssched.scheduleTime !== 'undefined') ssched.scheduleTime.calculated = false;
             }
         }
+        // Solar's "reheat above this temp before turning back on" guard (see SystemBoard.ts's
+        // syncHeaterStates()/clearPrevHeaterOffTemp(), #925) is only ever cleared reactively --
+        // when a body circuit turns off, or the user touches the heat mode/setpoint. A value left
+        // over from before a restart (e.g. a hot afternoon reading) survives here and silently
+        // blocks solar from ever turning back on, since syncHeaterStates() re-evaluates the same
+        // failing comparison on every status poll without anything to reset it. Clear it for every
+        // heater on every boot so solar gets a fresh start regardless of how the previous process
+        // exited.
+        if (typeof sdata.heaters !== 'undefined') {
+            for (let i = 0; i < sdata.heaters.length; i++) sdata.heaters[i].prevHeaterOffTemp = undefined;
+        }
         var self = this;
         let pnlTime = typeof sdata.time !== 'undefined' && sdata.time !== '' ? new Date(sdata.time) : new Date();
         if (isNaN(pnlTime.getTime())) pnlTime = new Date();
