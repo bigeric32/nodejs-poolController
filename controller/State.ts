@@ -3844,8 +3844,15 @@ export class AutoSwgState extends EqState {
     public set lastAppliedPct(val: number) { this.setDataVal('lastAppliedPct', val); }
     // Free-form breakdown lines describing how the recommendation was derived,
     // shown in the UI so the user can sanity-check the number before applying it.
+    // This reflects the most recent Check Now, whether or not it's been applied.
     public get rationale(): string[] { return this.data.rationale; }
     public set rationale(val: string[]) { this.setDataVal('rationale', val); }
+    // A snapshot of `rationale` taken at the moment a change was actually applied (by the
+    // Apply button, or an automatic step -- see runAutoSwgStep()). Unlike `rationale`, this
+    // isn't overwritten by a later Check Now that hasn't been applied, so the explanation
+    // behind what's actually running on the chlorinator right now stays available.
+    public get lastAppliedRationale(): string[] { return this.data.lastAppliedRationale; }
+    public set lastAppliedRationale(val: string[]) { this.setDataVal('lastAppliedRationale', val); }
     public get error(): string { return this.data.error; }
     public set error(val: string) { this.setDataVal('error', val); }
     // Pending automatic step (see AutoSwg.autoStepEnabled): when to change the setpoint,

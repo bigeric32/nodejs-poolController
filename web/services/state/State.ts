@@ -175,6 +175,10 @@ async function runAutoSwgStep() {
     state.autoSwg.lastAppliedAt = new Date().toISOString();
     state.autoSwg.lastAppliedPct = pct;
     state.autoSwg.currentPct = pct;
+    // This step has no calculation of its own (it's just moving to the already-known
+    // maintenance %), so give it its own one-line explanation rather than leaving whatever
+    // rationale happened to be sitting there from an unrelated, possibly much older check.
+    state.autoSwg.lastAppliedRationale = [`Automatically stepped ${direction} to the maintenance ${pct}% after the ${cfg.targetDays}-day target period (from ${previous}%).`];
     try {
         let win = resolveAutoSwgRunWindow(cfg);
         let capacity: { ppmPerDayAtFull: number; hours: number };
@@ -789,6 +793,10 @@ export class StateRoute {
                 catch (err) { autoSwgApplyInFlight = undefined; throw err; }
                 state.autoSwg.lastAppliedAt = new Date().toISOString();
                 state.autoSwg.lastAppliedPct = pct;
+                // Snapshot the explanation behind THIS calculation now, since `rationale` gets
+                // overwritten by the next Check Now even if that one is never applied -- this is
+                // what stays available as "the text behind what's actually running right now".
+                state.autoSwg.lastAppliedRationale = state.autoSwg.rationale;
                 // Log the inputs and outputs behind this change. The setpoint is already
                 // on the chlorinator, so a logging failure must not fail the request.
                 try {
