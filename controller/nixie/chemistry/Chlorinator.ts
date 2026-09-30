@@ -8,6 +8,7 @@ import { ChlorinatorState, state, } from "../../State";
 import { setTimeout as setTimeoutSync, clearTimeout } from 'timers';
 import { webApp, InterfaceServerResponse } from "../../../web/Server";
 import { Outbound, Protocol, Response } from '../../comms/messages/Messages';
+import { ChlorinatorStateMessage } from '../../comms/messages/status/ChlorinatorStateMessage';
 import { conn } from '../../comms/Comms';
 import { ncp } from '../Nixie';
 import { setTimeout } from 'timers/promises';
@@ -256,6 +257,7 @@ export class NixieChlorinator extends NixieEquipment {
                 response: Response.create({ protocol: Protocol.Chlorinator, action: 1 }),
                 onAbort: () => { this.chlor.superChlor = cstate.superChlor = false; this.setSuperChlor(cstate); },
             });
+            ChlorinatorStateMessage.recordSent(this.chlor.id, out);
             try {
                 // If this is successful the action 1 message will have been
                 // digested by ChlorinatorStateMessage and the lastComm will have been set clearing the
@@ -321,6 +323,7 @@ export class NixieChlorinator extends NixieEquipment {
             });
             // #338
             if (cstate.targetOutput === 16) { out.appendPayloadByte(0); }
+            ChlorinatorStateMessage.recordSent(this.chlor.id, out);
             try {
                 await out.sendAsync();
                 cstate.currentOutput = cstate.targetOutput;
@@ -358,6 +361,7 @@ export class NixieChlorinator extends NixieEquipment {
                     response: Response.create({ protocol: Protocol.Chlorinator, action: 3 }),
                     onAbort: () => { }
                 });
+                ChlorinatorStateMessage.recordSent(this.chlor.id, out);
                 try {
                     await out.sendAsync();
                 }
