@@ -837,6 +837,14 @@ export class StateRoute {
             }
             catch (err) { next(err); }
         });
+        // Dismisses the current Check Now result without applying it. This isn't just a
+        // client-side hide: clearing `pending` here also stops a stale PUT /apply (from this
+        // client or another) from silently applying a calculation the user chose to discard.
+        app.put('/state/autoSwg/cancel', (req, res) => {
+            state.autoSwg.pending = false;
+            state.autoSwg.emitEquipmentChange();
+            return res.status(200).send(state.autoSwg.get(true));
+        });
         app.put('/state/cancelDelay', async (req, res, next) => {
             try {
                 let delay = await sys.board.system.cancelDelay();
