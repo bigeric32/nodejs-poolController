@@ -122,6 +122,27 @@ function logManualSwgChange(previousPct: number, pct: number) {
     catch (err) { logger.error(`AutoSwg: SWG % changed to ${pct}% but could not write the history log: ${err.message}`); }
 }
 
+// Clears every field a Check Now (/recommend) sets, leaving lastApplied*/step* untouched.
+// Used both by /state/autoSwg/cancel (an explicit dismiss) and by a manual setpoint change
+// (which makes the preview stale -- its "current %" input no longer holds, and its
+// recommendation was passed over), so the calculation screen doesn't keep showing a
+// no-longer-relevant preview alongside the "what's actually running now" status.
+function clearAutoSwgCalculation() {
+    state.autoSwg.pending = false;
+    state.autoSwg.lastCheckedAt = undefined;
+    state.autoSwg.currentPct = undefined;
+    state.autoSwg.recommendedPct = undefined;
+    state.autoSwg.maintenancePct = undefined;
+    state.autoSwg.avgConsumptionPpmPerDay = undefined;
+    state.autoSwg.avgConsumptionSummary = undefined;
+    state.autoSwg.avgWindowStart = undefined;
+    state.autoSwg.avgWindowEnd = undefined;
+    state.autoSwg.projectedCurrentFc = undefined;
+    state.autoSwg.details = undefined;
+    state.autoSwg.rationale = undefined;
+    state.autoSwg.error = undefined;
+}
+
 // Automatic step: after applying a % that differs from maintenance (catching up toward
 // targetFc from below, or backing off toward it from above), move to the maintenance %
 // once targetDays have passed -- the direction depends on which side of maintenance the
@@ -209,12 +230,13 @@ export class StateRoute {
             if (state.autoSwg.stepAt) logger.info(`AutoSwg: SWG % changed manually to ${current}%; cancelling the pending step.`);
             clearAutoSwgStep();
             logManualSwgChange(previous, current);
-            // Keep "last applied" in sync with what's actually running -- otherwise the status
-            // popup/panel keeps showing the stale recommendation's %, date, and rationale after
-            // a manual override, even though this is now what the chlorinator is running.
+            // Any not-yet-applied calculation preview is now stale (its "current %" input no
+            // longer holds, and its recommendation was passed over) -- clear it the same way
+            // Cancel does, then record the override as what's actually running now so the
+            // status popup/panel doesn't keep showing the superseded recommendation.
+            clearAutoSwgCalculation();
             state.autoSwg.lastAppliedAt = new Date().toISOString();
             state.autoSwg.lastAppliedPct = current;
-            state.autoSwg.currentPct = current;
             state.autoSwg.lastAppliedRationale = [`Manually changed from ${previous}% to ${current}%.`];
             state.autoSwg.emitEquipmentChange();
         };
@@ -845,25 +867,13 @@ export class StateRoute {
             }
             catch (err) { next(err); }
         });
-        // Dismisses the current Check Now result without applying it. This clears every field
-        // /recommend sets (mirrored below) rather than just `pending` -- otherwise the next
-        // load would still see lastCheckedAt newer than lastAppliedAt and show the "cancelled"
-        // calculation right back again as if it were a fresh, not-yet-applied one. What was
-        // actually applied (lastApplied*) and any pending step (step*) are untouched.
+        // Dismisses the current Check Now result without applying it. Clears every field
+        // /recommend sets (see clearAutoSwgCalculation) rather than just `pending` -- otherwise
+        // the next load would still see lastCheckedAt newer than lastAppliedAt and show the
+        // "cancelled" calculation right back again as if it were a fresh, not-yet-applied one.
+        // What was actually applied (lastApplied*) and any pending step (step*) are untouched.
         app.put('/state/autoSwg/cancel', (req, res) => {
-            state.autoSwg.pending = false;
-            state.autoSwg.lastCheckedAt = undefined;
-            state.autoSwg.currentPct = undefined;
-            state.autoSwg.recommendedPct = undefined;
-            state.autoSwg.maintenancePct = undefined;
-            state.autoSwg.avgConsumptionPpmPerDay = undefined;
-            state.autoSwg.avgConsumptionSummary = undefined;
-            state.autoSwg.avgWindowStart = undefined;
-            state.autoSwg.avgWindowEnd = undefined;
-            state.autoSwg.projectedCurrentFc = undefined;
-            state.autoSwg.details = undefined;
-            state.autoSwg.rationale = undefined;
-            state.autoSwg.error = undefined;
+            clearAutoSwgCalculation();
             state.autoSwg.emitEquipmentChange();
             return res.status(200).send(state.autoSwg.get(true));
         });
