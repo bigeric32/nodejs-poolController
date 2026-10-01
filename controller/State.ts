@@ -3901,6 +3901,13 @@ export class AutoSwgState extends EqState {
     // is what a pending step (which is chasing THIS target) should be explained against.
     public get lastAppliedTargetFc(): number { return this.data.lastAppliedTargetFc; }
     public set lastAppliedTargetFc(val: number) { this.setDataVal('lastAppliedTargetFc', val); }
+    // The absolute date/time this apply is aiming to reach lastAppliedTargetFc by
+    // (lastAppliedAt + targetDays as of that apply). Unlike targetDays (a relative
+    // config number), this stays fixed once set, so a later "refine toward the
+    // original target" check can re-aim at the same deadline with fresh PoolMath
+    // data instead of restarting the countdown from today.
+    public get lastAppliedTargetDate(): string { return this.data.lastAppliedTargetDate; }
+    public set lastAppliedTargetDate(val: string) { this.setDataVal('lastAppliedTargetDate', val); }
     public get error(): string { return this.data.error; }
     public set error(val: string) { this.setDataVal('error', val); }
     // Pending automatic step (see AutoSwg.autoStepEnabled): when to change the setpoint,
