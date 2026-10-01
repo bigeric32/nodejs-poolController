@@ -353,9 +353,16 @@ async function applyAutoSwgRecommendation(isAutoApply: boolean, pctOverride?: nu
     // If the applied % differs from maintenance (catching up from below, or backing
     // off toward it from above), schedule a step to maintenance once the target
     // period elapses -- runAutoSwgStep() figures out the direction when it runs.
+    // The step should fire at exactly the target date this apply is aiming for -- reuse
+    // lastAppliedTargetDate (just set above, either preserved from a refine or freshly
+    // computed from live config) rather than independently recomputing "targetDays from
+    // right now" here, which would silently restart the countdown using whatever
+    // targetDays happens to be configured NOW -- e.g. if it was edited in Settings after
+    // the original apply/refine chain started.
     let maintenancePct = state.autoSwg.maintenancePct;
-    if (sys.autoSwg.autoStepEnabled && typeof maintenancePct === 'number' && pct !== maintenancePct && sys.autoSwg.targetDays > 0) {
-        state.autoSwg.stepAt = new Date(Date.now() + sys.autoSwg.targetDays * 86400000).toISOString();
+    let stepAtMs = state.autoSwg.lastAppliedTargetDate ? new Date(state.autoSwg.lastAppliedTargetDate).getTime() : NaN;
+    if (sys.autoSwg.autoStepEnabled && typeof maintenancePct === 'number' && pct !== maintenancePct && !isNaN(stepAtMs) && stepAtMs > Date.now()) {
+        state.autoSwg.stepAt = state.autoSwg.lastAppliedTargetDate;
         state.autoSwg.stepPct = maintenancePct;
         armAutoSwgStep();
     }
