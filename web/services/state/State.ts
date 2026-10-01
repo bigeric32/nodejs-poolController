@@ -251,6 +251,14 @@ async function runAutoSwgRecommendation(targetFc: number, targetDays: number, ex
     if (extraRationaleNote) result.rationale.unshift(extraRationaleNote);
     if (scheduleNote) result.rationale.unshift(scheduleNote);
     state.autoSwg.lastCheckedAt = new Date().toISOString();
+    // What this specific calculation was aiming for -- a fresh Check Now passes today's
+    // targetFc/targetDays (a new target date, computed right now); a refine passes
+    // lastAppliedTargetFc and the days remaining until lastAppliedTargetDate (which
+    // reconstructs that SAME original date here, not a new one). Either way,
+    // applyAutoSwgRecommendation() uses exactly this pair rather than re-deriving
+    // something from live config at apply time.
+    state.autoSwg.pendingTargetFc = targetFc;
+    state.autoSwg.pendingTargetDate = new Date(Date.now() + targetDays * 86400000).toISOString();
     state.autoSwg.currentPct = schlor ? schlor.targetOutput : result.currentPct;
     // recommendedPct is what Apply sends to the chlorinator, so it needs to be
     // the duty cycle that actually reaches targetFc within targetDays -- not
@@ -302,8 +310,15 @@ async function applyAutoSwgRecommendation(isAutoApply: boolean, pctOverride?: nu
     // overwritten by the next Check Now even if that one is never applied -- this is
     // what stays available as "the text behind what's actually running right now".
     state.autoSwg.lastAppliedRationale = state.autoSwg.rationale;
-    state.autoSwg.lastAppliedTargetFc = sys.autoSwg.targetFc;
-    state.autoSwg.lastAppliedTargetDate = new Date(Date.now() + sys.autoSwg.targetDays * 86400000).toISOString();
+    // Use whatever target this specific calculation actually aimed for (set by
+    // runAutoSwgRecommendation) rather than re-deriving one from live config here -- a
+    // refine's whole point is to preserve the ORIGINAL target FC/date, and re-deriving from
+    // today's live config would silently reset it back to "targetDays from right now" on
+    // every apply, undermining that. Falls back to live config only if something applied
+    // without ever going through runAutoSwgRecommendation (shouldn't normally happen, since
+    // /apply requires state.autoSwg.pending, which only that function sets).
+    state.autoSwg.lastAppliedTargetFc = typeof state.autoSwg.pendingTargetFc === 'number' ? state.autoSwg.pendingTargetFc : sys.autoSwg.targetFc;
+    state.autoSwg.lastAppliedTargetDate = state.autoSwg.pendingTargetDate || new Date(Date.now() + sys.autoSwg.targetDays * 86400000).toISOString();
     if (isAutoApply) {
         let threshold = sys.autoSwg.autoApplyWarnThresholdPct;
         let movedBy = typeof previousAppliedPct === 'number' ? Math.abs(pct - previousAppliedPct) : undefined;

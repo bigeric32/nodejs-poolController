@@ -3864,6 +3864,18 @@ export class AutoSwgState extends EqState {
     // data instead of restarting the countdown from today.
     public get lastAppliedTargetDate(): string { return this.data.lastAppliedTargetDate; }
     public set lastAppliedTargetDate(val: string) { this.setDataVal('lastAppliedTargetDate', val); }
+    // The target FC/date the CURRENT pending calculation (if any) was actually computed
+    // against -- set alongside recommendedPct/rationale/etc. by runAutoSwgRecommendation(),
+    // and consumed verbatim by applyAutoSwgRecommendation() when it becomes lastApplied*.
+    // This is what makes a refine toward an already-in-flight target (which deliberately
+    // computes against lastAppliedTargetFc/lastAppliedTargetDate, not today's live config)
+    // actually PRESERVE that same target on apply, instead of applyAutoSwgRecommendation
+    // silently resetting it back to "live config targetDays from right now" the way a fresh
+    // Check Now correctly does.
+    public get pendingTargetFc(): number { return this.data.pendingTargetFc; }
+    public set pendingTargetFc(val: number) { this.setDataVal('pendingTargetFc', val); }
+    public get pendingTargetDate(): string { return this.data.pendingTargetDate; }
+    public set pendingTargetDate(val: string) { this.setDataVal('pendingTargetDate', val); }
     // True when the most recent AUTOMATIC apply (fully-automatic mode, no human review)
     // moved the setpoint by at least AutoSwg.autoApplyWarnThresholdPct percentage points,
     // so the dashboard can flag it prominently. Cleared by any manual apply/override --
