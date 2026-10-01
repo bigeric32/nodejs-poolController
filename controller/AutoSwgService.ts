@@ -316,6 +316,42 @@ function generatedBetween(swgEvents: SwgEvent[], t1: Date, t2: Date): number {
     return total;
 }
 
+// The SWG event in effect at time t (same "most recent at-or-before" rule as
+// swgRateAt, but returning the event itself rather than just its rate).
+function swgEventAt(swgEvents: SwgEvent[], t: Date): SwgEvent | undefined {
+    let event: SwgEvent | undefined;
+    for (const e of swgEvents) {
+        if (e.ts.getTime() <= t.getTime()) event = e;
+        else break;
+    }
+    return event;
+}
+
+// Like generatedBetween(), but for the partial/in-progress period since the last FC
+// reading rather than a complete historical interval: credits each SWG rate change
+// only for the actual run-window hours (via dailyWindowOverlapHours) it was in
+// effect during, instead of attributing the whole elapsed span to whatever rate is
+// currently active. Without this, several manual % changes since the last FC
+// reading would have the latest one silently backdated over the entire elapsed
+// time.
+function swgGeneratedSinceLastReading(swgEvents: SwgEvent[], t1: Date, t2: Date, swgStart: TimeOfDay, tz: string): number {
+    if (swgEvents.length === 0 || t2.getTime() <= t1.getTime()) return 0;
+    const points = Array.from(new Set(
+        [t1.getTime(), ...swgEvents.filter(e => e.ts.getTime() > t1.getTime() && e.ts.getTime() < t2.getTime()).map(e => e.ts.getTime()), t2.getTime()]
+    )).sort((a, b) => a - b);
+    let total = 0;
+    for (let i = 0; i < points.length - 1; i++) {
+        const segStart = new Date(points[i]);
+        const segEnd = new Date(points[i + 1]);
+        const event = swgEventAt(swgEvents, segStart);
+        if (!event || event.hrs <= 0) continue;
+        const ratePerHour = event.ppmPerDay / event.hrs;
+        const hours = dailyWindowOverlapHours(segStart, segEnd, swgStart, event.hrs, tz);
+        total += ratePerHour * hours;
+    }
+    return total;
+}
+
 // ---------------------------------------------------------------------------
 // Time-of-day / timezone helpers (dependency-free; see module comment above)
 // ---------------------------------------------------------------------------
@@ -557,15 +593,16 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         rationale.push('Recommended SWG duty cycle: cannot compute (check gallons / swgLbsPerDay / run window).');
     }
 
-    // Projected current FC, using the actual logged run duration of the most
-    // recent SWG entry (not the configured capacity window) for the generation
-    // credit since the last FC reading -- see swg_percent_calcv5.py for why.
+    // Projected current FC, crediting the actual logged run duration of each SWG
+    // rate change since the last FC reading (not the configured capacity window) --
+    // see swg_percent_calcv5.py for why run duration matters here. Piecewise across
+    // every rate change in [lastFc.ts, rightNow) rather than just the latest one, so
+    // e.g. several manual % changes since the last reading are each credited only
+    // for the time they were actually in effect.
     const lastFc = fcEvents[fcEvents.length - 1];
     const elapsedDays = (rightNow.getTime() - lastFc.ts.getTime()) / 86400000;
     const latestSwg = swgEvents[swgEvents.length - 1];
-    const runHoursElapsed = dailyWindowOverlapHours(lastFc.ts, rightNow, swgStart, latestSwg.hrs, params.timezone);
-    const ratePerHour = latestSwg.hrs > 0 ? latestSwg.ppmPerDay / latestSwg.hrs : 0;
-    const swgGeneratedSinceReading = ratePerHour * runHoursElapsed;
+    const swgGeneratedSinceReading = swgGeneratedSinceLastReading(swgEvents, lastFc.ts, rightNow, swgStart, params.timezone);
     const projectedCurrentFc = lastFc.value - (avgPerDay * elapsedDays) + swgGeneratedSinceReading;
     rationale.push(`Projected current FC: ${projectedCurrentFc.toFixed(2)} ppm (last reading ${lastFc.value} ppm, ${elapsedDays.toFixed(2)} days ago; minus ${(avgPerDay * elapsedDays).toFixed(2)} ppm consumed; plus ${swgGeneratedSinceReading.toFixed(2)} ppm generated).`);
 
