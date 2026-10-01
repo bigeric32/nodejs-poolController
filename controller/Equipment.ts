@@ -2409,6 +2409,16 @@ export class AutoSwg extends EqItem {
         if (typeof this.data.targetFc === 'undefined') this.data.targetFc = 9.0;
         if (typeof this.data.targetDays === 'undefined') this.data.targetDays = 3.0;
         if (typeof this.data.autoStepEnabled === 'undefined') this.data.autoStepEnabled = false;
+        // Fully-automatic mode: periodically re-check PoolMath and apply the result with
+        // no manual review. autoCheckHours only matters while this is true -- with it off,
+        // a periodic check would just overwrite whatever unapplied preview the user is
+        // reviewing on the calculation screen with nobody there to act on it.
+        if (typeof this.data.autoApplyEnabled === 'undefined') this.data.autoApplyEnabled = false;
+        if (typeof this.data.autoCheckHours === 'undefined') this.data.autoCheckHours = 12;
+        // An auto-applied change whose magnitude (percentage points vs. the previous
+        // applied %) meets or exceeds this is flagged prominently on the dashboard, since
+        // no human reviewed it before it took effect.
+        if (typeof this.data.autoApplyWarnThresholdPct === 'undefined') this.data.autoApplyWarnThresholdPct = 10;
     }
     public get enabled(): boolean { return this.data.enabled; }
     public set enabled(val: boolean) { this.setDataVal('enabled', val); }
@@ -2454,6 +2464,12 @@ export class AutoSwg extends EqItem {
     // pushing FC past targetFc indefinitely.
     public get autoStepEnabled(): boolean { return this.data.autoStepEnabled; }
     public set autoStepEnabled(val: boolean) { this.setDataVal('autoStepEnabled', val); }
+    public get autoApplyEnabled(): boolean { return this.data.autoApplyEnabled; }
+    public set autoApplyEnabled(val: boolean) { this.setDataVal('autoApplyEnabled', val); }
+    public get autoCheckHours(): number { return this.data.autoCheckHours; }
+    public set autoCheckHours(val: number) { this.setDataVal('autoCheckHours', val); }
+    public get autoApplyWarnThresholdPct(): number { return this.data.autoApplyWarnThresholdPct; }
+    public set autoApplyWarnThresholdPct(val: number) { this.setDataVal('autoApplyWarnThresholdPct', val); }
 }
 export class ChemControllerCollection extends EqItemCollection<ChemController> {
     constructor(data: any, name?: string) { super(data, name || "chemControllers"); }

@@ -282,6 +282,121 @@ async function runAutoSwgRecommendation(targetFc: number, targetDays: number, ex
     state.autoSwg.emitEquipmentChange();
 }
 
+// Applies the currently pending AutoSwg recommendation to the chlorinator -- shared by
+// the manual /apply route (isAutoApply=false, a human just reviewed the number on screen)
+// and fully-automatic mode's unattended apply (isAutoApply=true, nobody reviewed it, so
+// the magnitude gets checked against autoApplyWarnThresholdPct and flagged for the
+// dashboard if it's large). `pctOverride` lets a manual apply send a value other than the
+// plain recommendation; the automatic path never overrides it.
+async function applyAutoSwgRecommendation(isAutoApply: boolean, pctOverride?: number): Promise<ChlorinatorState> {
+    if (!state.autoSwg.pending) throw new ServiceParameterError('There is no pending AutoSwg recommendation to apply. Run /state/autoSwg/recommend first.', 'autoSwg', 'pending', state.autoSwg.pending);
+    if (sys.autoSwg.chlorinatorId < 0) throw new ServiceParameterError('AutoSwg is not configured with a target chlorinatorId.', 'autoSwg', 'chlorinatorId', sys.autoSwg.chlorinatorId);
+    let pct = typeof pctOverride !== 'undefined' ? pctOverride : state.autoSwg.recommendedPct;
+    let previousAppliedPct = state.autoSwg.lastAppliedPct;
+    autoSwgApplyInFlight = { pct: pct, at: Date.now() };
+    let schlor: ChlorinatorState;
+    try { schlor = await sys.board.chlorinator.setChlorAsync({ id: sys.autoSwg.chlorinatorId, poolSetpoint: pct }); }
+    catch (err) { autoSwgApplyInFlight = undefined; throw err; }
+    state.autoSwg.lastAppliedAt = new Date().toISOString();
+    state.autoSwg.lastAppliedPct = pct;
+    // Snapshot the explanation behind THIS calculation now, since `rationale` gets
+    // overwritten by the next Check Now even if that one is never applied -- this is
+    // what stays available as "the text behind what's actually running right now".
+    state.autoSwg.lastAppliedRationale = state.autoSwg.rationale;
+    state.autoSwg.lastAppliedTargetFc = sys.autoSwg.targetFc;
+    state.autoSwg.lastAppliedTargetDate = new Date(Date.now() + sys.autoSwg.targetDays * 86400000).toISOString();
+    if (isAutoApply) {
+        let threshold = sys.autoSwg.autoApplyWarnThresholdPct;
+        let movedBy = typeof previousAppliedPct === 'number' ? Math.abs(pct - previousAppliedPct) : undefined;
+        state.autoSwg.lastAutoApplyLargeChange = typeof movedBy === 'number' && typeof threshold === 'number' && movedBy >= threshold;
+        if (state.autoSwg.lastAutoApplyLargeChange) logger.warn(`AutoSwg: automatically applied a ${movedBy.toFixed(1)}-point change (to ${pct}%), at or above the ${threshold}-point warning threshold.`);
+    }
+    else state.autoSwg.lastAutoApplyLargeChange = false; // a human reviewed this one
+    // Log the inputs and outputs behind this change. The setpoint is already
+    // on the chlorinator, so a logging failure must not fail the request.
+    try {
+        let details = state.autoSwg.details || {};
+        let capacity: number = details.swgCapacityPpmPerDay;
+        let stateSnapshot = Object.assign({}, state.autoSwg.get(true));
+        delete stateSnapshot.details;
+        let calcOutputs = Object.assign({}, details);
+        delete calcOutputs.inputs; // recorded separately as `inputs`
+        let outputs = Object.assign(stateSnapshot, calcOutputs);
+        appendAutoSwgHistory({
+            source: 'auto',
+            appliedAt: state.autoSwg.lastAppliedAt,
+            appliedPct: pct,
+            recommendedPct: state.autoSwg.recommendedPct,
+            previousPct: state.autoSwg.currentPct,
+            ppmPerDay: typeof capacity === 'number' ? Math.round(capacity * pct) / 100 : undefined,
+            hrs: details.swgRunHours,
+            inputs: details.inputs,
+            outputs: outputs,
+        });
+    }
+    catch (err) { logger.error(`AutoSwg: applied ${pct}% but could not write the history log: ${err.message}`); }
+    state.autoSwg.pending = false;
+    // If the applied % differs from maintenance (catching up from below, or backing
+    // off toward it from above), schedule a step to maintenance once the target
+    // period elapses -- runAutoSwgStep() figures out the direction when it runs.
+    let maintenancePct = state.autoSwg.maintenancePct;
+    if (sys.autoSwg.autoStepEnabled && typeof maintenancePct === 'number' && pct !== maintenancePct && sys.autoSwg.targetDays > 0) {
+        state.autoSwg.stepAt = new Date(Date.now() + sys.autoSwg.targetDays * 86400000).toISOString();
+        state.autoSwg.stepPct = maintenancePct;
+        armAutoSwgStep();
+    }
+    else clearAutoSwgStep();
+    state.autoSwg.emitEquipmentChange();
+    return schlor;
+}
+
+const AUTO_SWG_AUTO_CHECK_MIN_DELAY_MS = 5 * 60 * 1000; // never fire sooner than 5 min after being (re)armed
+let autoSwgAutoCheckTimer: NodeJS.Timeout | undefined;
+
+function clearAutoSwgAutoCheck() {
+    if (autoSwgAutoCheckTimer) clearTimeout(autoSwgAutoCheckTimer);
+    autoSwgAutoCheckTimer = undefined;
+}
+
+// Arms (or re-arms) fully-automatic mode's periodic PoolMath check + apply cycle. Only
+// actually schedules anything while AutoSwg.autoApplyEnabled is on -- autoCheckHours is
+// otherwise meaningless, since a periodic check with nobody reviewing it would just
+// overwrite whatever unapplied preview the user is looking at on the calculation screen.
+// Called at startup and again whenever AutoSwg config is saved, so toggling this on takes
+// effect immediately rather than needing a restart.
+export function armAutoSwgAutoCheck(minDelayMs: number = 0) {
+    clearAutoSwgAutoCheck();
+    let cfg = sys.autoSwg;
+    if (!cfg.enabled || !cfg.autoApplyEnabled || !cfg.shareCode || cfg.chlorinatorId < 0) return;
+    let hours = typeof cfg.autoCheckHours === 'number' && cfg.autoCheckHours > 0 ? cfg.autoCheckHours : 12;
+    let delay = Math.max(hours * 3600000, minDelayMs, AUTO_SWG_AUTO_CHECK_MIN_DELAY_MS);
+    autoSwgAutoCheckTimer = setTimeout(() => { runAutoSwgAutoCheck().catch(err => logger.error(`AutoSwg: automatic check failed: ${err.message}`)); }, delay);
+}
+
+async function runAutoSwgAutoCheck() {
+    autoSwgAutoCheckTimer = undefined;
+    let cfg = sys.autoSwg;
+    if (!cfg.enabled || !cfg.autoApplyEnabled) return; // turned off since this cycle was armed
+    try {
+        // Keep re-aiming at the SAME original target once a glide is already in flight
+        // (and that target date hasn't already passed), rather than restarting the
+        // countdown every cycle -- see /state/autoSwg/refine for the same idea manually.
+        let targetDateMs = state.autoSwg.lastAppliedTargetDate ? new Date(state.autoSwg.lastAppliedTargetDate).getTime() : NaN;
+        if (!isNaN(targetDateMs) && targetDateMs > Date.now()) {
+            let targetFc = state.autoSwg.lastAppliedTargetFc;
+            let remainingDays = (targetDateMs - Date.now()) / 86400000;
+            let note = `Automatic check: refined against the original target of ${targetFc} ppm by ${formatLocalDateTime(new Date(targetDateMs), cfg.timezone)} ${cfg.timezone}.`;
+            await runAutoSwgRecommendation(targetFc, remainingDays, note);
+        }
+        else {
+            await runAutoSwgRecommendation(cfg.targetFc, cfg.targetDays, 'Automatic check: starting a fresh calculation.');
+        }
+        await applyAutoSwgRecommendation(true);
+    }
+    catch (err) { logger.error(`AutoSwg: automatic check/apply failed: ${err.message}`); }
+    finally { armAutoSwgAutoCheck(); }
+}
+
 export class StateRoute {
     public static initRoutes(app: express.Application) {
         ChlorinatorState.onPoolSetpointChanged = (chlor, previous, current) => {
@@ -302,9 +417,12 @@ export class StateRoute {
             // A manual override abandons whatever glide-to-target was in flight -- there's
             // no original deadline left to refine toward.
             state.autoSwg.lastAppliedTargetDate = undefined;
+            // A human just acted directly on the chlorinator -- nothing unreviewed left to warn about.
+            state.autoSwg.lastAutoApplyLargeChange = false;
             state.autoSwg.emitEquipmentChange();
         };
         armAutoSwgStep(AUTO_SWG_STEP_MIN_DELAY_MS);
+        armAutoSwgAutoCheck(AUTO_SWG_AUTO_CHECK_MIN_DELAY_MS);
         app.get('/state/rs485Port/:id', async (req, res, next) => {
             try {
                 let portId = parseInt(req.params.id, 10);
@@ -871,56 +989,8 @@ export class StateRoute {
         });
         app.put('/state/autoSwg/apply', async (req, res, next) => {
             try {
-                if (!state.autoSwg.pending) throw new ServiceParameterError('There is no pending AutoSwg recommendation to apply. Run /state/autoSwg/recommend first.', 'autoSwg', 'pending', state.autoSwg.pending);
-                if (sys.autoSwg.chlorinatorId < 0) throw new ServiceParameterError('AutoSwg is not configured with a target chlorinatorId.', 'autoSwg', 'chlorinatorId', sys.autoSwg.chlorinatorId);
-                let pct = typeof req.body.poolSetpoint !== 'undefined' ? parseInt(req.body.poolSetpoint, 10) : state.autoSwg.recommendedPct;
-                autoSwgApplyInFlight = { pct: pct, at: Date.now() };
-                let schlor: ChlorinatorState;
-                try { schlor = await sys.board.chlorinator.setChlorAsync({ id: sys.autoSwg.chlorinatorId, poolSetpoint: pct }); }
-                catch (err) { autoSwgApplyInFlight = undefined; throw err; }
-                state.autoSwg.lastAppliedAt = new Date().toISOString();
-                state.autoSwg.lastAppliedPct = pct;
-                // Snapshot the explanation behind THIS calculation now, since `rationale` gets
-                // overwritten by the next Check Now even if that one is never applied -- this is
-                // what stays available as "the text behind what's actually running right now".
-                state.autoSwg.lastAppliedRationale = state.autoSwg.rationale;
-                state.autoSwg.lastAppliedTargetFc = sys.autoSwg.targetFc;
-                state.autoSwg.lastAppliedTargetDate = new Date(Date.now() + sys.autoSwg.targetDays * 86400000).toISOString();
-                // Log the inputs and outputs behind this change. The setpoint is already
-                // on the chlorinator, so a logging failure must not fail the request.
-                try {
-                    let details = state.autoSwg.details || {};
-                    let capacity: number = details.swgCapacityPpmPerDay;
-                    let stateSnapshot = Object.assign({}, state.autoSwg.get(true));
-                    delete stateSnapshot.details;
-                    let calcOutputs = Object.assign({}, details);
-                    delete calcOutputs.inputs; // recorded separately as `inputs`
-                    let outputs = Object.assign(stateSnapshot, calcOutputs);
-                    appendAutoSwgHistory({
-                        source: 'auto',
-                        appliedAt: state.autoSwg.lastAppliedAt,
-                        appliedPct: pct,
-                        recommendedPct: state.autoSwg.recommendedPct,
-                        previousPct: state.autoSwg.currentPct,
-                        ppmPerDay: typeof capacity === 'number' ? Math.round(capacity * pct) / 100 : undefined,
-                        hrs: details.swgRunHours,
-                        inputs: details.inputs,
-                        outputs: outputs,
-                    });
-                }
-                catch (err) { logger.error(`AutoSwg: applied ${pct}% but could not write the history log: ${err.message}`); }
-                state.autoSwg.pending = false;
-                // If the applied % differs from maintenance (catching up from below, or backing
-                // off toward it from above), schedule a step to maintenance once the target
-                // period elapses -- runAutoSwgStep() figures out the direction when it runs.
-                let maintenancePct = state.autoSwg.maintenancePct;
-                if (sys.autoSwg.autoStepEnabled && typeof maintenancePct === 'number' && pct !== maintenancePct && sys.autoSwg.targetDays > 0) {
-                    state.autoSwg.stepAt = new Date(Date.now() + sys.autoSwg.targetDays * 86400000).toISOString();
-                    state.autoSwg.stepPct = maintenancePct;
-                    armAutoSwgStep();
-                }
-                else clearAutoSwgStep();
-                state.autoSwg.emitEquipmentChange();
+                let pctOverride = typeof req.body.poolSetpoint !== 'undefined' ? parseInt(req.body.poolSetpoint, 10) : undefined;
+                let schlor = await applyAutoSwgRecommendation(false, pctOverride);
                 return res.status(200).send({ chlorinator: schlor.get(true), autoSwg: state.autoSwg.get(true) });
             }
             catch (err) { next(err); }
