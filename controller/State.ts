@@ -3864,6 +3864,13 @@ export class AutoSwgState extends EqState {
     // data instead of restarting the countdown from today.
     public get lastAppliedTargetDate(): string { return this.data.lastAppliedTargetDate; }
     public set lastAppliedTargetDate(val: string) { this.setDataVal('lastAppliedTargetDate', val); }
+    // True when the most recent AUTOMATIC apply (fully-automatic mode, no human review)
+    // moved the setpoint by at least AutoSwg.autoApplyWarnThresholdPct percentage points,
+    // so the dashboard can flag it prominently. Cleared by any manual apply/override --
+    // once a human has looked at and acted on the setpoint, there's nothing unreviewed
+    // left to warn about.
+    public get lastAutoApplyLargeChange(): boolean { return this.data.lastAutoApplyLargeChange; }
+    public set lastAutoApplyLargeChange(val: boolean) { this.setDataVal('lastAutoApplyLargeChange', val); }
     public get error(): string { return this.data.error; }
     public set error(val: string) { this.setDataVal('error', val); }
     // Pending automatic step (see AutoSwg.autoStepEnabled): when to change the setpoint,

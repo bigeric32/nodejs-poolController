@@ -27,6 +27,7 @@ import { utils } from "../../../controller/Constants";
 import { ServiceProcessError } from "../../../controller/Errors";
 import { state } from "../../../controller/State";
 import { stopPacketCaptureAsync, startPacketCapture } from '../../../app';
+import { armAutoSwgAutoCheck } from '../state/State';
 import { conn } from "../../../controller/comms/Comms";
 import { webApp, BackupFile, RestoreFile } from "../../Server";
 import { release } from "os";
@@ -1022,6 +1023,10 @@ export class ConfigRoute {
         app.put('/config/autoSwg', async (req, res, next) => {
             try {
                 sys.autoSwg.set(req.body);
+                // Re-arm fully-automatic mode's periodic check against the just-saved config,
+                // so enabling it (or changing the interval) takes effect immediately rather
+                // than needing a restart.
+                armAutoSwgAutoCheck();
                 return res.status(200).send(sys.autoSwg.get(true));
             }
             catch (err) { next(err); }
