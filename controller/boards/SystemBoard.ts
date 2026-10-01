@@ -4357,13 +4357,20 @@ export class HeaterCommands extends BoardCommands {
                                             // 4.  Also only if there is enough heat ('run') to make it worthwhile
                                             // 5.  The heater should run until it reaches the set point + stop delta
                                             // 6.  When the heater turns off, note the solar collector temp. Collector reheats quickly in the sun. (#1212)
-                                            let hState: HeaterState = 
+                                            let hState: HeaterState =
                                             state.heaters.getItemById(heater.id);
-                                            if (state.temps.solar > body.temp // 1
-                                                && body.temp < cfgBody.heatSetpoint // 2
+                                            // Truncate (not round) the water temp for this decision only -- a reading of
+                                            // e.g. 83.9 is treated as 83, so solar keeps running until the water has
+                                            // actually reached the whole degree of the setpoint/coolSetpoint, rather than
+                                            // stopping/starting half a degree early because of a fractional reading. This
+                                            // is local to the solar on/off check; body.temp itself is untouched everywhere
+                                            // else (display, other heater types, AutoSwg, etc).
+                                            let waterTemp = Math.trunc(body.temp);
+                                            if (state.temps.solar > waterTemp // 1
+                                                && waterTemp < cfgBody.heatSetpoint // 2
                                                 && (typeof hState.prevHeaterOffTemp === 'undefined' || ((state.temps.solar - hState.prevHeaterOffTemp) > heater.startTempDelta)) // 3
-                                                && (state.temps.solar - body.temp) > heater.stopTempDelta // 4
-                                                && body.temp < cfgBody.heatSetpoint // 5
+                                                && (state.temps.solar - waterTemp) > heater.stopTempDelta // 4
+                                                && waterTemp < cfgBody.heatSetpoint // 5
                                             ) {
                                                 isOn = true;
                                                 body.heatStatus = sys.board.valueMaps.heatStatus.getValue('solar');
@@ -4372,11 +4379,11 @@ export class HeaterCommands extends BoardCommands {
                                             // reverse logic from heating states
                                             else if (heater.coolingEnabled
                                                 && state.heliotrope.isNight
-                                                && state.temps.solar < body.temp // 1
-                                                && body.temp > cfgBody.coolSetpoint // 2
+                                                && state.temps.solar < waterTemp // 1
+                                                && waterTemp > cfgBody.coolSetpoint // 2
                                                 && (typeof hState.prevHeaterOffTemp === 'undefined' || ((hState.prevHeaterOffTemp - state.temps.solar) > heater.startTempDelta)) // 3
-                                                && (body.temp - state.temps.solar) > heater.stopTempDelta // 4
-                                                && body.temp > (cfgBody.coolSetpoint + heater.stopTempDelta) // 5
+                                                && (waterTemp - state.temps.solar) > heater.stopTempDelta // 4
+                                                && waterTemp > (cfgBody.coolSetpoint + heater.stopTempDelta) // 5
                                             ) {
                                                 isOn = true;
                                                 body.heatStatus = sys.board.valueMaps.heatStatus.getValue('cooling');
