@@ -357,19 +357,29 @@ function clearAutoSwgAutoCheck() {
     autoSwgAutoCheckTimer = undefined;
 }
 
-// Arms (or re-arms) fully-automatic mode's periodic PoolMath check + apply cycle. Only
-// actually schedules anything while AutoSwg.autoApplyEnabled is on -- autoCheckHours is
-// otherwise meaningless, since a periodic check with nobody reviewing it would just
-// overwrite whatever unapplied preview the user is looking at on the calculation screen.
-// Called at startup and again whenever AutoSwg config is saved, so toggling this on takes
-// effect immediately rather than needing a restart.
+// Arms (or re-arms) the periodic PoolMath check + apply cycle. Only actually schedules
+// anything while BOTH autoCheckEnabled and autoApplyEnabled are on -- autoCheckEnabled by
+// itself would just overwrite whatever unapplied preview the user is looking at on the
+// calculation screen with nobody there to act on it, and autoApplyEnabled by itself (no
+// periodic timer) is a valid, supported standalone mode handled separately -- see
+// applyIfAutoApplyEnabled(), called after every manual Check Now/Refresh & Adjust too.
+// Called at startup and again whenever AutoSwg config is saved, so toggling either flag on
+// takes effect immediately rather than needing a restart.
 export function armAutoSwgAutoCheck(minDelayMs: number = 0) {
     clearAutoSwgAutoCheck();
     let cfg = sys.autoSwg;
-    if (!cfg.enabled || !cfg.autoApplyEnabled || !cfg.shareCode || cfg.chlorinatorId < 0) return;
+    if (!cfg.enabled || !cfg.autoCheckEnabled || !cfg.autoApplyEnabled || !cfg.shareCode || cfg.chlorinatorId < 0) return;
     let hours = typeof cfg.autoCheckHours === 'number' && cfg.autoCheckHours > 0 ? cfg.autoCheckHours : 12;
     let delay = Math.max(hours * 3600000, minDelayMs, AUTO_SWG_AUTO_CHECK_MIN_DELAY_MS);
     autoSwgAutoCheckTimer = setTimeout(() => { runAutoSwgAutoCheck().catch(err => logger.error(`AutoSwg: automatic check failed: ${err.message}`)); }, delay);
+}
+
+// After a manual Check Now/Refresh & Adjust produces a fresh pending recommendation, apply
+// it immediately with no further confirmation if AutoSwg.autoApplyEnabled is on -- this is
+// what lets auto-apply be used standalone (manual-trigger only), independent of whether the
+// periodic autoCheckEnabled timer is running at all.
+async function applyIfAutoApplyEnabled(): Promise<void> {
+    if (sys.autoSwg.autoApplyEnabled) await applyAutoSwgRecommendation(true);
 }
 
 async function runAutoSwgAutoCheck() {
@@ -937,6 +947,7 @@ export class StateRoute {
             try {
                 let cfg = sys.autoSwg;
                 await runAutoSwgRecommendation(cfg.targetFc, cfg.targetDays);
+                await applyIfAutoApplyEnabled();
                 return res.status(200).send(state.autoSwg.get(true));
             }
             catch (err) {
@@ -961,6 +972,7 @@ export class StateRoute {
                 let remainingDays = (targetDate.getTime() - Date.now()) / 86400000;
                 let note = `Refined against the original target of ${targetFc} ppm by ${formatLocalDateTime(targetDate, sys.autoSwg.timezone)} ${sys.autoSwg.timezone} (same deadline as the last apply, recalculated with fresh PoolMath data).`;
                 await runAutoSwgRecommendation(targetFc, remainingDays, note);
+                await applyIfAutoApplyEnabled();
                 return res.status(200).send(state.autoSwg.get(true));
             }
             catch (err) {
