@@ -2409,11 +2409,17 @@ export class AutoSwg extends EqItem {
         if (typeof this.data.targetFc === 'undefined') this.data.targetFc = 9.0;
         if (typeof this.data.targetDays === 'undefined') this.data.targetDays = 3.0;
         if (typeof this.data.autoStepEnabled === 'undefined') this.data.autoStepEnabled = false;
-        // Fully-automatic mode: periodically re-check PoolMath and apply the result with
-        // no manual review. autoCheckHours only matters while this is true -- with it off,
-        // a periodic check would just overwrite whatever unapplied preview the user is
-        // reviewing on the calculation screen with nobody there to act on it.
+        // When true, a recommendation gets applied with no manual review -- whenever one is
+        // produced, whether that's a manual Check Now/Refresh & Adjust click, or (if
+        // autoCheckEnabled below is also on) the periodic automatic check. Usable entirely
+        // on its own (auto-apply manual checks, no periodic timer at all).
         if (typeof this.data.autoApplyEnabled === 'undefined') this.data.autoApplyEnabled = false;
+        // Periodically re-checks PoolMath on its own, every autoCheckHours, instead of
+        // waiting for a manual Check Now/Refresh & Adjust click. Only meaningful -- and only
+        // actually armed -- while autoApplyEnabled is also on, since a periodic check with
+        // nobody reviewing it would otherwise just overwrite whatever unapplied preview the
+        // user is looking at on the calculation screen.
+        if (typeof this.data.autoCheckEnabled === 'undefined') this.data.autoCheckEnabled = false;
         if (typeof this.data.autoCheckHours === 'undefined') this.data.autoCheckHours = 12;
         // An auto-applied change whose magnitude (percentage points vs. the previous
         // applied %) meets or exceeds this is flagged prominently on the dashboard, since
@@ -2466,6 +2472,8 @@ export class AutoSwg extends EqItem {
     public set autoStepEnabled(val: boolean) { this.setDataVal('autoStepEnabled', val); }
     public get autoApplyEnabled(): boolean { return this.data.autoApplyEnabled; }
     public set autoApplyEnabled(val: boolean) { this.setDataVal('autoApplyEnabled', val); }
+    public get autoCheckEnabled(): boolean { return this.data.autoCheckEnabled; }
+    public set autoCheckEnabled(val: boolean) { this.setDataVal('autoCheckEnabled', val); }
     public get autoCheckHours(): number { return this.data.autoCheckHours; }
     public set autoCheckHours(val: number) { this.setDataVal('autoCheckHours', val); }
     public get autoApplyWarnThresholdPct(): number { return this.data.autoApplyWarnThresholdPct; }
