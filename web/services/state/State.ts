@@ -27,7 +27,7 @@ import { conn } from "../../../controller/comms/Comms";
 import { config } from "../../../config/Config";
 
 import { ServiceParameterError } from "../../../controller/Errors";
-import { buildCombinedHistory, computeRecommendation, computeSwgCapacity, minutesToHHMM } from "../../../controller/AutoSwgService";
+import { buildCombinedHistory, computeRecommendation, computeSwgCapacity, formatLocalDateTime, minutesToHHMM } from "../../../controller/AutoSwgService";
 import { appendAutoSwgHistory, readAutoSwgHistory, toLocalSwgEntries } from "../../../controller/AutoSwgHistory";
 
 // 'HH:MM' wall-clock time of `dt` in `timeZone`.
@@ -200,6 +200,9 @@ async function runAutoSwgStep() {
     // maintenance %), so give it its own one-line explanation rather than leaving whatever
     // rationale happened to be sitting there from an unrelated, possibly much older check.
     state.autoSwg.lastAppliedRationale = [`Automatically stepped ${direction} to the maintenance ${pct}% after the ${cfg.targetDays}-day target period (from ${previous}%).`];
+    // The original glide-to-target completed (that's what this step is) -- there's no
+    // longer an in-flight deadline to refine toward, just steady maintenance.
+    state.autoSwg.lastAppliedTargetDate = undefined;
     try {
         let win = resolveAutoSwgRunWindow(cfg);
         let capacity: { ppmPerDayAtFull: number; hours: number };
@@ -221,6 +224,63 @@ async function runAutoSwgStep() {
     clearAutoSwgStep();
 }
 
+// Runs a Check Now-style recommendation against the configured PoolMath page and
+// populates state.autoSwg with the result -- shared by /recommend (today's calc,
+// using config's targetFc/targetDays) and /refine (re-aiming at an already-applied
+// recommendation's original target date/FC with fresh PoolMath data), and intended
+// to also back a future fully-automatic refresh/apply cycle without duplicating this
+// logic a third time.
+async function runAutoSwgRecommendation(targetFc: number, targetDays: number, extraRationaleNote?: string): Promise<void> {
+    let cfg = sys.autoSwg;
+    if (!cfg.shareCode) throw new ServiceParameterError('AutoSwg is not configured: shareCode is required.', 'autoSwg', 'shareCode', cfg.shareCode);
+    let { swgStartTime, swgStopTime, scheduleNote } = resolveAutoSwgRunWindow(cfg);
+    let chlorRecord = sys.chlorinators.toArray().find(c => c.id === cfg.chlorinatorId);
+    let schlor = chlorRecord ? state.chlorinators.getItemById(chlorRecord.id, false) : undefined;
+    let result = await computeRecommendation({
+        shareCode: cfg.shareCode,
+        poolName: cfg.poolName || undefined,
+        gallons: cfg.gallons,
+        swgLbsPerDay: cfg.swgLbsPerDay,
+        swgStartTime: swgStartTime,
+        swgStopTime: swgStopTime,
+        timezone: cfg.timezone,
+        windowDays: cfg.windowDays,
+        targetFc: targetFc,
+        targetDays: targetDays,
+    }, undefined, toLocalSwgEntries(readAutoSwgHistory()));
+    if (extraRationaleNote) result.rationale.unshift(extraRationaleNote);
+    if (scheduleNote) result.rationale.unshift(scheduleNote);
+    state.autoSwg.lastCheckedAt = new Date().toISOString();
+    state.autoSwg.currentPct = schlor ? schlor.targetOutput : result.currentPct;
+    // recommendedPct is what Apply sends to the chlorinator, so it needs to be
+    // the duty cycle that actually reaches targetFc within targetDays -- not
+    // just the one that treads water at the current level. Plain steady-state
+    // "match demand" is kept as maintenancePct for context only (it's also
+    // still spelled out in the rationale text below).
+    state.autoSwg.recommendedPct = result.recommendedPctForTarget;
+    state.autoSwg.maintenancePct = result.recommendedPct;
+    state.autoSwg.avgConsumptionPpmPerDay = result.avgConsumptionPpmPerDay;
+    state.autoSwg.avgConsumptionSummary = result.avgConsumptionSummary;
+    state.autoSwg.avgWindowStart = result.avgWindowStart;
+    state.autoSwg.avgWindowEnd = result.avgWindowEnd;
+    state.autoSwg.projectedCurrentFc = result.projectedCurrentFc;
+    state.autoSwg.details = {
+        inputs: result.inputs,
+        swgCapacityPpmPerDay: result.swgCapacityPpmPerDay,
+        swgRunHours: result.swgRunHours,
+        avgWindowExtended: result.avgWindowExtended,
+        mostRecentFc: result.mostRecentFc,
+        mostRecentCya: result.mostRecentCya,
+        mostRecentSwg: result.mostRecentSwg,
+        localSwgEntriesUsed: result.localSwgEntriesUsed,
+        poolMathSwgEntriesReplaced: result.poolMathSwgEntriesReplaced,
+    };
+    state.autoSwg.rationale = result.rationale;
+    state.autoSwg.error = undefined;
+    state.autoSwg.pending = true;
+    state.autoSwg.emitEquipmentChange();
+}
+
 export class StateRoute {
     public static initRoutes(app: express.Application) {
         ChlorinatorState.onPoolSetpointChanged = (chlor, previous, current) => {
@@ -238,6 +298,9 @@ export class StateRoute {
             state.autoSwg.lastAppliedAt = new Date().toISOString();
             state.autoSwg.lastAppliedPct = current;
             state.autoSwg.lastAppliedRationale = [`Manually changed from ${previous}% to ${current}%.`];
+            // A manual override abandons whatever glide-to-target was in flight -- there's
+            // no original deadline left to refine toward.
+            state.autoSwg.lastAppliedTargetDate = undefined;
             state.autoSwg.emitEquipmentChange();
         };
         armAutoSwgStep(AUTO_SWG_STEP_MIN_DELAY_MS);
@@ -755,54 +818,31 @@ export class StateRoute {
         app.post('/state/autoSwg/recommend', async (req, res, next) => {
             try {
                 let cfg = sys.autoSwg;
-                if (!cfg.shareCode) throw new ServiceParameterError('AutoSwg is not configured: shareCode is required.', 'autoSwg', 'shareCode', cfg.shareCode);
-
-                let { swgStartTime, swgStopTime, scheduleNote } = resolveAutoSwgRunWindow(cfg);
-
-                let chlorRecord = sys.chlorinators.toArray().find(c => c.id === cfg.chlorinatorId);
-                let schlor = chlorRecord ? state.chlorinators.getItemById(chlorRecord.id, false) : undefined;
-                let result = await computeRecommendation({
-                    shareCode: cfg.shareCode,
-                    poolName: cfg.poolName || undefined,
-                    gallons: cfg.gallons,
-                    swgLbsPerDay: cfg.swgLbsPerDay,
-                    swgStartTime: swgStartTime,
-                    swgStopTime: swgStopTime,
-                    timezone: cfg.timezone,
-                    windowDays: cfg.windowDays,
-                    targetFc: cfg.targetFc,
-                    targetDays: cfg.targetDays,
-                }, undefined, toLocalSwgEntries(readAutoSwgHistory()));
-                if (scheduleNote) result.rationale.unshift(scheduleNote);
-                state.autoSwg.lastCheckedAt = new Date().toISOString();
-                state.autoSwg.currentPct = schlor ? schlor.targetOutput : result.currentPct;
-                // recommendedPct is what Apply sends to the chlorinator, so it needs to be
-                // the duty cycle that actually reaches targetFc within targetDays -- not
-                // just the one that treads water at the current level. Plain steady-state
-                // "match demand" is kept as maintenancePct for context only (it's also
-                // still spelled out in the rationale text below).
-                state.autoSwg.recommendedPct = result.recommendedPctForTarget;
-                state.autoSwg.maintenancePct = result.recommendedPct;
-                state.autoSwg.avgConsumptionPpmPerDay = result.avgConsumptionPpmPerDay;
-                state.autoSwg.avgConsumptionSummary = result.avgConsumptionSummary;
-                state.autoSwg.avgWindowStart = result.avgWindowStart;
-                state.autoSwg.avgWindowEnd = result.avgWindowEnd;
-                state.autoSwg.projectedCurrentFc = result.projectedCurrentFc;
-                state.autoSwg.details = {
-                    inputs: result.inputs,
-                    swgCapacityPpmPerDay: result.swgCapacityPpmPerDay,
-                    swgRunHours: result.swgRunHours,
-                    avgWindowExtended: result.avgWindowExtended,
-                    mostRecentFc: result.mostRecentFc,
-                    mostRecentCya: result.mostRecentCya,
-                    mostRecentSwg: result.mostRecentSwg,
-                    localSwgEntriesUsed: result.localSwgEntriesUsed,
-                    poolMathSwgEntriesReplaced: result.poolMathSwgEntriesReplaced,
-                };
-                state.autoSwg.rationale = result.rationale;
-                state.autoSwg.error = undefined;
-                state.autoSwg.pending = true;
+                await runAutoSwgRecommendation(cfg.targetFc, cfg.targetDays);
+                return res.status(200).send(state.autoSwg.get(true));
+            }
+            catch (err) {
+                state.autoSwg.error = err.message;
+                state.autoSwg.pending = false;
                 state.autoSwg.emitEquipmentChange();
+                next(err);
+            }
+        });
+        // Re-runs the calculation against the SAME target FC/date an already-applied
+        // recommendation committed to (not today's config targetDays, which would just
+        // restart the countdown), using fresh PoolMath data -- lets a glide-to-target
+        // already in progress be corrected mid-flight instead of waiting out a stale
+        // estimate until the original deadline arrives. Still only produces a preview;
+        // the result still has to go through Apply like any other check, consistent
+        // with every other AutoSwg calculation.
+        app.post('/state/autoSwg/refine', async (req, res, next) => {
+            try {
+                if (!state.autoSwg.lastAppliedTargetDate) throw new ServiceParameterError('There is no in-flight AutoSwg target to refine toward -- apply a recommendation first.', 'autoSwg', 'lastAppliedTargetDate', state.autoSwg.lastAppliedTargetDate);
+                let targetDate = new Date(state.autoSwg.lastAppliedTargetDate);
+                let targetFc = state.autoSwg.lastAppliedTargetFc;
+                let remainingDays = (targetDate.getTime() - Date.now()) / 86400000;
+                let note = `Refined against the original target of ${targetFc} ppm by ${formatLocalDateTime(targetDate, sys.autoSwg.timezone)} ${sys.autoSwg.timezone} (same deadline as the last apply, recalculated with fresh PoolMath data).`;
+                await runAutoSwgRecommendation(targetFc, remainingDays, note);
                 return res.status(200).send(state.autoSwg.get(true));
             }
             catch (err) {
@@ -828,6 +868,7 @@ export class StateRoute {
                 // what stays available as "the text behind what's actually running right now".
                 state.autoSwg.lastAppliedRationale = state.autoSwg.rationale;
                 state.autoSwg.lastAppliedTargetFc = sys.autoSwg.targetFc;
+                state.autoSwg.lastAppliedTargetDate = new Date(Date.now() + sys.autoSwg.targetDays * 86400000).toISOString();
                 // Log the inputs and outputs behind this change. The setpoint is already
                 // on the chlorinator, so a logging failure must not fail the request.
                 try {

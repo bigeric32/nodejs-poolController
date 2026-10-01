@@ -411,7 +411,7 @@ function zonedTimeToUtc(year: number, month: number, day: number, t: TimeOfDay, 
 }
 
 // 'YYYY-MM-DD HH:mm' wall-clock time of `instant` in `timeZone`.
-function formatLocalDateTime(instant: Date, timeZone: string): string {
+export function formatLocalDateTime(instant: Date, timeZone: string): string {
     const dtf = new Intl.DateTimeFormat('en-US', {
         timeZone, hourCycle: 'h23',
         year: 'numeric', month: '2-digit', day: '2-digit',
