@@ -28,8 +28,9 @@ import { config } from "../../../config/Config";
 
 import { ServiceParameterError } from "../../../controller/Errors";
 import { buildCombinedHistory, computeRecommendation, computeSwgCapacity, formatLocalDateTime, minutesToHHMM, nextScheduledCheck } from "../../../controller/AutoSwgService";
+import type { PageReadings } from "../../../controller/AutoSwgService";
 import { appendAutoSwgHistory, readAutoSwgHistory, toLocalSwgEntries } from "../../../controller/AutoSwgHistory";
-import { archivedFcReadings, isPoolMathArchiveCurrent, poolMathArchiveSummary, syncPoolMathArchive } from "../../../controller/AutoSwgPoolMathArchive";
+import { archivedFcReadings, archivedSwgEvents, isPoolMathArchiveCurrent, poolMathArchiveSummary, refreshPoolMathArchiveFromPage, syncPoolMathArchive } from "../../../controller/AutoSwgPoolMathArchive";
 
 // 'HH:MM' wall-clock time of `dt` in `timeZone`.
 function formatHHMMInZone(dt: Date, timeZone: string): string {
@@ -311,7 +312,7 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
         sunriseTime: sunTimes.sunrise,
         sunsetTime: sunTimes.sunset,
         daytimeSharePct: cfg.daytimeLossSharePct,
-    }, undefined, toLocalSwgEntries(readAutoSwgHistory()));
+    }, undefined, toLocalSwgEntries(readAutoSwgHistory()), refreshAutoSwgArchiveFromPage);
     // A Refresh works from fresh PoolMath data; if the newest FC reading is the very one the
     // last apply was already based on, there is nothing new and re-running would only restate
     // the same number (or nudge it with extrapolation). Leave everything as it is. Check Now
@@ -508,6 +509,21 @@ async function applyIfAutoApplyEnabled(skipped?: string): Promise<void> {
 function autoSwgResponse(skipped?: string) {
     let data = state.autoSwg.get(true);
     return skipped ? Object.assign({}, data, { skipped: skipped }) : data;
+}
+
+// Called with what each read of the PoolMath share page found: that page is the freshest data,
+// so it overwrites the archived readings for the period it covers (PoolMath entries can be edited
+// or deleted). A no-op until the archive has been pulled for this share code.
+function refreshAutoSwgArchiveFromPage(page: PageReadings) {
+    let cfg = sys.autoSwg;
+    let r = refreshPoolMathArchiveFromPage(cfg.shareCode, cfg.poolName || undefined, page);
+    if (r && (r.updated || r.added || r.removed)) {
+        logger.info(`AutoSwg: PoolMath history archive refreshed from the share page: ${r.updated} updated, ${r.added} added, ${r.removed} removed.`);
+        let sum = poolMathArchiveSummary();
+        state.autoSwg.archiveCount = sum.count;
+        state.autoSwg.archiveOldest = sum.oldest;
+        state.autoSwg.emitEquipmentChange();
+    }
 }
 
 // Background PoolMath history sync: pulls up to 18 months of logs from the share link's JSON
@@ -1120,7 +1136,7 @@ export class StateRoute {
         // be read (see poolMathError in the response).
         app.get('/state/autoSwg/history/combined', async (req, res, next) => {
             try {
-                let combined = await buildCombinedHistory({ shareCode: sys.autoSwg.shareCode, poolName: sys.autoSwg.poolName || undefined }, undefined, toLocalSwgEntries(readAutoSwgHistory()), archivedFcReadings());
+                let combined = await buildCombinedHistory({ shareCode: sys.autoSwg.shareCode, poolName: sys.autoSwg.poolName || undefined }, undefined, toLocalSwgEntries(readAutoSwgHistory()), archivedFcReadings(), archivedSwgEvents(), refreshAutoSwgArchiveFromPage);
                 return res.status(200).send(combined);
             }
             catch (err) { next(err); }

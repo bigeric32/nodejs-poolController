@@ -250,6 +250,24 @@ interface ParsedCards {
     ccEvents: FcEvent[];
 }
 
+// What a read of the share page found, for refreshing the history archive (see
+// AutoSwgPoolMathArchive.refreshPoolMathArchiveFromPage): the test readings it lists and the
+// time its oldest entry of any kind goes back to -- everything newer is what the page vouches
+// for, so edits and deletions made in PoolMath within that span show up here.
+export interface PageReadings {
+    coverageStart?: Date;
+    fc: { ts: Date; value: number }[];
+    cc: { ts: Date; value: number }[];
+    cya: { ts: Date; value: number }[];
+    swg: { ts: Date; ppmPerDay: number; hrs: number; pct: number }[];
+}
+
+function pageReadings(p: ParsedCards): PageReadings {
+    const all = [...p.fcEvents, ...p.ccEvents, ...p.cyaEvents, ...p.swgEvents];
+    const coverageStart = all.length ? new Date(Math.min(...all.map(e => e.ts.getTime()))) : undefined;
+    return { coverageStart, fc: p.fcEvents, cc: p.ccEvents, cya: p.cyaEvents, swg: p.swgEvents.map(e => ({ ts: e.ts, ppmPerDay: e.ppmPerDay, hrs: e.hrs, pct: e.pct })) };
+}
+
 function parseCards(html: string, poolHeading?: string): ParsedCards {
     const section = restrictToHeadingSection(html, poolHeading);
     const cards = extractDivBlocks(section, cls => /\blogCard\b/.test(cls));
@@ -622,14 +640,19 @@ export function computeSwgCapacity(p: { gallons: number; swgLbsPerDay: number; s
     return { ppmPerDayAtFull: ppmPerDayAtFullDuty(p.gallons, p.swgLbsPerDay, hours), hours };
 }
 
-export async function computeRecommendation(params: AutoSwgParams, html?: string, localSwgEntries: LocalSwgEntry[] = []): Promise<AutoSwgResult> {
+export async function computeRecommendation(params: AutoSwgParams, html?: string, localSwgEntries: LocalSwgEntry[] = [], onPageParsed?: (page: PageReadings) => void): Promise<AutoSwgResult> {
     const rationale: string[] = [];
     const swgStart = parseTimeOfDay(params.swgStartTime);
     const swgStop = parseTimeOfDay(params.swgStopTime);
     const swgHours = durationHours(swgStart, swgStop);
 
     const pageHtml = html || await fetchHtml(params.shareCode);
-    const { fcEvents, swgEvents: poolMathSwgEvents, cyaEvents } = parseCards(pageHtml, params.poolName);
+    const parsedCards = parseCards(pageHtml, params.poolName);
+    const { fcEvents, swgEvents: poolMathSwgEvents, cyaEvents } = parsedCards;
+    if (onPageParsed) {
+        try { onPageParsed(pageReadings(parsedCards)); }
+        catch (err) { logger.warn(`AutoSwg: could not refresh the PoolMath history archive from the page: ${err.message}`); }
+    }
 
     if (fcEvents.length === 0) throw new Error('No FC test readings found on the PoolMath page. The page markup may have changed, or the share code/pool name may be wrong.');
     const swgMerge = mergeSwgEvents(poolMathSwgEvents, localSwgEntries);
@@ -870,13 +893,17 @@ export interface CombinedHistory {
 // from PoolMath, and SWG entries from the local log plus PoolMath's, with a
 // PoolMath SWG entry dropped when a local one is within an hour of it. If
 // PoolMath can't be read, the local SWG entries are still returned.
-export async function buildCombinedHistory(params: { shareCode?: string; poolName?: string }, html?: string, localSwgEntries: LocalSwgEntry[] = [], archivedFc: { ts: Date; value: number }[] = []): Promise<CombinedHistory> {
+export async function buildCombinedHistory(params: { shareCode?: string; poolName?: string }, html?: string, localSwgEntries: LocalSwgEntry[] = [], archivedFc: { ts: Date; value: number }[] = [], archivedSwg: { ts: Date; ppmPerDay: number; hrs: number; pct: number }[] = [], onPageParsed?: (page: PageReadings) => void): Promise<CombinedHistory> {
     let fcEvents: FcEvent[] = [];
     let poolMathSwgEvents: SwgEvent[] = [];
     let poolMathError: string;
     try {
         if (!html && !params.shareCode) throw new Error('No PoolMath share code is configured.');
         const parsed = parseCards(html || await fetchHtml(params.shareCode), params.poolName);
+        if (onPageParsed) {
+            try { onPageParsed(pageReadings(parsed)); }
+            catch (err) { logger.warn(`AutoSwg: could not refresh the PoolMath history archive from the page: ${err.message}`); }
+        }
         fcEvents = parsed.fcEvents;
         poolMathSwgEvents = parsed.swgEvents;
     }
@@ -886,6 +913,11 @@ export async function buildCombinedHistory(params: { shareCode?: string; poolNam
     if (archivedFc.length) {
         const seen = new Set(fcEvents.map(e => `${e.ts.getTime()}|${e.value}`));
         fcEvents = [...fcEvents, ...archivedFc.filter(e => !seen.has(`${e.ts.getTime()}|${e.value}`))];
+    }
+    // Likewise older SWG entries from the archive; the page's own entry wins when both have one.
+    if (archivedSwg.length) {
+        const onPage = (t: number) => poolMathSwgEvents.some(e => Math.abs(e.ts.getTime() - t) <= 2 * 60 * 1000);
+        poolMathSwgEvents = [...poolMathSwgEvents, ...archivedSwg.filter(a => !onPage(a.ts.getTime())).map(a => ({ ts: a.ts, ppmPerDay: a.ppmPerDay, hrs: a.hrs, pct: a.pct, source: 'poolmath' as SwgSource }))];
     }
     const swgMerge = mergeSwgEvents(poolMathSwgEvents, localSwgEntries);
     const entries: CombinedHistoryEntry[] = [
