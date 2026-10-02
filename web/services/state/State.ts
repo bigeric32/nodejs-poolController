@@ -141,6 +141,7 @@ function clearAutoSwgCalculation() {
     state.autoSwg.details = undefined;
     state.autoSwg.rationale = undefined;
     state.autoSwg.targetWarning = undefined;
+    state.autoSwg.targetInfo = undefined;
     state.autoSwg.staleFcNote = undefined;
     state.autoSwg.error = undefined;
 }
@@ -207,6 +208,7 @@ async function runAutoSwgStep() {
     let completedTargetDate = state.autoSwg.lastAppliedTargetDate;
     state.autoSwg.lastAppliedTargetDate = undefined;
     state.autoSwg.lastAppliedTargetWarning = undefined;
+    state.autoSwg.lastAppliedTargetInfo = undefined;
     state.autoSwg.lastAppliedStaleFcNote = undefined;
     try {
         let win = resolveAutoSwgRunWindow(cfg);
@@ -297,6 +299,7 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
     state.autoSwg.pendingTargetFc = result.targetFcUsed;
     state.autoSwg.pendingTargetDate = result.targetDateUsed;
     state.autoSwg.targetWarning = result.targetWarning;
+    state.autoSwg.targetInfo = result.targetInfo;
     state.autoSwg.staleFcNote = result.staleFcNote;
     state.autoSwg.currentPct = schlor ? schlor.targetOutput : result.currentPct;
     // recommendedPct is what Apply sends to the chlorinator, so it needs to be
@@ -361,6 +364,7 @@ async function applyAutoSwgRecommendation(isAutoApply: boolean, pctOverride?: nu
     state.autoSwg.lastAppliedTargetFc = typeof state.autoSwg.pendingTargetFc === 'number' ? state.autoSwg.pendingTargetFc : sys.autoSwg.targetFc;
     state.autoSwg.lastAppliedTargetDate = state.autoSwg.pendingTargetDate;
     state.autoSwg.lastAppliedTargetWarning = state.autoSwg.targetWarning;
+    state.autoSwg.lastAppliedTargetInfo = state.autoSwg.targetInfo;
     state.autoSwg.lastAppliedStaleFcNote = state.autoSwg.staleFcNote;
     // Which FC reading this apply was based on, so a later Refresh can tell whether
     // PoolMath has anything newer (see the skip in runAutoSwgRecommendation).
@@ -495,6 +499,7 @@ export class StateRoute {
             // no original deadline left to refine toward.
             state.autoSwg.lastAppliedTargetDate = undefined;
             state.autoSwg.lastAppliedTargetWarning = undefined;
+            state.autoSwg.lastAppliedTargetInfo = undefined;
             state.autoSwg.lastAppliedStaleFcNote = undefined;
             // A human just acted directly on the chlorinator -- nothing unreviewed left to warn about.
             state.autoSwg.lastAutoApplyLargeChange = false;

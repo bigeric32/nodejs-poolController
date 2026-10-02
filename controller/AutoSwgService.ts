@@ -92,6 +92,7 @@ export interface AutoSwgResult {
     targetDaysUsed: number;          // days from calculation time until targetDateUsed
     refreshed: boolean;              // true if it stayed on course for params.inFlight rather than starting a new target
     targetWarning?: string;          // set when even 100% can't reach targetFc within the window (the % above is capped at 100)
+    targetInfo?: string;             // set when FC is so far above targetFc that consumption alone (SWG at 0%) won't bring it down by targetDateUsed -- informational, not a problem
     staleFcNote?: string;            // set when the last FC reading is STALE_FC_DAYS or more old
     mostRecentFc?: { value: number; ts: string };
     mostRecentCya?: { value: number; ts: string };
@@ -692,6 +693,19 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         }
     }
 
+    // The mirror image of the warning above, for FC that starts well ABOVE the target: even
+    // with the SWG off, consumption alone won't bring it down by the deadline. The % is
+    // already at its floor (0), so this isn't a problem -- just worth explaining why the
+    // target won't be met by then.
+    let targetInfo: string | undefined;
+    const fcAtDeadlineAtZero = projectedCurrentFc - (avgPerDay * targetDays);
+    if (fcAtDeadlineAtZero > targetFc + 0.005) {
+        const window = `${Math.round(targetDays * 10) / 10} day${Math.round(targetDays * 10) / 10 === 1 ? '' : 's'}`;
+        const reach = avgPerDay > 0 ? `; at the average ${avgPerDay.toFixed(2)} ppm/day of consumption it would take about ${((projectedCurrentFc - targetFc) / avgPerDay).toFixed(1)} days to come down on its own` : ', and no consumption was measured to bring it down';
+        targetInfo = `FC is projected at ${projectedCurrentFc.toFixed(2)} ppm, so even with the SWG off it would still be about ${fcAtDeadlineAtZero.toFixed(2)} ppm (above the ${targetFc} ppm target) after ${window}${reach}. The SWG is not needed to bring it down.`;
+        rationale.push(`NOTE: ${targetInfo}`);
+    }
+
     // What gets recorded as this result's inputs: the parameters, minus the in-flight
     // object (a Date and possibly Infinity -- neither survives being logged as JSON), with
     // the target actually aimed at in place of the configured one.
@@ -713,6 +727,7 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         targetDaysUsed: targetDays,
         refreshed: refreshed,
         targetWarning: targetWarning,
+        targetInfo: targetInfo,
         staleFcNote: staleFcNote,
         mostRecentFc: { value: lastFc.value, ts: lastFc.ts.toISOString() },
         mostRecentCya: cyaEvents.length ? { value: cyaEvents[cyaEvents.length - 1].value, ts: cyaEvents[cyaEvents.length - 1].ts.toISOString() } : undefined,

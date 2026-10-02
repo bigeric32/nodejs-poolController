@@ -3886,6 +3886,12 @@ export class AutoSwgState extends EqState {
     public set lastAppliedTargetWarning(val: string) { this.setDataVal('lastAppliedTargetWarning', val); }
     // Set when the newest FC reading behind a calculation is several days old (the projection
     // is then mostly extrapolation). Same lifecycle as targetWarning / lastAppliedTargetWarning.
+    // Informational counterpart of targetWarning: FC is so far above target that consumption
+    // alone (SWG at 0%) won't bring it down by the deadline. Same lifecycle as targetWarning.
+    public get targetInfo(): string { return this.data.targetInfo; }
+    public set targetInfo(val: string) { this.setDataVal('targetInfo', val); }
+    public get lastAppliedTargetInfo(): string { return this.data.lastAppliedTargetInfo; }
+    public set lastAppliedTargetInfo(val: string) { this.setDataVal('lastAppliedTargetInfo', val); }
     public get staleFcNote(): string { return this.data.staleFcNote; }
     public set staleFcNote(val: string) { this.setDataVal('staleFcNote', val); }
     public get lastAppliedStaleFcNote(): string { return this.data.lastAppliedStaleFcNote; }
