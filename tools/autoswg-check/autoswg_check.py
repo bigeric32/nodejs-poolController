@@ -204,9 +204,9 @@ class Params:
         self.credit = True
         self.daylight = True
         self.daytime_share_pct = 0
-        self.damping = 1.0               # weight on the modelled FC change since the last reading (1 = all of it)
+        self.damping = 0.5               # weight on the modelled FC change since the last reading (1 = all of it); the app's default
         self.taper_start = 3.0           # days: full weight until the last reading is this old ...
-        self.taper_end = 0.0             # ... falling to 0 at this many days (0 = no taper)
+        self.taper_end = 8.0             # ... falling to 0 at this many days (0 = no taper); the app's default
         self.swg_start = 8 * 60          # run window start, minutes after local midnight
         self.tz = timezone.utc
         self.today = datetime.now(timezone.utc)
@@ -577,6 +577,8 @@ def report_whatif(ds, p, args, csv_dir):
     for t in (0, 1, 3):
         if t != p.tolerance:
             variants.append(('FC anomaly check off' if t == 0 else 'FC anomaly tolerance %d ppm' % t, p.copy(tolerance=float(t))))
+    key = lambda q: (q.window_days, q.credit, q.tolerance, q.damping, q.taper_start, q.taper_end, q.daylight)
+    variants = [variants[0]] + [v for v in variants[1:] if key(v[1]) != key(p)]    # skip variants identical to the current settings
     results = [run_errors(ds, v[1], ks) for v in variants]
     common = [k for k in ks if all(k in r for r in results)]
     print('\n== What-if sweep ==')
@@ -675,7 +677,7 @@ def report_capacity(ds, p, args):
                 if better == 'the LOGGED credit':
                     print('       So the credit may be right and the % or run hours entered may not reflect what actually ran (or the credit was edited).')
                 else:
-                    print('       So the credit looks too small: fix the entry in PoolMath.')
+                    print('       So the credit looks too %s: fix the entry in PoolMath.' % ('large' if e[1] > expected else 'small'))
         print('     A wrong credit on an entry makes the consumption around it come out too low or too high; the FC check above says which way to look.')
     else:
         print('\n  every entry fits its period within %d%%.' % int(TOL * 100))
@@ -721,9 +723,9 @@ def main():
     ap.add_argument('--utc-offset', type=float, help='fixed UTC offset in hours if --tz is unavailable')
     ap.add_argument('--window', type=int, default=21, help='averaging window in days (default 21)')
     ap.add_argument('--tolerance', type=float, default=2.0, help='FC anomaly tolerance in ppm, 0 = off (default 2)')
-    ap.add_argument('--damping', type=float, default=1.0, help='weight on the modelled FC change since the last reading, 0 to 1 (default 1 = all of it)')
+    ap.add_argument('--damping', type=float, default=0.5, help='weight on the modelled FC change since the last reading, 0 to 1 (default 0.5, the app default; 1 = all of it)')
     ap.add_argument('--taper-start', type=float, default=3.0, help='days: full projection weight until the last reading is this old (default 3)')
-    ap.add_argument('--taper-end', type=float, default=0.0, help='days at which the weight reaches 0 (default 0 = no taper)')
+    ap.add_argument('--taper-end', type=float, default=8.0, help='days at which the weight reaches 0 (default 8, the app default; 0 = no taper)')
     ap.add_argument('--no-credit', action='store_true', help='do not credit liquid chlorine additions')
     ap.add_argument('--no-daylight', action='store_true', help='count time by the clock')
     ap.add_argument('--daytime-share', type=float, default=0, help='daytime share of FC loss in %%, 0 = parabolic estimate from day length')
