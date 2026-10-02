@@ -2416,7 +2416,7 @@ export class AutoSwg extends EqItem {
         // projected FC is more than this many ppm above or below targetFc it starts a new
         // target (new deadline, in the above/below window above); otherwise it just
         // refreshes the % against the existing target and deadline.
-        if (typeof this.data.newTargetThresholdPpm === 'undefined') this.data.newTargetThresholdPpm = 2;
+        if (typeof this.data.newTargetThresholdPpm === 'undefined') this.data.newTargetThresholdPpm = 1;
         if (typeof this.data.autoStepEnabled === 'undefined') this.data.autoStepEnabled = false;
         // When true, a recommendation gets applied with no manual review -- whenever one is
         // produced, whether that's a manual Check Now/Refresh & Adjust click, or (if
