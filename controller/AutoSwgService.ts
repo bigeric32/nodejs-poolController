@@ -50,6 +50,20 @@ import { logger } from '../logger/Logger';
 // extrapolation.
 const STALE_FC_DAYS = 3;
 
+// Default for params.fcAnomalyTolerancePpm: an FC rise that the SWG output and logged additions fall
+// short of explaining by more than this many ppm (test-kit noise is about a ppm) marks the interval
+// as suspect: an unlogged chlorine addition, a mistyped reading, or a missing SWG % entry. Such
+// intervals are left out of the average. 0 turns the check off.
+const ANOMALY_TOLERANCE_PPM = 2;
+
+// Short non-cryptographic fingerprint of a string (djb2), used to tell whether the data a
+// calculation read has changed.
+function hashString(s: string): string {
+    let h = 5381;
+    for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+    return (h >>> 0).toString(36);
+}
+
 export interface AutoSwgParams {
     shareCode: string;
     poolName?: string;
@@ -80,6 +94,9 @@ export interface AutoSwgParams {
     // between two FC readings raises the second reading without the SWG having done it, so
     // without the credit the consumption between them is understated.
     creditChlorineAdditions?: boolean;
+    // How many ppm of FC rise beyond what the SWG output and logged additions explain marks an
+    // interval as suspect and leaves it out of the average (default 2; 0 = don't check).
+    fcAnomalyTolerancePpm?: number;
     sunriseTime?: string;
     sunsetTime?: string;
     // Share (percent) of a day's FC consumption that happens in daylight. 0 or omitted =
@@ -106,6 +123,8 @@ export interface AutoSwgResult {
     refreshed: boolean;              // true if it stayed on course for params.inFlight rather than starting a new target
     targetWarning?: string;          // set when even 100% can't reach targetFc within the window (the % above is capped at 100)
     targetInfo?: string;             // set when FC is so far above targetFc that consumption alone (SWG at 0%) won't bring it down by targetDateUsed -- informational, not a problem
+    fcAnomalyNote?: string;          // set when intervals in the averaging window were left out for an FC rise the SWG and logged additions can't explain
+    dataKey: string;                 // fingerprint of the PoolMath data (FC readings, additions, SWG entries) this calculation used
     staleFcNote?: string;            // set when the last FC reading is STALE_FC_DAYS or more old
     mostRecentFc?: { value: number; ts: string };
     mostRecentCya?: { value: number; ts: string };
@@ -721,7 +740,8 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         : 0;
 
     // Time-weighted running average FC consumption over the last windowDays.
-    const intervals: { t1: Date; t2: Date; perDay: number }[] = [];
+    const anomalyTolerance = typeof params.fcAnomalyTolerancePpm === 'number' && params.fcAnomalyTolerancePpm >= 0 ? params.fcAnomalyTolerancePpm : ANOMALY_TOLERANCE_PPM;
+    const intervals: { t1: Date; t2: Date; perDay: number; consumed: number; rise: number; suspect: boolean }[] = [];
     for (let i = 0; i < fcEvents.length - 1; i++) {
         const [t1, fc1] = [fcEvents[i].ts, fcEvents[i].value];
         const [t2, fc2] = [fcEvents[i + 1].ts, fcEvents[i + 1].value];
@@ -730,7 +750,7 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         const rawDelta = fc2 - fc1;
         const consumed = gen + addedBetween(t1, t2) - rawDelta;
         const days = dayEquivalents(t1, t2);
-        intervals.push({ t1, t2, perDay: days > 0 ? consumed / days : 0 });
+        intervals.push({ t1, t2, perDay: days > 0 ? consumed / days : 0, consumed, rise: rawDelta, suspect: anomalyTolerance > 0 && consumed < -anomalyTolerance });
     }
 
     const rightNow = new Date();
@@ -744,13 +764,26 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     const windowDaysUsed = windowExtended ? (rightNow.getTime() - windowStart.getTime()) / 86400000 : params.windowDays;
     let weightedTotal = 0;
     let coveredDays = 0;
-    for (const iv of intervals) {
+    const suspects: typeof intervals = [];
+    const overlapOf = (iv: { t1: Date; t2: Date }): number => {
         const clipStart = new Date(Math.max(iv.t1.getTime(), windowStart.getTime()));
         const clipEnd = new Date(Math.min(iv.t2.getTime(), rightNow.getTime()));
-        if (clipEnd.getTime() <= clipStart.getTime()) continue;
-        const overlapDays = dayEquivalents(clipStart, clipEnd);
+        return clipEnd.getTime() > clipStart.getTime() ? dayEquivalents(clipStart, clipEnd) : 0;
+    };
+    for (const iv of intervals) {
+        const overlapDays = overlapOf(iv);
+        if (overlapDays <= 0) continue;
+        if (iv.suspect) { suspects.push(iv); continue; } // left out of the average -- see fcAnomalyNote
         weightedTotal += iv.perDay * overlapDays;
         coveredDays += overlapDays;
+    }
+    // The flagged intervals only protect the average from a bad number. If they are ALL the window
+    // holds there is nothing else to average, and assuming no consumption at all would be worse, so
+    // keep them (and say so in the note).
+    let anomalyKept = false;
+    if (coveredDays === 0 && suspects.length) {
+        anomalyKept = true;
+        for (const iv of suspects) { const o = overlapOf(iv); weightedTotal += iv.perDay * o; coveredDays += o; }
     }
     // Average over the time actually spanned by consecutive FC readings. The
     // stretch since the last reading has no measured consumption, so dividing by
@@ -766,6 +799,17 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         : '';
     const avgConsumptionSummary = `Running ${windowLabel}-day average FC consumption (${windowRange}${extensionNote}): ${avgPerDay.toFixed(2)} ppm/day (from ${fcEvents.length} FC readings, ${swgEvents.length} SWG log entries).`;
     rationale.push(avgConsumptionSummary);
+    let fcAnomalyNote: string | undefined;
+    if (suspects.length) {
+        // About how much 10% liquid chlorine would account for the unexplained rise at this pool volume.
+        const oz = (ppm: number) => Math.round(ppm * params.gallons * 3785.411784 / (0.10 * 1_000_000) / 29.5735295625);
+        const parts = suspects.map(s => `${formatLocalDateTime(s.t1, params.timezone)} to ${formatLocalDateTime(s.t2, params.timezone)}: FC rose ${s.rise.toFixed(1)} ppm, ${(-s.consumed).toFixed(1)} ppm more than the SWG output and logged additions explain (about ${oz(-s.consumed)} oz of 10% liquid chlorine)`);
+        const lead = anomalyKept
+            ? `${suspects.length === 1 ? 'An interval looks' : `${suspects.length} intervals look`} suspect because FC rose more than the SWG and logged chlorine can explain, but nothing else in the averaging window was available, so ${suspects.length === 1 ? 'it was' : 'they were'} kept in the average`
+            : `${suspects.length === 1 ? 'An interval was' : `${suspects.length} intervals were`} left out of the average because FC rose more than the SWG and logged chlorine can explain`;
+        fcAnomalyNote = `${lead} -- ${parts.join('; ')}. If you added chlorine, log it in PoolMath as Liquid Chlorine; if a reading is wrong, correct or delete it there. The next check picks the change up.`;
+        rationale.push(`NOTE: ${fcAnomalyNote}`);
+    }
     if (creditAdditions) {
         const inWindow = additions.filter(x => x.ts.getTime() >= windowStart.getTime());
         if (inWindow.length) rationale.push(`Liquid chlorine additions credited as FC added: ${inWindow.map(x => `${formatLocalDateTime(x.ts, params.timezone)} +${chlorineAdditionPpm(x, params.gallons).toFixed(2)} ppm`).join('; ')}.`);
@@ -906,6 +950,12 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         targetWarning: targetWarning,
         targetInfo: targetInfo,
         staleFcNote: staleFcNote,
+        fcAnomalyNote: fcAnomalyNote,
+        dataKey: hashString(JSON.stringify([
+            fcEvents.map(e => [e.ts.getTime(), e.value]),
+            additions.map(a => [a.ts.getTime(), a.percent, Math.round(a.ml)]),
+            swgEvents.map(e => [e.ts.getTime(), e.ppmPerDay, e.hrs, e.pct]),
+        ])),
         mostRecentFc: { value: lastFc.value, ts: lastFc.ts.toISOString() },
         mostRecentCya: cyaEvents.length ? { value: cyaEvents[cyaEvents.length - 1].value, ts: cyaEvents[cyaEvents.length - 1].ts.toISOString() } : undefined,
         mostRecentSwg: { ppmPerDay: latestSwg.ppmPerDay, hrs: latestSwg.hrs, pct: latestSwg.pct, ts: latestSwg.ts.toISOString(), source: latestSwg.source },
