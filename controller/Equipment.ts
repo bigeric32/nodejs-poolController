@@ -2453,7 +2453,10 @@ export class AutoSwg extends EqItem {
         // 1 = all of it (no damping), 0 = start from the last reading unchanged. Between tests FC moves less than the
         // model expects, so the default damps it to half (on two pools' histories this beat the full model by 0.3 to
         // 0.6 ppm; the Tune button tunes it for a particular pool).
-        if (typeof this.data.projectionDamping === 'undefined') this.data.projectionDamping = 0.5;
+        // Renamed from projectionDamping: carry a saved value over, then drop the old key.
+        if (typeof this.data.projectionWeight === 'undefined' && typeof this.data.projectionDamping !== 'undefined') this.data.projectionWeight = this.data.projectionDamping;
+        delete this.data.projectionDamping;
+        if (typeof this.data.projectionWeight === 'undefined') this.data.projectionWeight = 0.5;
         // Gap-aware taper of that weight: full weight until the last reading is this many days old, then
         // falling to 0 at the end (days). End 0 = no taper. The model hurts across long gaps, hence 3 to 8 days.
         if (typeof this.data.projectionTaperStartDays === 'undefined') this.data.projectionTaperStartDays = 3;
@@ -2512,8 +2515,8 @@ export class AutoSwg extends EqItem {
     public set projectionTaperStartDays(val: number) { this.setDataVal('projectionTaperStartDays', val); }
     public get projectionTaperEndDays(): number { return this.data.projectionTaperEndDays; }
     public set projectionTaperEndDays(val: number) { this.setDataVal('projectionTaperEndDays', val); }
-    public get projectionDamping(): number { return this.data.projectionDamping; }
-    public set projectionDamping(val: number) { this.setDataVal('projectionDamping', val); }
+    public get projectionWeight(): number { return this.data.projectionWeight; }
+    public set projectionWeight(val: number) { this.setDataVal('projectionWeight', val); }
     public get fcAnomalyTolerancePpm(): number { return this.data.fcAnomalyTolerancePpm; }
     public set fcAnomalyTolerancePpm(val: number) { this.setDataVal('fcAnomalyTolerancePpm', val); }
     public get creditChlorineAdditions(): boolean { return this.data.creditChlorineAdditions; }

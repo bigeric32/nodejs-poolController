@@ -273,7 +273,7 @@ function autoSwgSettingsKey(): string {
     let cfg = sys.autoSwg;
     return [
         cfg.targetFc, cfg.targetDaysAbove, cfg.targetDaysBelow, cfg.newTargetThresholdPpm,
-        cfg.windowDays, cfg.gallons, cfg.swgLbsPerDay, cfg.timezone, cfg.daytimeLossSharePct, cfg.creditChlorineAdditions, cfg.fcAnomalyTolerancePpm, cfg.projectionDamping, cfg.projectionTaperStartDays, cfg.projectionTaperEndDays,
+        cfg.windowDays, cfg.gallons, cfg.swgLbsPerDay, cfg.timezone, cfg.daytimeLossSharePct, cfg.creditChlorineAdditions, cfg.fcAnomalyTolerancePpm, cfg.projectionWeight, cfg.projectionTaperStartDays, cfg.projectionTaperEndDays,
         cfg.shareCode, cfg.poolName, cfg.scheduleId, cfg.scheduleId >= 0 ? '' : cfg.swgStartTime, cfg.scheduleId >= 0 ? '' : cfg.swgStopTime
     ].join('|');
 }
@@ -320,7 +320,7 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
         daytimeSharePct: cfg.daytimeLossSharePct,
         creditChlorineAdditions: cfg.creditChlorineAdditions,
         fcAnomalyTolerancePpm: cfg.fcAnomalyTolerancePpm,
-        projectionDamping: cfg.projectionDamping,
+        projectionWeight: cfg.projectionWeight,
         projectionTaperStartDays: cfg.projectionTaperStartDays,
         projectionTaperEndDays: cfg.projectionTaperEndDays,
     }, undefined, toLocalSwgEntries(readAutoSwgHistory()), refreshAutoSwgArchiveFromPage);
@@ -572,7 +572,7 @@ function autoSwgReportParams(cfg: typeof sys.autoSwg): AutoSwgParams {
         daytimeSharePct: cfg.daytimeLossSharePct,
         creditChlorineAdditions: cfg.creditChlorineAdditions,
         fcAnomalyTolerancePpm: cfg.fcAnomalyTolerancePpm,
-        projectionDamping: cfg.projectionDamping,
+        projectionWeight: cfg.projectionWeight,
         projectionTaperStartDays: cfg.projectionTaperStartDays,
         projectionTaperEndDays: cfg.projectionTaperEndDays,
     };
@@ -1285,7 +1285,7 @@ export class StateRoute {
                 try {
                     appendTuneHistory({
                         ts: cfg.lastTuneAt,
-                        settings: { windowDays: cfg.windowDays, daytimeLossSharePct: cfg.daytimeLossSharePct, creditChlorineAdditions: cfg.creditChlorineAdditions, fcAnomalyTolerancePpm: cfg.fcAnomalyTolerancePpm, projectionDamping: cfg.projectionDamping, projectionTaperStartDays: cfg.projectionTaperStartDays, projectionTaperEndDays: cfg.projectionTaperEndDays },
+                        settings: { windowDays: cfg.windowDays, daytimeLossSharePct: cfg.daytimeLossSharePct, creditChlorineAdditions: cfg.creditChlorineAdditions, fcAnomalyTolerancePpm: cfg.fcAnomalyTolerancePpm, projectionWeight: cfg.projectionWeight, projectionTaperStartDays: cfg.projectionTaperStartDays, projectionTaperEndDays: cfg.projectionTaperEndDays },
                         readings: tune.readings, history: tune.history, meanAbsError: tune.meanAbsError, unchangedMae: tune.unchangedMae, skill: tune.skill,
                         status: tune.status,
                         recommendation: tune.recommendation ? { kind: tune.recommendation.kind, label: tune.recommendation.label, settings: tune.recommendation.settings, expectedMae: tune.recommendation.expectedMae, change: tune.recommendation.change, low: tune.recommendation.low, high: tune.recommendation.high } : undefined,
