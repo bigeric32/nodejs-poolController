@@ -1269,7 +1269,23 @@ export class StateRoute {
                 let cfg = sys.autoSwg;
                 if (!cfg.shareCode) throw new ServiceParameterError('AutoSwg is not configured: shareCode is required.', 'autoSwg', 'shareCode', cfg.shareCode);
                 let tune = await buildTune(autoSwgReportParams(cfg), { lookbackDays: 365, localSwgEntries: toLocalSwgEntries(readAutoSwgHistory()), historyRecords: readAutoSwgHistory(), tuningChangedAt: cfg.tuningChangedAt, archive: autoSwgArchiveForReports() });
+                cfg.lastTuneAt = new Date().toISOString();
                 return res.status(200).send(tune);
+            }
+            catch (err) { next(err); }
+        });
+        // Is another Tune worth it yet? Answered from what is stored locally (no PoolMath request): when Tune last
+        // ran, how many FC readings have arrived since (from the archive, which every PoolMath read keeps current),
+        // and whether the tuning settings were changed by hand since -- which would make tuning again worthwhile.
+        app.get('/state/autoSwg/tune/status', (req, res, next) => {
+            try {
+                let cfg = sys.autoSwg;
+                let ms = (v: string) => v ? new Date(v).getTime() : NaN;
+                let ref = Math.max(isNaN(ms(cfg.lastTuneAt)) ? -Infinity : ms(cfg.lastTuneAt), isNaN(ms(cfg.lastTuneAppliedAt)) ? -Infinity : ms(cfg.lastTuneAppliedAt));
+                let manual = isFinite(ref) && !isNaN(ms(cfg.tuningChangedAt)) && ms(cfg.tuningChangedAt) > ref + 60000;
+                let since: number | undefined;
+                if (isFinite(ref) && cfg.shareCode && isPoolMathArchiveCurrent(cfg.shareCode, cfg.poolName || undefined)) since = archivedFcReadings().filter(r => r.ts.getTime() > ref).length;
+                return res.status(200).send({ lastTuneAt: cfg.lastTuneAt, lastTuneAppliedAt: cfg.lastTuneAppliedAt, tuningChangedAt: cfg.tuningChangedAt, manualChangeSinceTune: manual, readingsSinceTune: since, needed: 10 });
             }
             catch (err) { next(err); }
         });
