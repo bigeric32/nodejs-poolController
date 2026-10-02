@@ -27,7 +27,7 @@ import { utils } from "../../../controller/Constants";
 import { ServiceProcessError } from "../../../controller/Errors";
 import { state } from "../../../controller/State";
 import { stopPacketCaptureAsync, startPacketCapture } from '../../../app';
-import { armAutoSwgAutoCheck } from '../state/State';
+import { armAutoSwgArchiveSync, armAutoSwgAutoCheck } from '../state/State';
 import { conn } from "../../../controller/comms/Comms";
 import { webApp, BackupFile, RestoreFile } from "../../Server";
 import { release } from "os";
@@ -1027,6 +1027,8 @@ export class ConfigRoute {
                 // so enabling it (or changing the interval) takes effect immediately rather
                 // than needing a restart.
                 armAutoSwgAutoCheck();
+                // The share code or pool may have changed, so re-sync the history archive soon.
+                armAutoSwgArchiveSync(60 * 1000);
                 return res.status(200).send(sys.autoSwg.get(true));
             }
             catch (err) { next(err); }

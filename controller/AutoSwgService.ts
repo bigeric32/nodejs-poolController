@@ -519,7 +519,15 @@ function dailyWindowOverlapHours(t1: Date, t2: Date, startTime: TimeOfDay, durat
 // PoolMath fetch
 // ---------------------------------------------------------------------------
 
+// When the share endpoint was last asked for anything. PoolMath rate limits it (about one
+// request a minute), so the background history sync (AutoSwgPoolMathArchive) leaves a gap
+// after any request made here, and records its own.
+let lastShareRequestAt = 0;
+export function noteShareRequest() { lastShareRequestAt = Date.now(); }
+export function msSinceLastShareRequest(): number { return Date.now() - lastShareRequestAt; }
+
 function fetchHtml(shareCodeOrUrl: string): Promise<string> {
+    noteShareRequest();
     const url = shareCodeOrUrl.startsWith('http') ? shareCodeOrUrl : `https://api.poolmathapp.com/share/${shareCodeOrUrl}`;
     const options = { method: 'GET', headers: { 'User-Agent': 'Mozilla/5.0 (nodejs-poolController AutoSwg)' } };
     return new Promise<string>((resolve, reject) => {
@@ -862,7 +870,7 @@ export interface CombinedHistory {
 // from PoolMath, and SWG entries from the local log plus PoolMath's, with a
 // PoolMath SWG entry dropped when a local one is within an hour of it. If
 // PoolMath can't be read, the local SWG entries are still returned.
-export async function buildCombinedHistory(params: { shareCode?: string; poolName?: string }, html?: string, localSwgEntries: LocalSwgEntry[] = []): Promise<CombinedHistory> {
+export async function buildCombinedHistory(params: { shareCode?: string; poolName?: string }, html?: string, localSwgEntries: LocalSwgEntry[] = [], archivedFc: { ts: Date; value: number }[] = []): Promise<CombinedHistory> {
     let fcEvents: FcEvent[] = [];
     let poolMathSwgEvents: SwgEvent[] = [];
     let poolMathError: string;
@@ -873,6 +881,12 @@ export async function buildCombinedHistory(params: { shareCode?: string; poolNam
         poolMathSwgEvents = parsed.swgEvents;
     }
     catch (err) { poolMathError = err.message; }
+    // Older FC readings from the background-synced archive that the share page no longer
+    // lists; a reading the page still has is the same one (same time and value).
+    if (archivedFc.length) {
+        const seen = new Set(fcEvents.map(e => `${e.ts.getTime()}|${e.value}`));
+        fcEvents = [...fcEvents, ...archivedFc.filter(e => !seen.has(`${e.ts.getTime()}|${e.value}`))];
+    }
     const swgMerge = mergeSwgEvents(poolMathSwgEvents, localSwgEntries);
     const entries: CombinedHistoryEntry[] = [
         ...fcEvents.map(e => ({ ts: e.ts.toISOString(), type: 'FC' as const, source: 'poolmath' as SwgSource, value: e.value })),

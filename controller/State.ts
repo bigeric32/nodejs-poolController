@@ -3940,6 +3940,16 @@ export class AutoSwgState extends EqState {
     // Recomputed whenever the timer is armed (startup, a settings save, after each check).
     public get nextAutoCheckAt(): string { return this.data.nextAutoCheckAt; }
     public set nextAutoCheckAt(val: string) { this.setDataVal('nextAutoCheckAt', val); }
+    // Background PoolMath history sync (see AutoSwgPoolMathArchive): when it last succeeded, how
+    // many entries and how far back the archive goes, and the last failure (cleared on success).
+    public get archiveSyncedAt(): string { return this.data.archiveSyncedAt; }
+    public set archiveSyncedAt(val: string) { this.setDataVal('archiveSyncedAt', val); }
+    public get archiveCount(): number { return this.data.archiveCount; }
+    public set archiveCount(val: number) { this.setDataVal('archiveCount', val); }
+    public get archiveOldest(): string { return this.data.archiveOldest; }
+    public set archiveOldest(val: string) { this.setDataVal('archiveOldest', val); }
+    public get archiveError(): string { return this.data.archiveError; }
+    public set archiveError(val: string) { this.setDataVal('archiveError', val); }
     public get staleFcNote(): string { return this.data.staleFcNote; }
     public set staleFcNote(val: string) { this.setDataVal('staleFcNote', val); }
     public get lastAppliedStaleFcNote(): string { return this.data.lastAppliedStaleFcNote; }
