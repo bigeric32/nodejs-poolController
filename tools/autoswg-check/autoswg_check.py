@@ -394,9 +394,14 @@ class Calc:
             return self.day_eq(a, b) if b > a else 0.0
         wt = cov = 0.0
         suspects = []
+        uncovered = 0
+        first_swg = swg[0][0]
         for iv in ivs:
             o = overlap(iv)
             if o <= 0:
+                continue
+            if iv[0] < first_swg:       # starts before the SWG record: no output on record, so left out
+                uncovered += 1
                 continue
             if iv[4]:
                 suspects.append(iv)
@@ -408,6 +413,8 @@ class Calc:
                 o = overlap(iv)
                 wt += iv[2] * o
                 cov += o
+        if cov == 0 and uncovered:       # nothing but pre-record intervals: the app reports this as an error
+            return None
         avg = wt / cov if cov > 0 else 0.0
         last_t, last_v = fc[-1]
         elapsed_eq = self.day_eq(last_t, as_of)
