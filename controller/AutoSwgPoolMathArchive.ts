@@ -256,11 +256,11 @@ export function poolMathArchiveSummary(): { syncedAt?: string; count: number; ol
 
 // PoolMath logs an SWG run as a chemical entry: chemical id 27, with `runTime` (hours),
 // `percent` (SWG %) and `amount` (the ppm FC it was credited with) -- the same three numbers
-// the share page shows as "X ppm FC ... SWG Y hrs @ Z%". Identified by that id or, failing it,
-// by carrying both a run time and a percent.
+// the share page shows as "X ppm FC ... SWG Y hrs @ Z%". Identified by that id ONLY: other chemical
+// entries (acid, salt, ...) can carry a stray run time and percent -- they are not SWG runs.
 const POOLMATH_SWG_CHEMICAL = 27;
 function isSwgEntry(e: PoolMathArchiveEntry): boolean {
-    return e.type === 'chemlog' && (e.chemical === POOLMATH_SWG_CHEMICAL || (typeof e.runTime === 'number' && typeof e.percent === 'number'))
+    return e.type === 'chemlog' && e.chemical === POOLMATH_SWG_CHEMICAL
         && typeof e.amount === 'number' && typeof e.runTime === 'number' && typeof e.percent === 'number';
 }
 
