@@ -1466,6 +1466,64 @@ export async function buildWhatIfSweep(params: AutoSwgParams, options: { lookbac
     return { count: common.length, skipped, variants: [out[0], ...out.slice(1).sort((a, b) => (typeof a.meanAbsError === 'number' ? a.meanAbsError : Infinity) - (typeof b.meanAbsError === 'number' ? b.meanAbsError : Infinity))] };
 }
 
+// The one change a Tune run recommends, if any.
+export interface TuneRecommendation {
+    kind: 'window' | 'projection' | 'other';
+    label: string;
+    settings: { [setting: string]: number | boolean };
+    currentMae: number;
+    expectedMae: number;
+    change: number;                      // expected change in mean absolute error (negative = better)
+    low: number;                         // 90% range of that change
+    high: number;
+}
+
+export interface TuneResult {
+    status: 'good' | 'recommend' | 'insufficient';
+    readings: number;                    // readings every variant could score
+    skipped: number;
+    history?: { readings: number; from?: string; archived: number };
+    meanAbsError?: number;               // with the current settings
+    unchangedMae?: number;               // the no-model baseline "FC unchanged since the last reading"
+    skill?: number;
+    sinceChange?: { since: string; count: number; meanAbsError?: number; unchangedMae?: number; bias?: number };
+    betterCount: number;                 // how many alternatives were clearly better
+    recommendation?: TuneRecommendation;
+}
+
+// A guided version of the two reports: fetch the PoolMath page once, score the current settings and the
+// alternatives, and boil it down to ONE recommendation. If a different averaging window is clearly better it comes
+// first (the window interacts with the weighting and taper, so those are judged after it is applied); otherwise the
+// best clearly-better alternative; otherwise the settings are fine. Fewer than 15 readings is too few to tune on.
+export async function buildTune(params: AutoSwgParams, options: { lookbackDays: number; html?: string; localSwgEntries?: LocalSwgEntry[]; historyRecords?: any[]; tuningChangedAt?: string; archive?: ArchivedHistory }): Promise<TuneResult> {
+    const html = options.html || await fetchHtml(params.shareCode);
+    const accuracy = await buildProjectionAccuracy(params, Object.assign({}, options, { html }));
+    const sweep = await buildWhatIfSweep(params, { lookbackDays: options.lookbackDays, html, localSwgEntries: options.localSwgEntries, archive: options.archive });
+    const cur = sweep.variants[0];
+    const result: TuneResult = {
+        status: 'good', readings: sweep.count, skipped: sweep.skipped, history: accuracy.history,
+        meanAbsError: cur ? cur.meanAbsError : undefined,
+        unchangedMae: accuracy.summary.unchangedMae, skill: accuracy.summary.skill, sinceChange: accuracy.summary.sinceChange,
+        betterCount: 0,
+    };
+    if (sweep.count < 15 || !cur || typeof cur.meanAbsError !== 'number') { result.status = 'insufficient'; return result; }
+    const better = sweep.variants.filter(v => v.verdict === 'better' && v.settings && Object.keys(v.settings).length > 0);
+    result.betterCount = better.length;
+    if (!better.length) return result;
+    const keysOf = (v: WhatIfVariant) => Object.keys(v.settings as object);
+    const windowRows = better.filter(v => keysOf(v).length === 1 && keysOf(v)[0] === 'windowDays');
+    const pool = windowRows.length ? windowRows : better;
+    const best = pool.slice().sort((a, b) => (a.meanAbsError as number) - (b.meanAbsError as number))[0];
+    const kind: 'window' | 'projection' | 'other' = windowRows.length ? 'window' : (keysOf(best).every(k => k.indexOf('projection') === 0) ? 'projection' : 'other');
+    result.status = 'recommend';
+    result.recommendation = {
+        kind, label: best.label, settings: best.settings as { [setting: string]: number | boolean },
+        currentMae: cur.meanAbsError, expectedMae: best.meanAbsError as number,
+        change: best.diff as number, low: best.diffLow as number, high: best.diffHigh as number,
+    };
+    return result;
+}
+
 function swgEventsToEntries(events: SwgEvent[]): CombinedHistoryEntry[] {
     return events.map(e => ({ ts: e.ts.toISOString(), type: 'SWG' as const, source: e.source, pct: e.pct, ppmPerDay: e.ppmPerDay, hrs: e.hrs, record: e.record }));
 }

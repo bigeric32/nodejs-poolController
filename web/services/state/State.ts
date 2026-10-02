@@ -28,8 +28,8 @@ import { config } from "../../../config/Config";
 
 import { ServiceParameterError } from "../../../controller/Errors";
 import { ChlorinatorStateMessage } from "../../../controller/comms/messages/status/ChlorinatorStateMessage";
-import { buildCombinedHistory, buildProjectionAccuracy, buildWhatIfSweep, computeRecommendation, computeSwgCapacity, formatLocalDateTime, minutesToHHMM, nextScheduledCheck } from "../../../controller/AutoSwgService";
-import type { PageReadings } from "../../../controller/AutoSwgService";
+import { buildCombinedHistory, buildProjectionAccuracy, buildTune, buildWhatIfSweep, computeRecommendation, computeSwgCapacity, formatLocalDateTime, minutesToHHMM, nextScheduledCheck } from "../../../controller/AutoSwgService";
+import type { AutoSwgParams, PageReadings } from "../../../controller/AutoSwgService";
 import { appendAutoSwgHistory, readAutoSwgHistory, toLocalSwgEntries } from "../../../controller/AutoSwgHistory";
 import { archivedChlorineAdditions, archivedCyaReadings, archivedFcReadings, archivedSwgEvents, isPoolMathArchiveCurrent, poolMathArchiveSummary, refreshPoolMathArchiveFromPage, syncPoolMathArchive } from "../../../controller/AutoSwgPoolMathArchive";
 
@@ -547,6 +547,34 @@ function refreshAutoSwgArchiveFromPage(page: PageReadings) {
 // been pulled for this share code, in which case the reports see the page alone).
 function autoSwgArchiveForReports() {
     return { fc: archivedFcReadings(), swg: archivedSwgEvents(), cya: archivedCyaReadings(), chlorine: archivedChlorineAdditions() };
+}
+
+// The inputs the reports (projection accuracy, what-if sweep, tune) give the calculation: the same ones a normal
+// calculation uses (see runAutoSwgRecommendation), from the saved settings.
+function autoSwgReportParams(cfg: typeof sys.autoSwg): AutoSwgParams {
+    let { swgStartTime, swgStopTime } = resolveAutoSwgRunWindow(cfg);
+    let sunTimes = autoSwgSunTimes(cfg.timezone);
+    return {
+        shareCode: cfg.shareCode,
+        poolName: cfg.poolName || undefined,
+        gallons: cfg.gallons,
+        swgLbsPerDay: cfg.swgLbsPerDay,
+        swgStartTime: swgStartTime,
+        swgStopTime: swgStopTime,
+        timezone: cfg.timezone,
+        windowDays: cfg.windowDays,
+        targetFc: cfg.targetFc,
+        targetDaysAbove: cfg.targetDaysAbove,
+        targetDaysBelow: cfg.targetDaysBelow,
+        sunriseTime: sunTimes.sunrise,
+        sunsetTime: sunTimes.sunset,
+        daytimeSharePct: cfg.daytimeLossSharePct,
+        creditChlorineAdditions: cfg.creditChlorineAdditions,
+        fcAnomalyTolerancePpm: cfg.fcAnomalyTolerancePpm,
+        projectionDamping: cfg.projectionDamping,
+        projectionTaperStartDays: cfg.projectionTaperStartDays,
+        projectionTaperEndDays: cfg.projectionTaperEndDays,
+    };
 }
 
 // Background PoolMath history sync: pulls up to 18 months of logs from the share link's JSON
@@ -1215,29 +1243,7 @@ export class StateRoute {
                 let days = parseInt(String(req.query.days), 10);
                 days = isNaN(days) ? 365 : Math.max(14, Math.min(540, days));
                 // The same inputs a normal calculation uses (see runAutoSwgRecommendation).
-                let { swgStartTime, swgStopTime } = resolveAutoSwgRunWindow(cfg);
-                let sunTimes = autoSwgSunTimes(cfg.timezone);
-                let report = await buildProjectionAccuracy({
-                    shareCode: cfg.shareCode,
-                    poolName: cfg.poolName || undefined,
-                    gallons: cfg.gallons,
-                    swgLbsPerDay: cfg.swgLbsPerDay,
-                    swgStartTime: swgStartTime,
-                    swgStopTime: swgStopTime,
-                    timezone: cfg.timezone,
-                    windowDays: cfg.windowDays,
-                    targetFc: cfg.targetFc,
-                    targetDaysAbove: cfg.targetDaysAbove,
-                    targetDaysBelow: cfg.targetDaysBelow,
-                    sunriseTime: sunTimes.sunrise,
-                    sunsetTime: sunTimes.sunset,
-                    daytimeSharePct: cfg.daytimeLossSharePct,
-                    creditChlorineAdditions: cfg.creditChlorineAdditions,
-                    fcAnomalyTolerancePpm: cfg.fcAnomalyTolerancePpm,
-        projectionDamping: cfg.projectionDamping,
-        projectionTaperStartDays: cfg.projectionTaperStartDays,
-        projectionTaperEndDays: cfg.projectionTaperEndDays,
-                }, { lookbackDays: days, localSwgEntries: toLocalSwgEntries(readAutoSwgHistory()), historyRecords: readAutoSwgHistory(), tuningChangedAt: cfg.tuningChangedAt, archive: autoSwgArchiveForReports() });
+                let report = await buildProjectionAccuracy(autoSwgReportParams(cfg), { lookbackDays: days, localSwgEntries: toLocalSwgEntries(readAutoSwgHistory()), historyRecords: readAutoSwgHistory(), tuningChangedAt: cfg.tuningChangedAt, archive: autoSwgArchiveForReports() });
                 return res.status(200).send(report);
             }
             catch (err) { next(err); }
@@ -1251,30 +1257,19 @@ export class StateRoute {
                 if (!cfg.shareCode) throw new ServiceParameterError('AutoSwg is not configured: shareCode is required.', 'autoSwg', 'shareCode', cfg.shareCode);
                 let days = parseInt(String(req.query.days), 10);
                 days = isNaN(days) ? 365 : Math.max(14, Math.min(540, days));
-                let { swgStartTime, swgStopTime } = resolveAutoSwgRunWindow(cfg);
-                let sunTimes = autoSwgSunTimes(cfg.timezone);
-                let sweep = await buildWhatIfSweep({
-                    shareCode: cfg.shareCode,
-                    poolName: cfg.poolName || undefined,
-                    gallons: cfg.gallons,
-                    swgLbsPerDay: cfg.swgLbsPerDay,
-                    swgStartTime: swgStartTime,
-                    swgStopTime: swgStopTime,
-                    timezone: cfg.timezone,
-                    windowDays: cfg.windowDays,
-                    targetFc: cfg.targetFc,
-                    targetDaysAbove: cfg.targetDaysAbove,
-                    targetDaysBelow: cfg.targetDaysBelow,
-                    sunriseTime: sunTimes.sunrise,
-                    sunsetTime: sunTimes.sunset,
-                    daytimeSharePct: cfg.daytimeLossSharePct,
-                    creditChlorineAdditions: cfg.creditChlorineAdditions,
-                    fcAnomalyTolerancePpm: cfg.fcAnomalyTolerancePpm,
-        projectionDamping: cfg.projectionDamping,
-        projectionTaperStartDays: cfg.projectionTaperStartDays,
-        projectionTaperEndDays: cfg.projectionTaperEndDays,
-                }, { lookbackDays: days, localSwgEntries: toLocalSwgEntries(readAutoSwgHistory()), archive: autoSwgArchiveForReports() });
+                let sweep = await buildWhatIfSweep(autoSwgReportParams(cfg), { lookbackDays: days, localSwgEntries: toLocalSwgEntries(readAutoSwgHistory()), archive: autoSwgArchiveForReports() });
                 return res.status(200).send(sweep);
+            }
+            catch (err) { next(err); }
+        });
+        // One guided recommendation from the saved settings and the FC history (see buildTune): the accuracy and
+        // what-if reports boiled down to a single change, or "your settings look good".
+        app.get('/state/autoSwg/tune', async (req, res, next) => {
+            try {
+                let cfg = sys.autoSwg;
+                if (!cfg.shareCode) throw new ServiceParameterError('AutoSwg is not configured: shareCode is required.', 'autoSwg', 'shareCode', cfg.shareCode);
+                let tune = await buildTune(autoSwgReportParams(cfg), { lookbackDays: 365, localSwgEntries: toLocalSwgEntries(readAutoSwgHistory()), historyRecords: readAutoSwgHistory(), tuningChangedAt: cfg.tuningChangedAt, archive: autoSwgArchiveForReports() });
+                return res.status(200).send(tune);
             }
             catch (err) { next(err); }
         });
