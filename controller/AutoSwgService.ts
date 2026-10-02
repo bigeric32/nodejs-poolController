@@ -56,6 +56,10 @@ const STALE_FC_DAYS = 3;
 // intervals are left out of the average. 0 turns the check off.
 const ANOMALY_TOLERANCE_PPM = 2;
 
+// How far apart (as a fraction) njsPC's SWG rating and the rating PoolMath's recent SWG entries imply
+// can be before the calculation warns.
+const SWG_RATING_TOLERANCE = 0.15;
+
 // Short non-cryptographic fingerprint of a string (djb2), used to tell whether the data a
 // calculation read has changed.
 function hashString(s: string): string {
@@ -126,6 +130,7 @@ export interface AutoSwgResult {
     refreshed: boolean;              // true if it stayed on course for params.inFlight rather than starting a new target
     targetWarning?: string;          // set when even 100% can't reach targetFc within the window (the % above is capped at 100)
     targetInfo?: string;             // set when FC is so far above targetFc that consumption alone (SWG at 0%) won't bring it down by targetDateUsed -- informational, not a problem
+    ratingNote?: string;             // set when PoolMath's recent SWG entries imply a rated output that disagrees with swgLbsPerDay
     fcAnomalyNote?: string;          // set when intervals in the averaging window were left out for an FC rise the SWG and logged additions can't explain
     dataKey: string;                 // fingerprint of the PoolMath data (FC readings, additions, SWG entries) this calculation used
     staleFcNote?: string;            // set when the last FC reading is STALE_FC_DAYS or more old
@@ -732,6 +737,30 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     const swgEvents = swgMerge.events;
     if (swgEvents.length === 0) throw new Error('No SWG log entries found on the PoolMath page or in the local SWG % change log. The page markup may have changed, or the share code/pool name may be wrong.');
 
+    // Does the SWG rating njsPC converts a % with (swgLbsPerDay) agree with the one PoolMath credited its
+    // recent SWG entries with? PoolMath credits an entry with % x rated lbs/day x hours/24 (as ppm for the
+    // pool), so each recent entry implies a rating; if they agree with each other and not with the setting,
+    // the setting is probably stale (a swapped cell, say) and every recommended % is off by about that much.
+    // Entries whose credit is tiny are skipped (PoolMath rounds it to 0.1 ppm).
+    let ratingNote: string | undefined;
+    if (params.swgLbsPerDay > 0 && params.gallons > 0) {
+        const perLb = 1_000_000 / (params.gallons * 8.34);
+        const implied = poolMathSwgEvents.filter(e => e.pct > 0 && e.hrs > 0 && e.ppmPerDay >= 1.0)
+            .slice(-6).map(e => e.ppmPerDay / (e.pct / 100) / (e.hrs / 24) / perLb);
+        if (implied.length >= 3) {
+            const sorted = implied.slice().sort((a, b) => a - b);
+            const mid = Math.floor(sorted.length / 2);
+            const median = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+            const agreeing = implied.filter(v => Math.abs(v / median - 1) <= SWG_RATING_TOLERANCE).length;
+            const diff = params.swgLbsPerDay / median - 1;
+            if (agreeing >= 3 && agreeing * 2 > implied.length && Math.abs(diff) > SWG_RATING_TOLERANCE) {
+                ratingNote = `PoolMath's recent SWG entries imply a rated output of about ${median.toFixed(2)} lbs/day, but the SWG Rating here is ${params.swgLbsPerDay} lbs/day (${diff > 0 ? '+' : ''}${(diff * 100).toFixed(0)}%). `
+                    + `njsPC turns a % into ppm using its own rating, so the recommended % will tend to be ${diff > 0 ? 'too low' : 'too high'}. If you changed the cell, update the SWG Rating here (and the rating in PoolMath).`;
+                rationale.push(`WARNING: ${ratingNote}`);
+            }
+        }
+    }
+
     // Daylight weighting for the partial days between FC readings (see
     // consumptionDayEquivalents); undefined when sunrise/sunset aren't known, in which case
     // time is counted by the clock.
@@ -971,6 +1000,7 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         targetInfo: targetInfo,
         staleFcNote: staleFcNote,
         fcAnomalyNote: fcAnomalyNote,
+        ratingNote: ratingNote,
         dataKey: hashString(JSON.stringify([
             fcEvents.map(e => [e.ts.getTime(), e.value]),
             additions.map(a => [a.ts.getTime(), a.percent, Math.round(a.ml)]),

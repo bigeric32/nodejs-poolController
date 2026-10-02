@@ -3967,6 +3967,12 @@ export class AutoSwgState extends EqState {
     public set fcAnomalyNote(val: string) { this.setDataVal('fcAnomalyNote', val); }
     public get lastAppliedFcAnomalyNote(): string { return this.data.lastAppliedFcAnomalyNote; }
     public set lastAppliedFcAnomalyNote(val: string) { this.setDataVal('lastAppliedFcAnomalyNote', val); }
+    // Set when PoolMath's recent SWG entries imply a rated output that disagrees with the SWG Rating setting.
+    // Same lifecycle as the other notes.
+    public get ratingNote(): string { return this.data.ratingNote; }
+    public set ratingNote(val: string) { this.setDataVal('ratingNote', val); }
+    public get lastAppliedRatingNote(): string { return this.data.lastAppliedRatingNote; }
+    public set lastAppliedRatingNote(val: string) { this.setDataVal('lastAppliedRatingNote', val); }
     // Fingerprint of the PoolMath data (FC readings, additions, SWG entries) the last apply was
     // calculated from -- a Refresh with the same data has nothing new to work from.
     public get lastAppliedDataKey(): string { return this.data.lastAppliedDataKey; }

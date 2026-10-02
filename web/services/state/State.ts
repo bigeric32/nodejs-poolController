@@ -147,6 +147,7 @@ function clearAutoSwgCalculation() {
     state.autoSwg.targetInfo = undefined;
     state.autoSwg.staleFcNote = undefined;
     state.autoSwg.fcAnomalyNote = undefined;
+    state.autoSwg.ratingNote = undefined;
     state.autoSwg.error = undefined;
 }
 
@@ -215,6 +216,7 @@ async function runAutoSwgStep() {
     state.autoSwg.lastAppliedTargetInfo = undefined;
     state.autoSwg.lastAppliedStaleFcNote = undefined;
     state.autoSwg.lastAppliedFcAnomalyNote = undefined;
+    state.autoSwg.lastAppliedRatingNote = undefined;
     try {
         let win = resolveAutoSwgRunWindow(cfg);
         let capacity: { ppmPerDayAtFull: number; hours: number };
@@ -340,6 +342,7 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
     state.autoSwg.targetInfo = result.targetInfo;
     state.autoSwg.staleFcNote = result.staleFcNote;
     state.autoSwg.fcAnomalyNote = result.fcAnomalyNote;
+    state.autoSwg.ratingNote = result.ratingNote;
     state.autoSwg.currentPct = schlor ? schlor.targetOutput : result.currentPct;
     // recommendedPct is what Apply sends to the chlorinator, so it needs to be
     // the duty cycle that actually reaches targetFc within the target window -- not
@@ -408,6 +411,7 @@ async function applyAutoSwgRecommendation(isAutoApply: boolean, pctOverride?: nu
     state.autoSwg.lastAppliedTargetInfo = state.autoSwg.targetInfo;
     state.autoSwg.lastAppliedStaleFcNote = state.autoSwg.staleFcNote;
     state.autoSwg.lastAppliedFcAnomalyNote = state.autoSwg.fcAnomalyNote;
+    state.autoSwg.lastAppliedRatingNote = state.autoSwg.ratingNote;
     state.autoSwg.lastAppliedDataKey = state.autoSwg.details ? state.autoSwg.details.dataKey : undefined;
     // Which FC reading this apply was based on, so a later Refresh can tell whether
     // PoolMath has anything newer (see the skip in runAutoSwgRecommendation).
@@ -634,6 +638,7 @@ export class StateRoute {
             state.autoSwg.lastAppliedTargetInfo = undefined;
             state.autoSwg.lastAppliedStaleFcNote = undefined;
             state.autoSwg.lastAppliedFcAnomalyNote = undefined;
+            state.autoSwg.lastAppliedRatingNote = undefined;
             // A human just acted directly on the chlorinator -- nothing unreviewed left to warn about.
             state.autoSwg.lastAutoApplyLargeChange = false;
             state.autoSwg.emitEquipmentChange();
