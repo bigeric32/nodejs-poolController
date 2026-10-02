@@ -2405,7 +2405,7 @@ export class AutoSwg extends EqItem {
         if (typeof this.data.swgStartTime === 'undefined') this.data.swgStartTime = '07:00';
         if (typeof this.data.swgStopTime === 'undefined') this.data.swgStopTime = '19:00';
         if (typeof this.data.timezone === 'undefined') this.data.timezone = 'America/New_York';
-        if (typeof this.data.windowDays === 'undefined') this.data.windowDays = 14;
+        if (typeof this.data.windowDays === 'undefined') this.data.windowDays = 21;
         if (typeof this.data.targetFc === 'undefined') this.data.targetFc = 9.0;
         // Days to take reaching targetFc, depending on which side of it the projected FC
         // is on: coming down from above is the slow, gentle direction, building back up
