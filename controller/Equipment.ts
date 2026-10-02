@@ -2412,6 +2412,11 @@ export class AutoSwg extends EqItem {
         // from below is the one to hurry. (Replaces the single targetDays this used to be.)
         if (typeof this.data.targetDaysAbove === 'undefined') this.data.targetDaysAbove = 3;
         if (typeof this.data.targetDaysBelow === 'undefined') this.data.targetDaysBelow = 1;
+        // Used by "Refresh and Apply" (and the periodic check) while Auto-Apply is on: if the
+        // projected FC is more than this many ppm above or below targetFc it starts a new
+        // target (new deadline, in the above/below window above); otherwise it just
+        // refreshes the % against the existing target and deadline.
+        if (typeof this.data.newTargetThresholdPpm === 'undefined') this.data.newTargetThresholdPpm = 2;
         if (typeof this.data.autoStepEnabled === 'undefined') this.data.autoStepEnabled = false;
         // When true, a recommendation gets applied with no manual review -- whenever one is
         // produced, whether that's a manual Check Now/Refresh & Adjust click, or (if
@@ -2470,6 +2475,8 @@ export class AutoSwg extends EqItem {
     public set targetDaysAbove(val: number) { this.setDataVal('targetDaysAbove', val); }
     public get targetDaysBelow(): number { return this.data.targetDaysBelow; }
     public set targetDaysBelow(val: number) { this.setDataVal('targetDaysBelow', val); }
+    public get newTargetThresholdPpm(): number { return this.data.newTargetThresholdPpm; }
+    public set newTargetThresholdPpm(val: number) { this.setDataVal('newTargetThresholdPpm', val); }
     // When true, applying a recommendation that differs from the maintenance duty cycle
     // (catching up toward targetFc, or backing off toward it from above) schedules an
     // automatic step to the maintenance % once the target period ends, so the applied % doesn't keep
