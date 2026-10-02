@@ -920,12 +920,18 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
 
 export interface CombinedHistoryEntry {
     ts: string;                  // ISO
-    type: 'SWG' | 'FC';
+    // 'CYA' rows are only the readings where the value changed (plus the first); 'CL' rows are liquid
+    // chlorine additions.
+    type: 'SWG' | 'FC' | 'CYA' | 'CL';
     source: SwgSource;           // FC readings always come from PoolMath
     pct?: number;                // SWG %
     ppmPerDay?: number;          // SWG: PoolMath-style "X ppm FC" per day
     hrs?: number;                // SWG: run hours
-    value?: number;              // FC ppm
+    value?: number;              // FC ppm (FC rows) or CYA ppm (CYA rows)
+    previous?: number;           // CYA rows: the CYA reading before this one, when there was one
+    percent?: number;            // CL rows: the chlorine's strength %
+    ml?: number;                 // CL rows: the volume added, in mL
+    ppm?: number;                // CL rows: the ppm FC it adds to the configured pool volume
     record?: any;                // local SWG entries only: the full history record (inputs/outputs)
 }
 
@@ -988,13 +994,22 @@ export async function buildCombinedHistory(params: { shareCode?: string; poolNam
         poolMathSwgEvents = [...poolMathSwgEvents, ...arch.swg.filter(a => !near(poolMathSwgEvents, a.ts.getTime())).map(a => ({ ts: a.ts, ppmPerDay: a.ppmPerDay, hrs: a.hrs, pct: a.pct, source: 'poolmath' as SwgSource }))];
     }
     const swgMerge = mergeSwgEvents(poolMathSwgEvents, localSwgEntries);
+    const byTime = (a: { ts: string }, b: { ts: string }) => new Date(a.ts).getTime() - new Date(b.ts).getTime();
+    const cya = cyaEvents.map(e => ({ ts: e.ts.toISOString(), value: e.value })).sort(byTime);
+    const chlorineAdditions = chlorine.slice().sort((a, b) => a.ts.getTime() - b.ts.getTime())
+        .map(a => ({ ts: a.ts.toISOString(), percent: a.percent, ml: a.ml, ppm: params.gallons > 0 ? chlorineAdditionPpm(a, params.gallons) : undefined }));
+    // Only the CYA readings that show a change (and the first, as the starting value) get a row.
+    const cyaRows: CombinedHistoryEntry[] = [];
+    cya.forEach((c, i) => {
+        if (i === 0 || c.value !== cya[i - 1].value) cyaRows.push({ ts: c.ts, type: 'CYA', source: 'poolmath', value: c.value, previous: i > 0 ? cya[i - 1].value : undefined });
+    });
     const entries: CombinedHistoryEntry[] = [
         ...fcEvents.map(e => ({ ts: e.ts.toISOString(), type: 'FC' as const, source: 'poolmath' as SwgSource, value: e.value })),
         ...swgEventsToEntries(swgMerge.events),
-    ].sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime());
-    const cya = cyaEvents.map(e => ({ ts: e.ts.toISOString(), value: e.value })).sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime());
-    return { entries, localSwgEntriesUsed: swgMerge.localUsed, poolMathSwgEntriesReplaced: swgMerge.replaced, poolMathError, cya,
-        chlorineAdditions: chlorine.sort((a, b) => a.ts.getTime() - b.ts.getTime()).map(a => ({ ts: a.ts.toISOString(), percent: a.percent, ml: a.ml, ppm: params.gallons > 0 ? chlorineAdditionPpm(a, params.gallons) : undefined })) };
+        ...cyaRows,
+        ...chlorineAdditions.map(a => ({ ts: a.ts, type: 'CL' as const, source: 'poolmath' as SwgSource, percent: a.percent, ml: a.ml, ppm: a.ppm })),
+    ].sort(byTime);
+    return { entries, localSwgEntriesUsed: swgMerge.localUsed, poolMathSwgEntriesReplaced: swgMerge.replaced, poolMathError, cya, chlorineAdditions };
 }
 
 function swgEventsToEntries(events: SwgEvent[]): CombinedHistoryEntry[] {
