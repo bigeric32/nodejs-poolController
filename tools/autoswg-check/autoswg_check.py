@@ -205,6 +205,8 @@ class Params:
         self.daylight = True
         self.daytime_share_pct = 0
         self.damping = 1.0               # weight on the modelled FC change since the last reading (1 = all of it)
+        self.taper_start = 3.0           # days: full weight until the last reading is this old ...
+        self.taper_end = 0.0             # ... falling to 0 at this many days (0 = no taper)
         self.swg_start = 8 * 60          # run window start, minutes after local midnight
         self.tz = timezone.utc
         self.today = datetime.now(timezone.utc)
@@ -214,6 +216,19 @@ class Params:
         p = Params(**self.__dict__)
         p.__dict__.update(kw)
         return p
+
+
+def projection_weight(base, days, start, end):
+    """Weight on the modelled FC change when the last reading is `days` old: `base` up to `start` days, falling
+    linearly to 0 at `end` days (end <= 0, or not past start, means no taper)."""
+    b = max(0.0, min(1.0, base))
+    if not (end > 0 and end > start):
+        return b
+    if days <= start:
+        return b
+    if days >= end:
+        return 0.0
+    return b * (end - days) / (end - start)
 
 
 def parabolic_share(day_hours):
@@ -422,7 +437,8 @@ class Calc:
         gen_since = self.generated_since(swg, last_t, as_of)
         add_since = added(last_t, as_of)
         model_change = gen_since - avg * elapsed_eq
-        projected = last_v + max(0.0, min(1.0, p.damping)) * model_change + add_since
+        elapsed_days = (as_of - last_t).total_seconds() / DAY
+        projected = last_v + projection_weight(p.damping, elapsed_days, p.taper_start, p.taper_end) * model_change + add_since
         return {'projected': projected, 'avg': avg, 'last_ts': last_t, 'suspects': suspects,
                 'prev': last_v, 'model_change': model_change, 'added': add_since}
 
@@ -521,12 +537,19 @@ def report_accuracy(ds, p, args, csv_dir):
     unchanged = mean([abs(pv - m) for pv, mc, ad, m in prevs])
     print('baseline "FC unchanged since the last reading": MAE %.2f ppm -> the algorithm is %.0f%% %s than that' % (
         unchanged, abs(100 * (1 - s['mae'] / unchanged)), 'better' if s['mae'] < unchanged else 'worse'))
-    mae_at = lambda lam: mean([abs(pv + lam * mc + ad - m) for pv, mc, ad, m in prevs])
-    best_lam, best_mae = min(((i / 20.0, mae_at(i / 20.0)) for i in range(21)), key=lambda x: x[1])
+    gaps = [(ds.fc[k][0] - ds.fc[k - 1][0]).total_seconds() / DAY for k in errs]
+    def mae_at(lam, ts, te):
+        return mean([abs(pv + projection_weight(lam, g, ts, te) * mc + ad - m) for (pv, mc, ad, m), g in zip(prevs, gaps)])
+    tapers = [(3, 0), (3, 8), (4, 10), (2, 6), (5, 12)]
+    best = min(((i / 20.0, ts, te, mae_at(i / 20.0, ts, te)) for i in range(21) for ts, te in tapers), key=lambda x: x[3])
     wgt = len(prevs) / (len(prevs) + 30.0)
-    suggested = round((wgt * best_lam + (1 - wgt) * 0.5) * 20) / 20.0
-    print('projection weighting: current %.0f%% (MAE %.2f) | best on these readings %.0f%% (MAE %.2f) | suggested %.0f%% (MAE %.2f), shrunk toward 50%% for the small sample' % (
-        p.damping * 100, s['mae'], best_lam * 100, best_mae, suggested * 100, mae_at(suggested)))
+    sw = round((wgt * best[0] + (1 - wgt) * 0.5) * 20) / 20.0
+    st = min(((ts, te, mae_at(sw, ts, te)) for ts, te in tapers), key=lambda x: x[2])
+    if st[2] > mae_at(sw, 3, 0) * 0.97:
+        st = (3, 0, mae_at(sw, 3, 0))
+    desc = lambda w, ts, te: '%.0f%%%s' % (w * 100, (', taper %d to %d days' % (ts, te)) if te > 0 else ', no taper')
+    print('projection weighting: current %s (MAE %.2f) | best on these readings %s (MAE %.2f) | suggested %s (MAE %.2f), weighting shrunk toward 50%% for the small sample' % (
+        desc(p.damping, p.taper_start, p.taper_end), s['mae'], desc(best[0], best[1], best[2]), best[3], desc(sw, st[0], st[1]), st[2]))
     if csv_dir:
         with open(os.path.join(csv_dir, 'accuracy.csv'), 'w', newline='') as f:
             w = csv.writer(f)
@@ -548,6 +571,9 @@ def report_whatif(ds, p, args, csv_dir):
     for dmp in (0.0, 0.25, 0.5, 0.75, 1.0):
         if dmp != p.damping:
             variants.append(('Projection weighting %d%%' % round(dmp * 100), p.copy(damping=dmp)))
+    for ts, te in ((3, 8), (4, 10), (2, 6)):
+        variants.append(('Taper off %d to %d days' % (ts, te), p.copy(taper_start=float(ts), taper_end=float(te))))
+        variants.append(('Weighting 50%% + taper %d to %d days' % (ts, te), p.copy(damping=0.5, taper_start=float(ts), taper_end=float(te))))
     for t in (0, 1, 3):
         if t != p.tolerance:
             variants.append(('FC anomaly check off' if t == 0 else 'FC anomaly tolerance %d ppm' % t, p.copy(tolerance=float(t))))
@@ -696,6 +722,8 @@ def main():
     ap.add_argument('--window', type=int, default=21, help='averaging window in days (default 21)')
     ap.add_argument('--tolerance', type=float, default=2.0, help='FC anomaly tolerance in ppm, 0 = off (default 2)')
     ap.add_argument('--damping', type=float, default=1.0, help='weight on the modelled FC change since the last reading, 0 to 1 (default 1 = all of it)')
+    ap.add_argument('--taper-start', type=float, default=3.0, help='days: full projection weight until the last reading is this old (default 3)')
+    ap.add_argument('--taper-end', type=float, default=0.0, help='days at which the weight reaches 0 (default 0 = no taper)')
     ap.add_argument('--no-credit', action='store_true', help='do not credit liquid chlorine additions')
     ap.add_argument('--no-daylight', action='store_true', help='count time by the clock')
     ap.add_argument('--daytime-share', type=float, default=0, help='daytime share of FC loss in %%, 0 = parabolic estimate from day length')
@@ -706,7 +734,8 @@ def main():
     ds = Dataset(pool, args)
     hh, mm = (int(x) for x in args.swg_start.split(':'))
     p = Params(window_days=args.window, tolerance=args.tolerance, credit=not args.no_credit, daylight=not args.no_daylight,
-               daytime_share_pct=args.daytime_share, swg_start=hh * 60 + mm, tz=get_tz(args.tz, args.utc_offset), damping=args.damping)
+               daytime_share_pct=args.daytime_share, swg_start=hh * 60 + mm, tz=get_tz(args.tz, args.utc_offset), damping=args.damping,
+               taper_start=args.taper_start, taper_end=args.taper_end)
     if not args.keep_odd_swg:
         ds.excluded = odd_swg_spans(ds)
         if ds.excluded:
