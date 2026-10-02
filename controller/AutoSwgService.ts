@@ -669,6 +669,25 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         rationale.push(`Projected current FC is ${above ? 'above' : 'at or below'} the ${params.targetFc} ppm target: using the ${targetDays}-day window for FC ${above ? 'above' : 'below'} target.`);
     }
 
+    // FC that starts well ABOVE the target may not burn down to it by the deadline even with
+    // the SWG off. Rather than aim at a date the target can't be reached by, move the target
+    // date out to when consumption alone is projected to bring FC down to it (the SWG then
+    // just stays off until then). Never moves a deadline earlier.
+    let targetInfo: string | undefined;
+    if (projectedCurrentFc - (avgPerDay * targetDays) > targetFc + 0.005) {
+        const origWindow = `${Math.round(targetDays * 10) / 10} day${Math.round(targetDays * 10) / 10 === 1 ? '' : 's'}`;
+        const origDate = targetDate;
+        const head = `FC is projected at ${projectedCurrentFc.toFixed(2)} ppm, above the ${targetFc} ppm target.`;
+        if (avgPerDay > 0) {
+            const daysToTarget = (projectedCurrentFc - targetFc) / avgPerDay;
+            targetDays = daysToTarget;
+            targetDate = new Date(rightNow.getTime() + daysToTarget * 86400000);
+            targetInfo = `${head} At the projected burn of ${avgPerDay.toFixed(2)} ppm/day it should reach the target in about ${daysToTarget.toFixed(1)} days, later than the ${origWindow} to the original deadline (${formatLocalDateTime(origDate, params.timezone)}) -- so the target date is moved to ${formatLocalDateTime(targetDate, params.timezone)}, and the SWG isn't needed and is held at 0% until then.`;
+        }
+        else targetInfo = `${head} No FC consumption was measured, so there's no burn rate to project when it will reach the target; the SWG isn't needed and is held at 0%.`;
+        rationale.push(`NOTE: ${targetInfo}`);
+    }
+
     // Duty cycle needed to reach targetFc in targetDays.
     const targetHours = targetDays * 24;
     const neededPpm = (targetFc - projectedCurrentFc) + (avgPerDay * targetDays);
@@ -691,24 +710,6 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
             else targetWarning = `Even at 100%, the SWG (${maxDailyPpmAtFull.toFixed(2)} ppm/day) can't outpace the ${avgPerDay.toFixed(2)} ppm/day of consumption, so FC will not reach the ${targetFc} ppm target within ${window}, or at all, at this rate. The recommendation is capped at 100%.`;
             rationale.push(`WARNING: ${targetWarning}`);
         }
-    }
-
-    // The mirror image of the warning above, for FC that starts well ABOVE the target: even
-    // with the SWG off, consumption alone won't bring it down by the deadline. The % is
-    // already at its floor (0), so this isn't a problem -- just worth explaining why the
-    // target won't be met by then.
-    let targetInfo: string | undefined;
-    const fcAtDeadlineAtZero = projectedCurrentFc - (avgPerDay * targetDays);
-    if (fcAtDeadlineAtZero > targetFc + 0.005) {
-        const window = `${Math.round(targetDays * 10) / 10} day${Math.round(targetDays * 10) / 10 === 1 ? '' : 's'}`;
-        const head = `FC is projected at ${projectedCurrentFc.toFixed(2)} ppm, above the ${targetFc} ppm target.`;
-        if (avgPerDay > 0) {
-            const daysToTarget = (projectedCurrentFc - targetFc) / avgPerDay;
-            const reachDate = new Date(rightNow.getTime() + daysToTarget * 86400000);
-            targetInfo = `${head} At the projected burn of ${avgPerDay.toFixed(2)} ppm/day it should reach the target in about ${daysToTarget.toFixed(1)} days (around ${formatLocalDateTime(reachDate, params.timezone)}), later than the ${window} to the deadline -- so the SWG isn't needed and is held at 0%.`;
-        }
-        else targetInfo = `${head} No FC consumption was measured, so there's no burn rate to project when it will reach the target; the SWG isn't needed and is held at 0%.`;
-        rationale.push(`NOTE: ${targetInfo}`);
     }
 
     // What gets recorded as this result's inputs: the parameters, minus the in-flight
