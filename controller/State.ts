@@ -3917,6 +3917,16 @@ export class AutoSwgState extends EqState {
     // current settings -- a changed target is a reason to recalculate even without new data.
     public get lastAppliedSettingsKey(): string { return this.data.lastAppliedSettingsKey; }
     public set lastAppliedSettingsKey(val: string) { this.setDataVal('lastAppliedSettingsKey', val); }
+    // Set while intervals in the averaging window are being left out for an FC rise nothing logged
+    // explains (see AutoSwgService fcAnomalyNote). Same lifecycle as staleFcNote.
+    public get fcAnomalyNote(): string { return this.data.fcAnomalyNote; }
+    public set fcAnomalyNote(val: string) { this.setDataVal('fcAnomalyNote', val); }
+    public get lastAppliedFcAnomalyNote(): string { return this.data.lastAppliedFcAnomalyNote; }
+    public set lastAppliedFcAnomalyNote(val: string) { this.setDataVal('lastAppliedFcAnomalyNote', val); }
+    // Fingerprint of the PoolMath data (FC readings, additions, SWG entries) the last apply was
+    // calculated from -- a Refresh with the same data has nothing new to work from.
+    public get lastAppliedDataKey(): string { return this.data.lastAppliedDataKey; }
+    public set lastAppliedDataKey(val: string) { this.setDataVal('lastAppliedDataKey', val); }
     public get lastAppliedFcAt(): string { return this.data.lastAppliedFcAt; }
     public set lastAppliedFcAt(val: string) { this.setDataVal('lastAppliedFcAt', val); }
     // True when the most recent AUTOMATIC apply (fully-automatic mode, no human review)

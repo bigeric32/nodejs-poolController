@@ -145,6 +145,7 @@ function clearAutoSwgCalculation() {
     state.autoSwg.targetWarning = undefined;
     state.autoSwg.targetInfo = undefined;
     state.autoSwg.staleFcNote = undefined;
+    state.autoSwg.fcAnomalyNote = undefined;
     state.autoSwg.error = undefined;
 }
 
@@ -212,6 +213,7 @@ async function runAutoSwgStep() {
     state.autoSwg.lastAppliedTargetWarning = undefined;
     state.autoSwg.lastAppliedTargetInfo = undefined;
     state.autoSwg.lastAppliedStaleFcNote = undefined;
+    state.autoSwg.lastAppliedFcAnomalyNote = undefined;
     try {
         let win = resolveAutoSwgRunWindow(cfg);
         let capacity: { ppmPerDayAtFull: number; hours: number };
@@ -267,7 +269,7 @@ function autoSwgSettingsKey(): string {
     let cfg = sys.autoSwg;
     return [
         cfg.targetFc, cfg.targetDaysAbove, cfg.targetDaysBelow, cfg.newTargetThresholdPpm,
-        cfg.windowDays, cfg.gallons, cfg.swgLbsPerDay, cfg.timezone, cfg.daytimeLossSharePct, cfg.creditChlorineAdditions,
+        cfg.windowDays, cfg.gallons, cfg.swgLbsPerDay, cfg.timezone, cfg.daytimeLossSharePct, cfg.creditChlorineAdditions, cfg.fcAnomalyTolerancePpm,
         cfg.shareCode, cfg.poolName, cfg.scheduleId, cfg.scheduleId >= 0 ? '' : cfg.swgStartTime, cfg.scheduleId >= 0 ? '' : cfg.swgStopTime
     ].join('|');
 }
@@ -313,12 +315,14 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
         sunsetTime: sunTimes.sunset,
         daytimeSharePct: cfg.daytimeLossSharePct,
         creditChlorineAdditions: cfg.creditChlorineAdditions,
+        fcAnomalyTolerancePpm: cfg.fcAnomalyTolerancePpm,
     }, undefined, toLocalSwgEntries(readAutoSwgHistory()), refreshAutoSwgArchiveFromPage);
-    // A Refresh works from fresh PoolMath data; if the newest FC reading is the very one the
-    // last apply was already based on, there is nothing new and re-running would only restate
+    // A Refresh works from fresh PoolMath data; if the data it read (readings, additions, SWG entries)
+    // is exactly what the last apply used -- the newest FC reading is the very one it was based on,
+    // and nothing was added, edited or deleted -- there is nothing new and re-running would only restate
     // the same number (or nudge it with extrapolation). Leave everything as it is. Check Now
     // ('new') always runs -- it's the explicit "start over" and also picks up config changes.
-    if (mode !== 'new' && inFlight && state.autoSwg.lastAppliedFcAt && result.mostRecentFc && result.mostRecentFc.ts === state.autoSwg.lastAppliedFcAt && state.autoSwg.lastAppliedSettingsKey === autoSwgSettingsKey()) {
+    if (mode !== 'new' && inFlight && state.autoSwg.lastAppliedFcAt && result.mostRecentFc && result.mostRecentFc.ts === state.autoSwg.lastAppliedFcAt && state.autoSwg.lastAppliedSettingsKey === autoSwgSettingsKey() && state.autoSwg.lastAppliedDataKey === result.dataKey) {
         return `No new FC reading in PoolMath since ${formatLocalDateTime(new Date(result.mostRecentFc.ts), cfg.timezone)}; nothing to refresh.`;
     }
     if (extraRationaleNote) result.rationale.unshift(extraRationaleNote);
@@ -334,6 +338,7 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
     state.autoSwg.targetWarning = result.targetWarning;
     state.autoSwg.targetInfo = result.targetInfo;
     state.autoSwg.staleFcNote = result.staleFcNote;
+    state.autoSwg.fcAnomalyNote = result.fcAnomalyNote;
     state.autoSwg.currentPct = schlor ? schlor.targetOutput : result.currentPct;
     // recommendedPct is what Apply sends to the chlorinator, so it needs to be
     // the duty cycle that actually reaches targetFc within the target window -- not
@@ -354,6 +359,7 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
         avgWindowExtended: result.avgWindowExtended,
         mostRecentFc: result.mostRecentFc,
         settingsKey: autoSwgSettingsKey(),
+        dataKey: result.dataKey,
         mostRecentCya: result.mostRecentCya,
         mostRecentSwg: result.mostRecentSwg,
         localSwgEntriesUsed: result.localSwgEntriesUsed,
@@ -400,6 +406,8 @@ async function applyAutoSwgRecommendation(isAutoApply: boolean, pctOverride?: nu
     state.autoSwg.lastAppliedTargetWarning = state.autoSwg.targetWarning;
     state.autoSwg.lastAppliedTargetInfo = state.autoSwg.targetInfo;
     state.autoSwg.lastAppliedStaleFcNote = state.autoSwg.staleFcNote;
+    state.autoSwg.lastAppliedFcAnomalyNote = state.autoSwg.fcAnomalyNote;
+    state.autoSwg.lastAppliedDataKey = state.autoSwg.details ? state.autoSwg.details.dataKey : undefined;
     // Which FC reading this apply was based on, so a later Refresh can tell whether
     // PoolMath has anything newer (see the skip in runAutoSwgRecommendation).
     let appliedFc = state.autoSwg.details ? state.autoSwg.details.mostRecentFc : undefined;
@@ -624,6 +632,7 @@ export class StateRoute {
             state.autoSwg.lastAppliedTargetWarning = undefined;
             state.autoSwg.lastAppliedTargetInfo = undefined;
             state.autoSwg.lastAppliedStaleFcNote = undefined;
+            state.autoSwg.lastAppliedFcAnomalyNote = undefined;
             // A human just acted directly on the chlorinator -- nothing unreviewed left to warn about.
             state.autoSwg.lastAutoApplyLargeChange = false;
             state.autoSwg.emitEquipmentChange();
