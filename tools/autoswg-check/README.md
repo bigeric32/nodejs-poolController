@@ -68,6 +68,21 @@ dashPanel has the same two reports for your own pool, under **Settings > Chemist
 options** (click "Tuning options" to expand it). This script gives you the same numbers for any pool, and
 is the way to try a setting on someone else's history first.
 
+### The quick way: the Tune button
+
+Press **Tune** (in Tuning options). It checks your *saved* settings against your FC history and gives
+**one** recommendation, or says your settings look good:
+
+1. Apply the recommendation. If it was an **averaging window** change, press Tune once more (the window
+   interacts with the weighting and taper, so those are judged after it), then stop.
+2. Leave it alone for about 10 new FC readings, then check the "Since you changed" line in Projection
+   Accuracy.
+3. Don't tune in a loop: every pass is scored on the same history, so it makes the numbers look better
+   without the real accuracy improving.
+
+Tune is built from the two reports below, which open from its dialog (**Projection Accuracy** and
+**What-If Sweep**) if you want the detail. The rest of this section explains them.
+
 ### What each one answers
 
 * **Projection Accuracy** answers *how well do the projections match what I measured?* For every recent FC
