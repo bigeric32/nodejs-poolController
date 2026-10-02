@@ -789,7 +789,11 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
 
     // Time-weighted running average FC consumption over the last windowDays.
     const anomalyTolerance = typeof params.fcAnomalyTolerancePpm === 'number' && params.fcAnomalyTolerancePpm >= 0 ? params.fcAnomalyTolerancePpm : ANOMALY_TOLERANCE_PPM;
-    const intervals: { t1: Date; t2: Date; perDay: number; consumed: number; rise: number; suspect: boolean }[] = [];
+    // Before the first SWG entry there is no record of what the SWG was doing, and the output is treated as
+    // zero -- so an interval that starts there would show a stretch with no chlorine generation. It is left
+    // out of the average (the bad number would otherwise pass straight through to the burn rate).
+    const firstSwgMs = swgEvents[0].ts.getTime();
+    const intervals: { t1: Date; t2: Date; perDay: number; consumed: number; rise: number; suspect: boolean; uncovered: boolean }[] = [];
     for (let i = 0; i < fcEvents.length - 1; i++) {
         const [t1, fc1] = [fcEvents[i].ts, fcEvents[i].value];
         const [t2, fc2] = [fcEvents[i + 1].ts, fcEvents[i + 1].value];
@@ -798,7 +802,7 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         const rawDelta = fc2 - fc1;
         const consumed = gen + addedBetween(t1, t2) - rawDelta;
         const days = dayEquivalents(t1, t2);
-        intervals.push({ t1, t2, perDay: days > 0 ? consumed / days : 0, consumed, rise: rawDelta, suspect: anomalyTolerance > 0 && consumed < -anomalyTolerance });
+        intervals.push({ t1, t2, perDay: days > 0 ? consumed / days : 0, consumed, rise: rawDelta, suspect: anomalyTolerance > 0 && consumed < -anomalyTolerance, uncovered: t1.getTime() < firstSwgMs });
     }
 
     const rightNow = params.asOf ? new Date(params.asOf) : new Date();
@@ -813,6 +817,7 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     let weightedTotal = 0;
     let coveredDays = 0;
     const suspects: typeof intervals = [];
+    let uncoveredLeftOut = 0;
     const overlapOf = (iv: { t1: Date; t2: Date }): number => {
         const clipStart = new Date(Math.max(iv.t1.getTime(), windowStart.getTime()));
         const clipEnd = new Date(Math.min(iv.t2.getTime(), rightNow.getTime()));
@@ -821,6 +826,7 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     for (const iv of intervals) {
         const overlapDays = overlapOf(iv);
         if (overlapDays <= 0) continue;
+        if (iv.uncovered) { uncoveredLeftOut++; continue; } // no SWG record behind it
         if (iv.suspect) { suspects.push(iv); continue; } // left out of the average -- see fcAnomalyNote
         weightedTotal += iv.perDay * overlapDays;
         coveredDays += overlapDays;
@@ -832,6 +838,12 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     if (coveredDays === 0 && suspects.length) {
         anomalyKept = true;
         for (const iv of suspects) { const o = overlapOf(iv); weightedTotal += iv.perDay * o; coveredDays += o; }
+    }
+    const firstSwgLabel = formatLocalDateTime(new Date(firstSwgMs), params.timezone);
+    if (coveredDays === 0 && uncoveredLeftOut > 0) {
+        // Everything in the window predates the SWG record: there is nothing to base a burn rate on, and
+        // assuming none would recommend as though the pool used no chlorine.
+        throw new Error(`None of the FC intervals in the averaging window has an SWG record behind it (the first SWG entry, in PoolMath or the local log, is ${firstSwgLabel}), so consumption can't be estimated yet. Log the SWG % in PoolMath (or let AutoSwg log it) and check again after a few more FC readings.`);
     }
     // Average over the time actually spanned by consecutive FC readings. The
     // stretch since the last reading has no measured consumption, so dividing by
@@ -847,6 +859,7 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         : '';
     const avgConsumptionSummary = `Running ${windowLabel}-day average FC consumption (${windowRange}${extensionNote}): ${avgPerDay.toFixed(2)} ppm/day (from ${fcEvents.length} FC readings, ${swgEvents.length} SWG log entries).`;
     rationale.push(avgConsumptionSummary);
+    if (uncoveredLeftOut > 0) rationale.push(`${uncoveredLeftOut} FC interval${uncoveredLeftOut === 1 ? '' : 's'} in the averaging window start before the first SWG entry (${firstSwgLabel}) and ${uncoveredLeftOut === 1 ? 'was' : 'were'} left out of the average, since what the SWG was doing then isn't on record.`);
     let fcAnomalyNote: string | undefined;
     if (suspects.length) {
         // About how much 10% liquid chlorine would account for the unexplained rise at this pool volume.
