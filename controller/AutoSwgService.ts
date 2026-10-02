@@ -1393,7 +1393,13 @@ export async function buildWhatIfSweep(params: AutoSwgParams, options: { lookbac
     const from = Date.now() - options.lookbackDays * 86400000;
 
     const variants: { key: string; label: string; params: AutoSwgParams }[] = [{ key: 'current', label: 'Current settings', params }];
-    const add = (key: string, label: string, p: AutoSwgParams) => variants.push({ key, label, params: p });
+    // A variant identical to the current settings (now that the defaults are a 50% weighting with a 3 to 8 day taper, a
+    // couple of the candidates are) would only add a row that says nothing changes, so it is left out.
+    const TUNING = ['windowDays', 'creditChlorineAdditions', 'fcAnomalyTolerancePpm', 'projectionDamping', 'projectionTaperStartDays', 'projectionTaperEndDays', 'sunriseTime', 'sunsetTime'];
+    const add = (key: string, label: string, p: AutoSwgParams) => {
+        if (TUNING.every(k => (p as any)[k] === (params as any)[k])) return;
+        variants.push({ key, label, params: p });
+    };
     for (const w of [7, 14, 21, 28, 42, 56]) if (w !== params.windowDays) add(`window${w}`, `Averaging window ${w} days`, Object.assign({}, params, { windowDays: w }));
     if (params.sunriseTime && params.sunsetTime) add('noDaylight', 'Daylight weighting off', Object.assign({}, params, { sunriseTime: undefined, sunsetTime: undefined }));
     add('creditToggle', params.creditChlorineAdditions !== false ? 'Liquid chlorine credit off' : 'Liquid chlorine credit on', Object.assign({}, params, { creditChlorineAdditions: params.creditChlorineAdditions === false }));
@@ -1480,6 +1486,8 @@ export interface TuneRecommendation {
 
 export interface TuneResult {
     status: 'good' | 'recommend' | 'insufficient';
+    lookbackDays: number;                // how far back it scored (it widens when the last year holds too few readings)
+    widened: boolean;
     readings: number;                    // readings every variant could score
     skipped: number;
     history?: { readings: number; from?: string; archived: number };
@@ -1497,11 +1505,20 @@ export interface TuneResult {
 // best clearly-better alternative; otherwise the settings are fine. Fewer than 15 readings is too few to tune on.
 export async function buildTune(params: AutoSwgParams, options: { lookbackDays: number; html?: string; localSwgEntries?: LocalSwgEntry[]; historyRecords?: any[]; tuningChangedAt?: string; archive?: ArchivedHistory }): Promise<TuneResult> {
     const html = options.html || await fetchHtml(params.shareCode);
-    const accuracy = await buildProjectionAccuracy(params, Object.assign({}, options, { html }));
-    const sweep = await buildWhatIfSweep(params, { lookbackDays: options.lookbackDays, html, localSwgEntries: options.localSwgEntries, archive: options.archive });
+    const score = async (days: number) => ({
+        accuracy: await buildProjectionAccuracy(params, Object.assign({}, options, { html, lookbackDays: days })),
+        sweep: await buildWhatIfSweep(params, { lookbackDays: days, html, localSwgEntries: options.localSwgEntries, archive: options.archive }),
+    });
+    let lookbackDays = options.lookbackDays;
+    let { accuracy, sweep } = await score(lookbackDays);
+    // A sparse pool can have too few readings in the last year to tune on; look back further (the whole history) then.
+    if (sweep.count < 30 && lookbackDays < 3650) {
+        const wider = await score(3650);
+        if (wider.sweep.count > sweep.count) { accuracy = wider.accuracy; sweep = wider.sweep; lookbackDays = 3650; }
+    }
     const cur = sweep.variants[0];
     const result: TuneResult = {
-        status: 'good', readings: sweep.count, skipped: sweep.skipped, history: accuracy.history,
+        status: 'good', lookbackDays, widened: lookbackDays > options.lookbackDays, readings: sweep.count, skipped: sweep.skipped, history: accuracy.history,
         meanAbsError: cur ? cur.meanAbsError : undefined,
         unchangedMae: accuracy.summary.unchangedMae, skill: accuracy.summary.skill, sinceChange: accuracy.summary.sinceChange,
         betterCount: 0,
