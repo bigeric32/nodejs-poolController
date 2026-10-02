@@ -28,6 +28,7 @@ import { ServiceProcessError } from "../../../controller/Errors";
 import { state } from "../../../controller/State";
 import { stopPacketCaptureAsync, startPacketCapture } from '../../../app';
 import { armAutoSwgArchiveSync, armAutoSwgAutoCheck } from '../state/State';
+import { markLastTuneApplied } from '../../../controller/AutoSwgTuneHistory';
 import { conn } from "../../../controller/comms/Comms";
 import { webApp, BackupFile, RestoreFile } from "../../Server";
 import { release } from "os";
@@ -1029,7 +1030,11 @@ export class ConfigRoute {
                 sys.autoSwg.set(req.body);
                 if (tuningKeys.some((k, i) => (sys.autoSwg as any)[k] !== before[i])) sys.autoSwg.tuningChangedAt = new Date().toISOString();
                 // The Tune dialog marks its own Apply, so a later Tune can tell its changes from ones made by hand.
-                if (req.body && req.body.tuneApplied === true) sys.autoSwg.lastTuneAppliedAt = sys.autoSwg.lastTuneAt = new Date().toISOString();
+                if (req.body && req.body.tuneApplied === true) {
+                    sys.autoSwg.lastTuneAppliedAt = sys.autoSwg.lastTuneAt = new Date().toISOString();
+                    try { markLastTuneApplied(sys.autoSwg.lastTuneAppliedAt); }
+                    catch (err) { logger.warn(`AutoSwg: could not mark the last Tune as applied: ${err.message}`); }
+                }
                 // Re-arm fully-automatic mode's periodic check against the just-saved config,
                 // so enabling it (or changing the interval) takes effect immediately rather
                 // than needing a restart.

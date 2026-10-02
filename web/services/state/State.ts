@@ -29,6 +29,7 @@ import { config } from "../../../config/Config";
 import { ServiceParameterError } from "../../../controller/Errors";
 import { buildCombinedHistory, buildProjectionAccuracy, buildTune, buildWhatIfSweep, computeRecommendation, computeSwgCapacity, formatLocalDateTime, minutesToHHMM, nextScheduledCheck } from "../../../controller/AutoSwgService";
 import type { AutoSwgParams, PageReadings } from "../../../controller/AutoSwgService";
+import { appendTuneHistory, readTuneHistory } from "../../../controller/AutoSwgTuneHistory";
 import { appendAutoSwgHistory, readAutoSwgHistory, toLocalSwgEntries } from "../../../controller/AutoSwgHistory";
 import { archivedChlorineAdditions, archivedCyaReadings, archivedFcReadings, archivedSwgEvents, isPoolMathArchiveCurrent, poolMathArchiveSummary, refreshPoolMathArchiveFromPage, syncPoolMathArchive } from "../../../controller/AutoSwgPoolMathArchive";
 
@@ -574,6 +575,16 @@ function autoSwgReportParams(cfg: typeof sys.autoSwg): AutoSwgParams {
         projectionTaperStartDays: cfg.projectionTaperStartDays,
         projectionTaperEndDays: cfg.projectionTaperEndDays,
     };
+}
+
+// Whether another Tune is worth it yet (see the /state/autoSwg/tune/status route), from what is stored locally.
+function autoSwgTuneStatus(cfg: typeof sys.autoSwg) {
+    let ms = (v: string) => v ? new Date(v).getTime() : NaN;
+    let ref = Math.max(isNaN(ms(cfg.lastTuneAt)) ? -Infinity : ms(cfg.lastTuneAt), isNaN(ms(cfg.lastTuneAppliedAt)) ? -Infinity : ms(cfg.lastTuneAppliedAt));
+    let manual = isFinite(ref) && !isNaN(ms(cfg.tuningChangedAt)) && ms(cfg.tuningChangedAt) > ref + 60000;
+    let since: number | undefined;
+    if (isFinite(ref) && cfg.shareCode && isPoolMathArchiveCurrent(cfg.shareCode, cfg.poolName || undefined)) since = archivedFcReadings().filter(r => r.ts.getTime() > ref).length;
+    return { lastTuneAt: cfg.lastTuneAt, lastTuneAppliedAt: cfg.lastTuneAppliedAt, tuningChangedAt: cfg.tuningChangedAt, manualChangeSinceTune: manual, readingsSinceTune: since, needed: 10 };
 }
 
 // Background PoolMath history sync: pulls up to 18 months of logs from the share link's JSON
@@ -1252,7 +1263,19 @@ export class StateRoute {
                 let cfg = sys.autoSwg;
                 if (!cfg.shareCode) throw new ServiceParameterError('AutoSwg is not configured: shareCode is required.', 'autoSwg', 'shareCode', cfg.shareCode);
                 let tune = await buildTune(autoSwgReportParams(cfg), { lookbackDays: 365, localSwgEntries: toLocalSwgEntries(readAutoSwgHistory()), historyRecords: readAutoSwgHistory(), tuningChangedAt: cfg.tuningChangedAt, archive: autoSwgArchiveForReports() });
+                let status = autoSwgTuneStatus(cfg);   // as it stood before this run
                 cfg.lastTuneAt = new Date().toISOString();
+                try {
+                    appendTuneHistory({
+                        ts: cfg.lastTuneAt,
+                        settings: { windowDays: cfg.windowDays, daytimeLossSharePct: cfg.daytimeLossSharePct, creditChlorineAdditions: cfg.creditChlorineAdditions, fcAnomalyTolerancePpm: cfg.fcAnomalyTolerancePpm, projectionDamping: cfg.projectionDamping, projectionTaperStartDays: cfg.projectionTaperStartDays, projectionTaperEndDays: cfg.projectionTaperEndDays },
+                        readings: tune.readings, history: tune.history, meanAbsError: tune.meanAbsError, unchangedMae: tune.unchangedMae, skill: tune.skill,
+                        status: tune.status,
+                        recommendation: tune.recommendation ? { kind: tune.recommendation.kind, label: tune.recommendation.label, settings: tune.recommendation.settings, expectedMae: tune.recommendation.expectedMae, change: tune.recommendation.change, low: tune.recommendation.low, high: tune.recommendation.high } : undefined,
+                        manualChangeSinceLastTune: status.manualChangeSinceTune, readingsSinceLastTune: status.readingsSinceTune,
+                    });
+                }
+                catch (err) { logger.warn(`AutoSwg: could not record the Tune run: ${err.message}`); }
                 return res.status(200).send(tune);
             }
             catch (err) { next(err); }
@@ -1261,15 +1284,12 @@ export class StateRoute {
         // ran, how many FC readings have arrived since (from the archive, which every PoolMath read keeps current),
         // and whether the tuning settings were changed by hand since -- which would make tuning again worthwhile.
         app.get('/state/autoSwg/tune/status', (req, res, next) => {
-            try {
-                let cfg = sys.autoSwg;
-                let ms = (v: string) => v ? new Date(v).getTime() : NaN;
-                let ref = Math.max(isNaN(ms(cfg.lastTuneAt)) ? -Infinity : ms(cfg.lastTuneAt), isNaN(ms(cfg.lastTuneAppliedAt)) ? -Infinity : ms(cfg.lastTuneAppliedAt));
-                let manual = isFinite(ref) && !isNaN(ms(cfg.tuningChangedAt)) && ms(cfg.tuningChangedAt) > ref + 60000;
-                let since: number | undefined;
-                if (isFinite(ref) && cfg.shareCode && isPoolMathArchiveCurrent(cfg.shareCode, cfg.poolName || undefined)) since = archivedFcReadings().filter(r => r.ts.getTime() > ref).length;
-                return res.status(200).send({ lastTuneAt: cfg.lastTuneAt, lastTuneAppliedAt: cfg.lastTuneAppliedAt, tuningChangedAt: cfg.tuningChangedAt, manualChangeSinceTune: manual, readingsSinceTune: since, needed: 10 });
-            }
+            try { return res.status(200).send(autoSwgTuneStatus(sys.autoSwg)); }
+            catch (err) { next(err); }
+        });
+        // The recent Tune runs, newest first.
+        app.get('/state/autoSwg/tune/history', (req, res, next) => {
+            try { return res.status(200).send(readTuneHistory().slice().reverse()); }
             catch (err) { next(err); }
         });
         app.post('/state/autoSwg/recommend', async (req, res, next) => {
