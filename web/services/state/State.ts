@@ -141,6 +141,7 @@ function clearAutoSwgCalculation() {
     state.autoSwg.projectedCurrentFc = undefined;
     state.autoSwg.details = undefined;
     state.autoSwg.rationale = undefined;
+    state.autoSwg.targetWarning = undefined;
     state.autoSwg.error = undefined;
 }
 
@@ -205,6 +206,7 @@ async function runAutoSwgStep() {
     // longer an in-flight deadline to refine toward, just steady maintenance.
     let completedTargetDate = state.autoSwg.lastAppliedTargetDate;
     state.autoSwg.lastAppliedTargetDate = undefined;
+    state.autoSwg.lastAppliedTargetWarning = undefined;
     try {
         let win = resolveAutoSwgRunWindow(cfg);
         let capacity: { ppmPerDayAtFull: number; hours: number };
@@ -284,6 +286,7 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
     // pair rather than re-deriving anything from live config at apply time.
     state.autoSwg.pendingTargetFc = result.targetFcUsed;
     state.autoSwg.pendingTargetDate = result.targetDateUsed;
+    state.autoSwg.targetWarning = result.targetWarning;
     state.autoSwg.currentPct = schlor ? schlor.targetOutput : result.currentPct;
     // recommendedPct is what Apply sends to the chlorinator, so it needs to be
     // the duty cycle that actually reaches targetFc within the target window -- not
@@ -345,6 +348,7 @@ async function applyAutoSwgRecommendation(isAutoApply: boolean, pctOverride?: nu
     // none is invented -- so no refine is offered and no step is scheduled off it.
     state.autoSwg.lastAppliedTargetFc = typeof state.autoSwg.pendingTargetFc === 'number' ? state.autoSwg.pendingTargetFc : sys.autoSwg.targetFc;
     state.autoSwg.lastAppliedTargetDate = state.autoSwg.pendingTargetDate;
+    state.autoSwg.lastAppliedTargetWarning = state.autoSwg.targetWarning;
     if (isAutoApply) {
         let threshold = sys.autoSwg.autoApplyWarnThresholdPct;
         let movedBy = typeof previousAppliedPct === 'number' ? Math.abs(pct - previousAppliedPct) : undefined;
@@ -465,6 +469,7 @@ export class StateRoute {
             // A manual override abandons whatever glide-to-target was in flight -- there's
             // no original deadline left to refine toward.
             state.autoSwg.lastAppliedTargetDate = undefined;
+            state.autoSwg.lastAppliedTargetWarning = undefined;
             // A human just acted directly on the chlorinator -- nothing unreviewed left to warn about.
             state.autoSwg.lastAutoApplyLargeChange = false;
             state.autoSwg.emitEquipmentChange();
