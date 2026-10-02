@@ -1082,6 +1082,17 @@ export async function buildCombinedHistory(params: { shareCode?: string; poolNam
     return { entries, localSwgEntriesUsed: swgMerge.localUsed, poolMathSwgEntriesReplaced: swgMerge.replaced, poolMathError, cya, chlorineAdditions };
 }
 
+// Readings from before the SWG record starts have no SWG output to work from, so intervals around
+// them can't be scored. Returns the first reading index k that can be: its previous reading has at
+// least three covered intervals behind it. Infinity when there are no SWG entries at all.
+function firstScorableReading(fc: FcEvent[], swgEvents: SwgEvent[], local: LocalSwgEntry[]): number {
+    const times = [...swgEvents.map(e => e.ts.getTime()), ...local.map(e => new Date(e.ts).getTime())].filter(t => isFinite(t));
+    if (!times.length) return Infinity;
+    const first = Math.min(...times);
+    const idx = fc.findIndex(e => e.ts.getTime() >= first);
+    return idx < 0 ? Infinity : idx + 4;
+}
+
 // One FC reading and what the algorithm projected for that moment from only the data logged before it.
 export interface ProjectionAccuracyRow {
     ts: string;                        // the FC reading's time
@@ -1119,13 +1130,16 @@ export interface ProjectionAccuracy {
 // sunrise/sunset for past days.
 export async function buildProjectionAccuracy(params: AutoSwgParams, options: { lookbackDays: number; html?: string; localSwgEntries?: LocalSwgEntry[]; historyRecords?: any[] }): Promise<ProjectionAccuracy> {
     const html = options.html || await fetchHtml(params.shareCode);
-    const fc = parseCardsCached(html, params.poolName).fcEvents;
+    const parsedPage = parseCardsCached(html, params.poolName);
+    const fc = parsedPage.fcEvents;
+    const minK = firstScorableReading(fc, parsedPage.swgEvents, options.localSwgEntries || []);
     const from = Date.now() - options.lookbackDays * 86400000;
     const rows: ProjectionAccuracyRow[] = [];
     let skipped = 0;
     for (let k = 1; k < fc.length; k++) {
         const t1 = fc[k - 1].ts, t2 = fc[k].ts;
         if (t2.getTime() < from) continue;
+        if (k < minK) { skipped++; continue; } // no SWG record behind this reading yet
         const days = (t2.getTime() - t1.getTime()) / 86400000;
         if (days < 0.1 || days > 14) { skipped++; continue; }
         try {
@@ -1211,7 +1225,9 @@ const yieldToEventLoop = () => new Promise<void>(resolve => setImmediate(resolve
 // calculations so it can't hold up the rest of njsPC.
 export async function buildWhatIfSweep(params: AutoSwgParams, options: { lookbackDays: number; html?: string; localSwgEntries?: LocalSwgEntry[] }): Promise<WhatIfSweep> {
     const html = options.html || await fetchHtml(params.shareCode);
-    const fc = parseCardsCached(html, params.poolName).fcEvents;
+    const parsedPage = parseCardsCached(html, params.poolName);
+    const fc = parsedPage.fcEvents;
+    const minK = firstScorableReading(fc, parsedPage.swgEvents, options.localSwgEntries || []);
     const from = Date.now() - options.lookbackDays * 86400000;
 
     const variants: { key: string; label: string; params: AutoSwgParams }[] = [{ key: 'current', label: 'Current settings', params }];
@@ -1228,7 +1244,7 @@ export async function buildWhatIfSweep(params: AutoSwgParams, options: { lookbac
     for (let k = 1; k < fc.length; k++) {
         if (fc[k].ts.getTime() < from) continue;
         const days = (fc[k].ts.getTime() - fc[k - 1].ts.getTime()) / 86400000;
-        if (days < 0.1 || days > 14) { skipped++; continue; }
+        if (days < 0.1 || days > 14 || k < minK) { skipped++; continue; }
         candidates.push(k);
     }
     // error (projected - measured) per variant per reading
