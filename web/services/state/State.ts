@@ -272,7 +272,7 @@ function autoSwgSettingsKey(): string {
     let cfg = sys.autoSwg;
     return [
         cfg.targetFc, cfg.targetDaysAbove, cfg.targetDaysBelow, cfg.newTargetThresholdPpm,
-        cfg.windowDays, cfg.gallons, cfg.swgLbsPerDay, cfg.timezone, cfg.daytimeLossSharePct, cfg.creditChlorineAdditions, cfg.fcAnomalyTolerancePpm,
+        cfg.windowDays, cfg.gallons, cfg.swgLbsPerDay, cfg.timezone, cfg.daytimeLossSharePct, cfg.creditChlorineAdditions, cfg.fcAnomalyTolerancePpm, cfg.projectionDamping,
         cfg.shareCode, cfg.poolName, cfg.scheduleId, cfg.scheduleId >= 0 ? '' : cfg.swgStartTime, cfg.scheduleId >= 0 ? '' : cfg.swgStopTime
     ].join('|');
 }
@@ -319,6 +319,7 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
         daytimeSharePct: cfg.daytimeLossSharePct,
         creditChlorineAdditions: cfg.creditChlorineAdditions,
         fcAnomalyTolerancePpm: cfg.fcAnomalyTolerancePpm,
+        projectionDamping: cfg.projectionDamping,
     }, undefined, toLocalSwgEntries(readAutoSwgHistory()), refreshAutoSwgArchiveFromPage);
     // A Refresh works from fresh PoolMath data; if the data it read (readings, additions, SWG entries)
     // is exactly what the last apply used -- the newest FC reading is the very one it was based on,
@@ -1225,6 +1226,7 @@ export class StateRoute {
                     daytimeSharePct: cfg.daytimeLossSharePct,
                     creditChlorineAdditions: cfg.creditChlorineAdditions,
                     fcAnomalyTolerancePpm: cfg.fcAnomalyTolerancePpm,
+        projectionDamping: cfg.projectionDamping,
                 }, { lookbackDays: days, localSwgEntries: toLocalSwgEntries(readAutoSwgHistory()), historyRecords: readAutoSwgHistory() });
                 return res.status(200).send(report);
             }
@@ -1258,6 +1260,7 @@ export class StateRoute {
                     daytimeSharePct: cfg.daytimeLossSharePct,
                     creditChlorineAdditions: cfg.creditChlorineAdditions,
                     fcAnomalyTolerancePpm: cfg.fcAnomalyTolerancePpm,
+        projectionDamping: cfg.projectionDamping,
                 }, { lookbackDays: days, localSwgEntries: toLocalSwgEntries(readAutoSwgHistory()) });
                 return res.status(200).send(sweep);
             }

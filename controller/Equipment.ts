@@ -2449,6 +2449,9 @@ export class AutoSwg extends EqItem {
         // ppm of FC rise beyond what the SWG output and logged additions explain that marks an interval
         // as suspect (left out of the average, with a banner). 0 = off.
         if (typeof this.data.fcAnomalyTolerancePpm === 'undefined') this.data.fcAnomalyTolerancePpm = 2;
+        // How much of the modelled FC change since the last reading to apply when projecting the current FC:
+        // 1 = all of it (no damping), 0 = start from the last reading unchanged.
+        if (typeof this.data.projectionDamping === 'undefined') this.data.projectionDamping = 1;
     }
     public get enabled(): boolean { return this.data.enabled; }
     public set enabled(val: boolean) { this.setDataVal('enabled', val); }
@@ -2488,6 +2491,8 @@ export class AutoSwg extends EqItem {
     public set targetFc(val: number) { this.setDataVal('targetFc', val); }
     public get autoCheckStartTime(): string { return this.data.autoCheckStartTime; }
     public set autoCheckStartTime(val: string) { this.setDataVal('autoCheckStartTime', val); }
+    public get projectionDamping(): number { return this.data.projectionDamping; }
+    public set projectionDamping(val: number) { this.setDataVal('projectionDamping', val); }
     public get fcAnomalyTolerancePpm(): number { return this.data.fcAnomalyTolerancePpm; }
     public set fcAnomalyTolerancePpm(val: number) { this.setDataVal('fcAnomalyTolerancePpm', val); }
     public get creditChlorineAdditions(): boolean { return this.data.creditChlorineAdditions; }
