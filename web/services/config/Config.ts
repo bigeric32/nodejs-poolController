@@ -1022,16 +1022,7 @@ export class ConfigRoute {
         });
         app.put('/config/autoSwg', async (req, res, next) => {
             try {
-                let c = sys.autoSwg;
-                let before = [c.targetFc, c.targetDaysAbove, c.targetDaysBelow, c.newTargetThresholdPpm];
                 sys.autoSwg.set(req.body);
-                // A Refresh is skipped while PoolMath has no FC reading newer than the one the
-                // last apply used -- but changing what it aims at (target FC, days, threshold)
-                // is a reason to recalculate even without new data, so lift the skip.
-                if (before.some((v, i) => v !== [c.targetFc, c.targetDaysAbove, c.targetDaysBelow, c.newTargetThresholdPpm][i]) && state.autoSwg.lastAppliedFcAt) {
-                    state.autoSwg.lastAppliedFcAt = undefined;
-                    state.autoSwg.emitEquipmentChange();
-                }
                 // Re-arm fully-automatic mode's periodic check against the just-saved config,
                 // so enabling it (or changing the interval) takes effect immediately rather
                 // than needing a restart.

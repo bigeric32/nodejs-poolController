@@ -244,6 +244,12 @@ type AutoSwgCheckMode = 'new' | 'refine' | 'auto';
 // Runs a Check Now-style recommendation against the configured PoolMath page and
 // populates state.autoSwg with the result -- shared by every way of asking for one, and by
 // the fully-automatic mode's periodic check, so they can't drift apart.
+// The settings that decide what a calculation aims at (see lastAppliedSettingsKey).
+function autoSwgSettingsKey(): string {
+    let cfg = sys.autoSwg;
+    return [cfg.targetFc, cfg.targetDaysAbove, cfg.targetDaysBelow, cfg.newTargetThresholdPpm].join('|');
+}
+
 // Resolves to a skip message (and changes nothing) when a Refresh has no new FC reading to
 // work from, otherwise undefined.
 async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNote?: string): Promise<string | undefined> {
@@ -285,7 +291,7 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
     // last apply was already based on, there is nothing new and re-running would only restate
     // the same number (or nudge it with extrapolation). Leave everything as it is. Check Now
     // ('new') always runs -- it's the explicit "start over" and also picks up config changes.
-    if (mode !== 'new' && inFlight && state.autoSwg.lastAppliedFcAt && result.mostRecentFc && result.mostRecentFc.ts === state.autoSwg.lastAppliedFcAt) {
+    if (mode !== 'new' && inFlight && state.autoSwg.lastAppliedFcAt && result.mostRecentFc && result.mostRecentFc.ts === state.autoSwg.lastAppliedFcAt && state.autoSwg.lastAppliedSettingsKey === autoSwgSettingsKey()) {
         return `No new FC reading in PoolMath since ${formatLocalDateTime(new Date(result.mostRecentFc.ts), cfg.timezone)}; nothing to refresh.`;
     }
     if (extraRationaleNote) result.rationale.unshift(extraRationaleNote);
@@ -320,6 +326,7 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
         swgRunHours: result.swgRunHours,
         avgWindowExtended: result.avgWindowExtended,
         mostRecentFc: result.mostRecentFc,
+        settingsKey: autoSwgSettingsKey(),
         mostRecentCya: result.mostRecentCya,
         mostRecentSwg: result.mostRecentSwg,
         localSwgEntriesUsed: result.localSwgEntriesUsed,
@@ -370,6 +377,7 @@ async function applyAutoSwgRecommendation(isAutoApply: boolean, pctOverride?: nu
     // PoolMath has anything newer (see the skip in runAutoSwgRecommendation).
     let appliedFc = state.autoSwg.details ? state.autoSwg.details.mostRecentFc : undefined;
     state.autoSwg.lastAppliedFcAt = appliedFc ? appliedFc.ts : undefined;
+    state.autoSwg.lastAppliedSettingsKey = state.autoSwg.details ? state.autoSwg.details.settingsKey : undefined;
     if (isAutoApply) {
         let threshold = sys.autoSwg.autoApplyWarnThresholdPct;
         let movedBy = typeof previousAppliedPct === 'number' ? Math.abs(pct - previousAppliedPct) : undefined;
