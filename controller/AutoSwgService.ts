@@ -701,8 +701,13 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     const fcAtDeadlineAtZero = projectedCurrentFc - (avgPerDay * targetDays);
     if (fcAtDeadlineAtZero > targetFc + 0.005) {
         const window = `${Math.round(targetDays * 10) / 10} day${Math.round(targetDays * 10) / 10 === 1 ? '' : 's'}`;
-        const reach = avgPerDay > 0 ? `; at the average ${avgPerDay.toFixed(2)} ppm/day of consumption it would take about ${((projectedCurrentFc - targetFc) / avgPerDay).toFixed(1)} days to come down on its own` : ', and no consumption was measured to bring it down';
-        targetInfo = `FC is projected at ${projectedCurrentFc.toFixed(2)} ppm, so even with the SWG off it would still be about ${fcAtDeadlineAtZero.toFixed(2)} ppm (above the ${targetFc} ppm target) after ${window}${reach}. The SWG is not needed to bring it down.`;
+        const head = `FC is projected at ${projectedCurrentFc.toFixed(2)} ppm, above the ${targetFc} ppm target.`;
+        if (avgPerDay > 0) {
+            const daysToTarget = (projectedCurrentFc - targetFc) / avgPerDay;
+            const reachDate = new Date(rightNow.getTime() + daysToTarget * 86400000);
+            targetInfo = `${head} At the projected burn of ${avgPerDay.toFixed(2)} ppm/day it should reach the target in about ${daysToTarget.toFixed(1)} days (around ${formatLocalDateTime(reachDate, params.timezone)}), later than the ${window} to the deadline -- so the SWG isn't needed and is held at 0%.`;
+        }
+        else targetInfo = `${head} No FC consumption was measured, so there's no burn rate to project when it will reach the target; the SWG isn't needed and is held at 0%.`;
         rationale.push(`NOTE: ${targetInfo}`);
     }
 
