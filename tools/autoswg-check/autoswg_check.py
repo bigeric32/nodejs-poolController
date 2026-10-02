@@ -176,10 +176,14 @@ class Dataset:
         self.adds = sorted([(ts(l), (l['percent'] / 100.0) * 1e6 * l['normalizedAmount'] / (self.gallons * ML_PER_GAL))
                             for l in logs if l['type'] == 'chemlog' and l.get('chemical') == POOLMATH_LIQUID_CHLORINE
                             and l.get('percent') and l.get('normalizedAmount')], key=lambda x: x[0])
+        self.excluded = []   # spans whose SWG credit is ignored (see odd_swg_spans); set by main()
         self.pm_swg_lbs = pool['pool'].get('swgLbsPerDay')      # PoolMath's current SWG rating setting
         self.pm_swg_model = pool['pool'].get('swgModelId')
         self.lat = args.lat if args.lat is not None else pool['pool'].get('lat')
         self.lon = args.lon if args.lon is not None else pool['pool'].get('lon')
+
+    def touches_excluded(self, t1, t2):
+        return any(t1 < b and t2 > a for a, b in self.excluded)
 
     def first_covered_index(self):
         """Index of the first FC reading at/after the first SWG entry (earlier intervals have no SWG record)."""
@@ -231,6 +235,48 @@ def sun_minutes(date, lat, lon, tz):
     sunrise = 720 - 4 * (lon + ha) - eqtime + off
     sunset = 720 - 4 * (lon - ha) - eqtime + off
     return sunrise % 1440, sunset % 1440
+
+
+SWG_FIT_TOLERANCE = 0.15
+
+
+def swg_entries(ds):
+    """Each SWG entry with the rated lbs/day it implies: (ts, ppm/day, hours, %, implied lbs/day)."""
+    k = 1e6 / (ds.gallons * 8.34)   # ppm per lb of chlorine in this pool
+    return [(t, a, h, pc, a / (pc / 100.0) / (h / 24.0) / k) for t, a, h, pc in ds.swg if pc > 0 and h > 0 and a > 0], k
+
+
+def swg_regimes(ents):
+    """Split entries into periods of one implied rating (a step confirmed by the next two entries is a cell
+    swap) and pick out entries that fit no period: returns (regimes, outliers[(entry, period rating, entries after)])."""
+    regimes, outliers = [[ents[0]]], []
+    i = 1
+    while i < len(ents):
+        cur = statistics.median([e[4] for e in regimes[-1][-5:]])
+        e = ents[i]
+        if abs(e[4] / cur - 1) <= SWG_FIT_TOLERANCE:
+            regimes[-1].append(e)
+        else:
+            nxt = ents[i + 1:i + 3]
+            if len(nxt) == 2 and all(abs(n[4] / e[4] - 1) <= SWG_FIT_TOLERANCE for n in nxt):
+                regimes.append([e])
+            else:
+                outliers.append((e, cur, len(ents) - i - 1))
+        i += 1
+    return regimes, outliers
+
+
+def odd_swg_spans(ds):
+    """(start, end) spans during which the SWG credit rests on an entry that doesn't fit its period."""
+    ents, _ = swg_entries(ds)
+    if len(ents) < 3:
+        return []
+    _, outliers = swg_regimes(ents)
+    spans = []
+    for (e, _, _) in outliers:
+        later = [x[0] for x in ds.swg if x[0] > e[0]]
+        spans.append((e[0], later[0] if later else datetime.now(timezone.utc)))
+    return spans
 
 
 class Calc:
@@ -336,7 +382,8 @@ class Calc:
                 continue
             consumed = self.generated_between(swg, t1, t2) + added(t1, t2) - (f2 - f1)
             d = self.day_eq(t1, t2)
-            ivs.append((t1, t2, consumed / d if d > 0 else 0.0, consumed, p.tolerance > 0 and consumed < -p.tolerance))
+            odd = ds.touches_excluded(t1, t2)
+            ivs.append((t1, t2, consumed / d if d > 0 else 0.0, consumed, odd or (p.tolerance > 0 and consumed < -p.tolerance)))
         window_start = as_of - timedelta(days=p.window_days)
         in_window = [e for e in fc if window_start <= e[0] <= as_of]
         if len(in_window) < MIN_FC_READINGS_IN_WINDOW and len(fc) >= MIN_FC_READINGS_IN_WINDOW:
@@ -380,7 +427,7 @@ def scored_readings(ds, lookback_days, include_uncovered):
         if t2 < cutoff:
             continue
         days = (t2 - t1).total_seconds() / DAY
-        if days < 0.1 or days > 14 or (not include_uncovered and k - 1 < first_cov + 3):
+        if days < 0.1 or days > 14 or (not include_uncovered and k - 1 < first_cov + 3) or ds.touches_excluded(t1, t2):
             skipped += 1
             continue
         out.append(k)
@@ -426,7 +473,7 @@ def report_summary(ds, p):
     rows = collections.defaultdict(list)
     for (t1, f1), (t2, f2) in zip(ds.fc[ds.first_covered_index():], ds.fc[ds.first_covered_index() + 1:]):
         d = (t2 - t1).total_seconds() / DAY
-        if d < 0.25 or d > 14:
+        if d < 0.25 or d > 14 or ds.touches_excluded(t1, t2):
             continue
         gen = calc.generated_between(swg, t1, t2)
         add = sum(x[1] for x in ds.adds if t1 < x[0] <= t2) if p.credit else 0.0
@@ -516,29 +563,13 @@ def report_capacity(ds, p, args):
     with ppm = % x rated lbs/day x hours/24 (in ppm for this pool), so the rating each entry implies should
     be steady; a step change is a cell swap and a lone odd entry is probably mis-logged."""
     print('\n== SWG capacity agreement ==')
-    k = 1e6 / (ds.gallons * 8.34)   # ppm per lb of chlorine
-    ents = [(t, a, h, pc, a / (pc / 100.0) / (h / 24.0) / k) for t, a, h, pc in ds.swg if pc > 0 and h > 0 and a > 0]
+    ents, k = swg_entries(ds)
     if len(ents) < 3:
         print('too few SWG entries to check')
         return
-    TOL = 0.15
+    TOL = SWG_FIT_TOLERANCE
     med = statistics.median
-    # split into regimes: a level change counts only if the next two entries agree with it
-    regimes, outliers = [[ents[0]]], []
-    i = 1
-    while i < len(ents):
-        cur = med([e[4] for e in regimes[-1][-5:]])
-        e = ents[i]
-        if abs(e[4] / cur - 1) <= TOL:
-            regimes[-1].append(e)
-            i += 1
-            continue
-        nxt = ents[i + 1:i + 3]
-        if len(nxt) == 2 and all(abs(n[4] / e[4] - 1) <= TOL for n in nxt):
-            regimes.append([e])             # a new level that the next entries confirm: a cell swap
-        else:
-            outliers.append((e, cur, len(ents) - i - 1))
-        i += 1
+    regimes, outliers = swg_regimes(ents)
     print('PoolMath rating setting: %s lbs/day%s | %d SWG entries, %d level(s)' % (
         ds.pm_swg_lbs if ds.pm_swg_lbs else 'unknown', (' (%s)' % ds.pm_swg_model) if ds.pm_swg_model else '', len(ents), len(regimes)))
     print('\n  implied rated capacity by period (lbs/day over 24 h):')
@@ -566,7 +597,8 @@ def report_capacity(ds, p, args):
             if 0.25 <= d <= 14 and t1 >= first_swg:
                 typical_list.append((calc.generated_between(ds.swg, t1, t2) - (f2 - f1)) / d)
         typical = med(typical_list) if typical_list else None
-        print('\n  entries that do not fit their period (rating off by more than %d%%):' % int(TOL * 100))
+        print('\n  entries that do not fit their period (rating off by more than %d%%)%s:' % (
+            int(TOL * 100), ' -- flagged and IGNORED (the intervals they affect are left out of the averages and scoring; --keep-odd-swg to include them)' if ds.excluded else ''))
         for (e, cur, after) in outliers:
             nxt = [x[0] for x in ds.swg if x[0] > e[0]]
             hold_end = nxt[0] if nxt else datetime.now(timezone.utc)
@@ -605,7 +637,7 @@ def report_anomalies(ds, p):
         n = 0
         listing = []
         for (t1, f1), (t2, f2) in zip(ds.fc[first:], ds.fc[first + 1:]):
-            if not (0.1 <= (t2 - t1).total_seconds() / DAY <= 14):
+            if not (0.1 <= (t2 - t1).total_seconds() / DAY <= 14) or ds.touches_excluded(t1, t2):
                 continue
             cons = calc.generated_between(ds.swg, t1, t2) + (sum(x[1] for x in ds.adds if t1 < x[0] <= t2) if p.credit else 0.0) - (f2 - f1)
             if cons < -tol:
@@ -626,6 +658,7 @@ def main():
     ap.add_argument('--cache', default=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cache'), help='where sanitized fetched data is cached')
     ap.add_argument('--refresh', action='store_true', help='re-fetch even if cached')
     ap.add_argument('--report', choices=['all', 'summary', 'capacity', 'accuracy', 'whatif', 'anomalies'], default='all')
+    ap.add_argument('--keep-odd-swg', action='store_true', help="don't ignore SWG entries that don't fit their period's rating (see the capacity report)")
     ap.add_argument('--njspc-lbs', type=float, help="njsPC's AutoSwg SWG rating (lbs/day), to compare with what PoolMath's entries imply")
     ap.add_argument('--days', type=int, default=365, help='how far back to score readings (default 365)')
     ap.add_argument('--include-uncovered', action='store_true', help='also score readings before the SWG record starts (not recommended)')
@@ -647,6 +680,11 @@ def main():
     hh, mm = (int(x) for x in args.swg_start.split(':'))
     p = Params(window_days=args.window, tolerance=args.tolerance, credit=not args.no_credit, daylight=not args.no_daylight,
                daytime_share_pct=args.daytime_share, swg_start=hh * 60 + mm, tz=get_tz(args.tz, args.utc_offset))
+    if not args.keep_odd_swg:
+        ds.excluded = odd_swg_spans(ds)
+        if ds.excluded:
+            print('note: ignoring %d SWG entr%s that don\'t fit the pool\'s rating (run --report capacity for details; --keep-odd-swg to include)' % (
+                len(ds.excluded), 'y' if len(ds.excluded) == 1 else 'ies'), file=sys.stderr)
     csv_dir = None
     if args.csv:
         os.makedirs(args.csv, exist_ok=True)
