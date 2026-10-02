@@ -256,10 +256,18 @@ function autoSwgSunTimes(timeZone: string): { sunrise?: string; sunset?: string 
     return {};
 }
 
-// The settings that decide what a calculation aims at (see lastAppliedSettingsKey).
+// The settings that decide what a calculation aims at or how it computes (see
+// lastAppliedSettingsKey): changing any of them changes the number a Refresh would give,
+// so it shouldn't be skipped for want of a new FC reading. The manual run window only
+// counts while no SWG schedule is selected (otherwise it's ignored), and a schedule's
+// day-to-day sunrise/sunset drift isn't a settings change.
 function autoSwgSettingsKey(): string {
     let cfg = sys.autoSwg;
-    return [cfg.targetFc, cfg.targetDaysAbove, cfg.targetDaysBelow, cfg.newTargetThresholdPpm].join('|');
+    return [
+        cfg.targetFc, cfg.targetDaysAbove, cfg.targetDaysBelow, cfg.newTargetThresholdPpm,
+        cfg.windowDays, cfg.gallons, cfg.swgLbsPerDay, cfg.timezone, cfg.daytimeLossSharePct,
+        cfg.shareCode, cfg.poolName, cfg.scheduleId, cfg.scheduleId >= 0 ? '' : cfg.swgStartTime, cfg.scheduleId >= 0 ? '' : cfg.swgStopTime
+    ].join('|');
 }
 
 // Resolves to a skip message (and changes nothing) when a Refresh has no new FC reading to
