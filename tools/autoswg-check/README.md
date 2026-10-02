@@ -62,6 +62,34 @@ You can also point it at a saved copy of the share JSON instead of a code:
   in absolute error versus your current settings (negative is better) with a 90% range.
 * **Anomalies:** FC rises beyond what the SWG output plus logged additions explain, at 1, 2 and 3 ppm.
 
+## Screening pools to test on
+
+To find out which pools are worth checking the algorithm on, give `--screen` any number of share codes:
+
+    python autoswg_check.py --screen tfp-111111 tfp-222222 tfp-333333
+
+It makes one polite request per pool (with a pause between them, `--screen-pause`, default 10 s; cached
+afterwards) and prints one line each:
+
+    share code     gallons  FC (1yr)   SWG  adds scorable    median   odd  last  verdict
+    tfp-111111       12000  113 (82)    27     3    60/60       2.6     1     0  GOOD
+    tfp-222222       20300  153 (20)    26    10    13/91       7.0     3     4  usable (most of the data is older than a year)
+    tfp-333333       16000  314 (38)     0     1      0/0       5.7     0     5  no SWG logged: consumption cannot be derived
+
+* **FC (1yr)**: FC readings in total, and in the last year.
+* **SWG / adds**: SWG % entries logged and liquid chlorine additions.
+* **scorable**: FC readings with enough SWG-covered history behind them to be checked, in the last year and in
+  all. The in-app Tune needs about 15, and looks further back when the last year has fewer than 30.
+* **odd SWG**: SWG entries ignored as not fitting the pool's own rating (see the capacity report).
+* **verdict**: `GOOD` (30 or more scorable readings, 15 or more in the last year), `usable` (plenty, but mostly older),
+  `marginal`, `too sparse`, `too few FC readings`, `stale` (no FC reading for over 120 days), `no SWG logged` (consumption
+  can't be derived), or `unavailable` (the link can't be read or sharing is off). Add `--csv DIR` to keep the table as
+  `screen.csv`.
+
+A good test pool logs SWG % changes promptly, tests FC at least weekly, and has some history since the SWG entries
+began. Then run the full reports on the ones that screen well. As always, only use data from pools whose owners have
+agreed.
+
 ## Using the in-app reports: Projection Accuracy and What-If Sweep
 
 dashPanel has the same two reports for your own pool, under **Settings > Chemistry > AutoSwg > Tuning

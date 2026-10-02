@@ -131,6 +131,11 @@ def sanitize(raw):
     return out
 
 
+def cache_path(args, share):
+    key = re.sub(r'[^A-Za-z0-9_-]+', '_', share.split('/')[-1].replace('.json', ''))
+    return os.path.join(args.cache, key + '.json')
+
+
 def load_data(args):
     if args.json:
         data = sanitize(json.load(open(args.json, encoding='utf-8')))
@@ -138,13 +143,14 @@ def load_data(args):
         if not args.share:
             sys.exit('give a share code/URL or --json FILE')
         os.makedirs(args.cache, exist_ok=True)
-        key = re.sub(r'[^A-Za-z0-9_-]+', '_', args.share.split('/')[-1].replace('.json', ''))
-        path = os.path.join(args.cache, key + '.json')
+        path = cache_path(args, args.share)
         if os.path.exists(path) and not args.refresh:
             data = json.load(open(path, encoding='utf-8'))
             print('using cached data %s (use --refresh to re-fetch)' % path, file=sys.stderr)
         else:
             data = sanitize(fetch_share(args.share))
+            if not data.get('pools'):
+                sys.exit('no pools in the data (is the share code right, and sharing turned on?)')
             json.dump(data, open(path, 'w', encoding='utf-8'))
             print('fetched and cached %s' % path, file=sys.stderr)
     pools = data.get('pools', [])
@@ -683,6 +689,79 @@ def report_capacity(ds, p, args):
         print('\n  every entry fits its period within %d%%.' % int(TOL * 100))
 
 
+def screen(codes, args):
+    """One line per candidate pool: is there enough logged (SWG % changes, FC readings with SWG behind them) to check the
+    algorithm against? One polite request per pool (cached afterwards); a pool that cannot be read is reported, not fatal."""
+    import copy
+    if not codes:
+        sys.exit('give one or more share codes (or URLs) after --screen')
+    rows = []
+    for i, code in enumerate(codes):
+        a = copy.copy(args)
+        a.share, a.json = code, None
+        fresh = not os.path.exists(cache_path(args, code)) or args.refresh
+        if i > 0 and fresh:
+            time.sleep(args.screen_pause)        # be polite to PoolMath between fresh requests
+        label = code.split('/')[-1].replace('.json', '')
+        try:
+            ds = Dataset(load_data(a), a)
+        except SystemExit as e:
+            rows.append({'code': label, 'verdict': 'unavailable: %s' % (e.code if isinstance(e.code, str) else 'could not be read')})
+            continue
+        now = datetime.now(timezone.utc)
+        year = now - timedelta(days=365)
+        ks_all, _ = scored_readings(ds, 100000, False)
+        ks_year, _ = scored_readings(ds, 365, False)
+        odd = len(odd_swg_spans(ds))
+        recent = [t for t, _ in ds.fc if t >= year]
+        gaps = [(b - a_).total_seconds() / DAY for a_, b in zip(recent, recent[1:])]
+        last_fc = ds.fc[-1][0] if ds.fc else None
+        r = {
+            'code': label, 'gallons': ds.gallons, 'fc': len(ds.fc), 'fc_year': len(recent),
+            'span': '%s..%s' % (ds.fc[0][0].date(), ds.fc[-1][0].date()) if ds.fc else '-',
+            'swg': len(ds.swg), 'swg_year': sum(1 for e in ds.swg if e[0] >= year), 'adds': len(ds.adds),
+            'scorable_year': len(ks_year), 'scorable_all': len(ks_all), 'odd': odd,
+            'gap': round(statistics.median(gaps), 1) if gaps else None,
+            'last_days': (now - last_fc).days if last_fc else None,
+        }
+        # the verdict, from the most useful fact first
+        if not ds.swg:
+            r['verdict'] = 'no SWG logged: consumption cannot be derived'
+        elif len(ds.fc) < 20:
+            r['verdict'] = 'too few FC readings'
+        elif r['scorable_all'] < 15:
+            r['verdict'] = 'too sparse: %d readings with SWG history behind them' % r['scorable_all']
+        elif r['last_days'] is not None and r['last_days'] > 120:
+            r['verdict'] = 'stale: last FC reading %d days ago' % r['last_days']
+        elif r['scorable_all'] >= 30 and r['scorable_year'] >= 15:
+            r['verdict'] = 'GOOD'
+        elif r['scorable_all'] >= 30:
+            r['verdict'] = 'usable (most of the data is older than a year)'
+        else:
+            r['verdict'] = 'marginal'
+        rows.append(r)
+    print('\n== Screening %d pool%s ==' % (len(rows), '' if len(rows) == 1 else 's'))
+    print('  %-14s %7s %9s %5s %5s %8s %9s %5s %5s  %s' % ('share code', 'gallons', 'FC (1yr)', 'SWG', 'adds', 'scorable', 'median', 'odd', 'last', 'verdict'))
+    print('  %-14s %7s %9s %5s %5s %8s %9s %5s %5s' % ('', '', '', '', '', '(1yr/all)', 'gap (d)', 'SWG', 'FC (d)'))
+    for r in rows:
+        if 'fc' not in r:
+            print('  %-14s %s' % (r['code'], r['verdict']))
+            continue
+        print('  %-14s %7s %9s %5d %5d %8s %9s %5d %5s  %s' % (
+            r['code'], '%d' % r['gallons'], '%d (%d)' % (r['fc'], r['fc_year']), r['swg'], r['adds'],
+            '%d/%d' % (r['scorable_year'], r['scorable_all']), '%.1f' % r['gap'] if r['gap'] is not None else '-', r['odd'],
+            r['last_days'] if r['last_days'] is not None else '-', r['verdict']))
+    print('\nSWG = SWG % entries logged; scorable = FC readings with at least three SWG-covered intervals behind them; odd SWG = entries ignored as not fitting the pool\'s rating.')
+    if args.csv:
+        os.makedirs(args.csv, exist_ok=True)
+        keys = ['code', 'gallons', 'fc', 'fc_year', 'span', 'swg', 'swg_year', 'adds', 'scorable_year', 'scorable_all', 'odd', 'gap', 'last_days', 'verdict']
+        with open(os.path.join(args.csv, 'screen.csv'), 'w', newline='') as f:
+            w = csv.writer(f)
+            w.writerow(keys)
+            for r in rows:
+                w.writerow([r.get(k, '') for k in keys])
+
+
 def report_anomalies(ds, p):
     calc = Calc(ds, p)
     print('\n== FC rises the SWG output and logged additions do not explain ==')
@@ -706,7 +785,9 @@ def report_anomalies(ds, p):
 # --------------------------------------------------------------------------- main
 def main():
     ap = argparse.ArgumentParser(description='Check the AutoSwg algorithm against a pool\'s PoolMath history.')
-    ap.add_argument('share', nargs='?', help='PoolMath share code (tfp-123456) or share URL')
+    ap.add_argument('share', nargs='*', help='PoolMath share code (tfp-123456) or share URL; with --screen, any number of them')
+    ap.add_argument('--screen', action='store_true', help='screen the given pools: one line each saying whether there is enough logged to check the algorithm against')
+    ap.add_argument('--screen-pause', type=float, default=10.0, help='seconds to pause between fresh PoolMath requests when screening (default 10)')
     ap.add_argument('--json', help='use a saved PoolMath share JSON instead of fetching')
     ap.add_argument('--pool', help='pool name when the account has several (default: the first)')
     ap.add_argument('--cache', default=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cache'), help='where sanitized fetched data is cached')
@@ -731,6 +812,12 @@ def main():
     ap.add_argument('--daytime-share', type=float, default=0, help='daytime share of FC loss in %%, 0 = parabolic estimate from day length')
     ap.add_argument('--swg-start', default='08:00', help='SWG daily run window start, HH:MM local (default 08:00; the run length comes from each PoolMath SWG entry)')
     args = ap.parse_args()
+    if args.screen:
+        screen(args.share, args)
+        return
+    if len(args.share) > 1:
+        sys.exit('give one share code (use --screen for several)')
+    args.share = args.share[0] if args.share else None
 
     pool = load_data(args)
     ds = Dataset(pool, args)
