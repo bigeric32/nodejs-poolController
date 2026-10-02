@@ -95,8 +95,10 @@ You can also point it at a saved copy of the share JSON instead of a code:
 
 ## Troubleshooting
 
-* **HTTP 429 / "rate limiting".** PoolMath allows about one request a minute. The script waits and retries
-  on its own; if it keeps failing, wait a few minutes. Cached data avoids new requests.
+* **HTTP 429 / "rate limiting".** PoolMath allows about one request a minute. The script waits (the
+  server's Retry-After, or about 70 seconds) and retries up to four times, then stops and tells you; if
+  that happens, wait a few minutes. If PoolMath refuses a large request it pauses about a minute before
+  trying a smaller one. Cached data avoids new requests, so you only wait on the first run for a pool.
 * **"no SWG entries".** The pool doesn't log SWG runs in PoolMath, so consumption can't be derived.
 * **"too few readings scorable".** Not enough readings with SWG history behind them yet.
 * **`could not load time zone`.** On Windows run `pip install tzdata`, or pass `--utc-offset`.

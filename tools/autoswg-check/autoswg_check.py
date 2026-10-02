@@ -76,16 +76,23 @@ def fetch_share(code_or_url):
     base = base.split('?')[0]
     if not base.endswith('.json'):
         base += '.json'
-    for size in (5000, 1000, 250):
+    sizes = (5000, 1000, 250)
+    for i, size in enumerate(sizes):
+        status, body = 0, b''
         for attempt in range(4):
             status, body, headers = http_get('%s?recentLogs=%d' % (base, size))
-            if status == 429:
-                wait = int(headers.get('Retry-After') or 70) + 5
-                print('PoolMath is rate limiting; waiting %ds ...' % wait, file=sys.stderr)
-                time.sleep(wait)
-                continue
-            break
-        if status in (400, 413, 422):
+            if status != 429:
+                break
+            if attempt == 3:  # out of retries: say so now instead of waiting one more time
+                sys.exit('PoolMath is still rate limiting after several waits; try again in a few minutes '
+                         '(a cached copy avoids new requests).')
+            wait = int(headers.get('Retry-After') or 70) + 5
+            print('PoolMath is rate limiting; waiting %ds ...' % wait, file=sys.stderr)
+            time.sleep(wait)
+        if status in (400, 413, 422):  # that many logs wasn't accepted: try fewer, but not straight away
+            if i < len(sizes) - 1:
+                print('PoolMath rejected recentLogs=%d; trying %d after a pause ...' % (size, sizes[i + 1]), file=sys.stderr)
+                time.sleep(65)  # PoolMath allows about one request a minute
             continue
         if status != 200:
             sys.exit('PoolMath returned HTTP %d' % status)
