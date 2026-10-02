@@ -30,7 +30,7 @@ import { ServiceParameterError } from "../../../controller/Errors";
 import { buildCombinedHistory, computeRecommendation, computeSwgCapacity, formatLocalDateTime, minutesToHHMM, nextScheduledCheck } from "../../../controller/AutoSwgService";
 import type { PageReadings } from "../../../controller/AutoSwgService";
 import { appendAutoSwgHistory, readAutoSwgHistory, toLocalSwgEntries } from "../../../controller/AutoSwgHistory";
-import { archivedFcReadings, archivedSwgEvents, isPoolMathArchiveCurrent, poolMathArchiveSummary, refreshPoolMathArchiveFromPage, syncPoolMathArchive } from "../../../controller/AutoSwgPoolMathArchive";
+import { archivedChlorineAdditions, archivedCyaReadings, archivedFcReadings, archivedSwgEvents, isPoolMathArchiveCurrent, poolMathArchiveSummary, refreshPoolMathArchiveFromPage, syncPoolMathArchive } from "../../../controller/AutoSwgPoolMathArchive";
 
 // 'HH:MM' wall-clock time of `dt` in `timeZone`.
 function formatHHMMInZone(dt: Date, timeZone: string): string {
@@ -267,7 +267,7 @@ function autoSwgSettingsKey(): string {
     let cfg = sys.autoSwg;
     return [
         cfg.targetFc, cfg.targetDaysAbove, cfg.targetDaysBelow, cfg.newTargetThresholdPpm,
-        cfg.windowDays, cfg.gallons, cfg.swgLbsPerDay, cfg.timezone, cfg.daytimeLossSharePct,
+        cfg.windowDays, cfg.gallons, cfg.swgLbsPerDay, cfg.timezone, cfg.daytimeLossSharePct, cfg.creditChlorineAdditions,
         cfg.shareCode, cfg.poolName, cfg.scheduleId, cfg.scheduleId >= 0 ? '' : cfg.swgStartTime, cfg.scheduleId >= 0 ? '' : cfg.swgStopTime
     ].join('|');
 }
@@ -312,6 +312,7 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
         sunriseTime: sunTimes.sunrise,
         sunsetTime: sunTimes.sunset,
         daytimeSharePct: cfg.daytimeLossSharePct,
+        creditChlorineAdditions: cfg.creditChlorineAdditions,
     }, undefined, toLocalSwgEntries(readAutoSwgHistory()), refreshAutoSwgArchiveFromPage);
     // A Refresh works from fresh PoolMath data; if the newest FC reading is the very one the
     // last apply was already based on, there is nothing new and re-running would only restate
@@ -1136,7 +1137,7 @@ export class StateRoute {
         // be read (see poolMathError in the response).
         app.get('/state/autoSwg/history/combined', async (req, res, next) => {
             try {
-                let combined = await buildCombinedHistory({ shareCode: sys.autoSwg.shareCode, poolName: sys.autoSwg.poolName || undefined }, undefined, toLocalSwgEntries(readAutoSwgHistory()), archivedFcReadings(), archivedSwgEvents(), refreshAutoSwgArchiveFromPage);
+                let combined = await buildCombinedHistory({ shareCode: sys.autoSwg.shareCode, poolName: sys.autoSwg.poolName || undefined, gallons: sys.autoSwg.gallons }, undefined, toLocalSwgEntries(readAutoSwgHistory()), () => ({ fc: archivedFcReadings(), swg: archivedSwgEvents(), cya: archivedCyaReadings(), chlorine: archivedChlorineAdditions() }), refreshAutoSwgArchiveFromPage);
                 return res.status(200).send(combined);
             }
             catch (err) { next(err); }

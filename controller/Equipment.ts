@@ -2443,6 +2443,9 @@ export class AutoSwg extends EqItem {
         // partial day between FC readings. 0 = estimate it from today's day length with the
         // parabolic model (~56% winter to ~78% summer).
         if (typeof this.data.daytimeLossSharePct === 'undefined') this.data.daytimeLossSharePct = 0;
+        // Credit liquid chlorine additions logged in PoolMath as FC added when working out consumption
+        // and projecting the current FC.
+        if (typeof this.data.creditChlorineAdditions === 'undefined') this.data.creditChlorineAdditions = true;
     }
     public get enabled(): boolean { return this.data.enabled; }
     public set enabled(val: boolean) { this.setDataVal('enabled', val); }
@@ -2482,6 +2485,8 @@ export class AutoSwg extends EqItem {
     public set targetFc(val: number) { this.setDataVal('targetFc', val); }
     public get autoCheckStartTime(): string { return this.data.autoCheckStartTime; }
     public set autoCheckStartTime(val: string) { this.setDataVal('autoCheckStartTime', val); }
+    public get creditChlorineAdditions(): boolean { return this.data.creditChlorineAdditions; }
+    public set creditChlorineAdditions(val: boolean) { this.setDataVal('creditChlorineAdditions', val); }
     public get daytimeLossSharePct(): number { return this.data.daytimeLossSharePct; }
     public set daytimeLossSharePct(val: number) { this.setDataVal('daytimeLossSharePct', val); }
     public get targetDaysAbove(): number { return this.data.targetDaysAbove; }

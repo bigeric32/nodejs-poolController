@@ -197,9 +197,39 @@ export function refreshPoolMathArchiveFromPage(shareCode: string, poolName: stri
         }
     }
 
+    // And liquid chlorine additions.
+    const clCandidates = archive.entries.filter(e => isChlorineEntry(e) && new Date(e.ts).getTime() >= start - MATCH_MS);
+    const clClaimed = new Set<PoolMathArchiveEntry>();
+    for (const g of [...(page.chlorine || [])].sort((a, b) => a.ts.getTime() - b.ts.getTime())) {
+        let best: PoolMathArchiveEntry | undefined;
+        let bestGap = Infinity;
+        for (const c of clCandidates) {
+            if (clClaimed.has(c)) continue;
+            const gap = Math.abs(new Date(c.ts).getTime() - g.ts.getTime());
+            if (gap <= MATCH_MS && gap < bestGap) { best = c; bestGap = gap; }
+        }
+        if (best) {
+            clClaimed.add(best);
+            // the page's amount is rounded for display, so compare loosely
+            if (best.percent !== g.percent || Math.abs(best.normalizedAmount - g.ml) > Math.max(1, g.ml * 0.01)) {
+                best.percent = g.percent; best.normalizedAmount = g.ml;
+                updated++;
+            }
+        }
+        else {
+            newEntries.push({ id: `page:cl:${g.ts.toISOString()}`, type: 'chemlog', ts: g.ts.toISOString(), chemical: POOLMATH_LIQUID_CHLORINE, percent: g.percent, normalizedAmount: g.ml });
+            added++;
+        }
+    }
+
     // Archived readings in the page's span that the page no longer lists were deleted (or had
     // their FC/CC/CYA cleared) in PoolMath: drop the entry unless it has other test values.
     const drop = new Set<PoolMathArchiveEntry>();
+    for (const c of clCandidates) {
+        if (clClaimed.has(c) || new Date(c.ts).getTime() < start) continue;
+        drop.add(c);
+        removed++;
+    }
     for (const c of swgCandidates) {
         if (swgClaimed.has(c) || new Date(c.ts).getTime() < start) continue;
         drop.add(c);
@@ -234,11 +264,33 @@ function isSwgEntry(e: PoolMathArchiveEntry): boolean {
         && typeof e.amount === 'number' && typeof e.runTime === 'number' && typeof e.percent === 'number';
 }
 
+// Liquid chlorine is PoolMath chemical id 0: `percent` strength and `normalizedAmount` in mL.
+const POOLMATH_LIQUID_CHLORINE = 0;
+function isChlorineEntry(e: PoolMathArchiveEntry): boolean {
+    return e.type === 'chemlog' && e.chemical === POOLMATH_LIQUID_CHLORINE && typeof e.percent === 'number' && typeof e.normalizedAmount === 'number';
+}
+
+// The archived liquid chlorine additions, oldest first.
+export function archivedChlorineAdditions(): { ts: Date; percent: number; ml: number }[] {
+    return readPoolMathArchive().entries
+        .filter(isChlorineEntry)
+        .map(e => ({ ts: new Date(e.ts), percent: e.percent, ml: e.normalizedAmount }))
+        .sort((a, b) => a.ts.getTime() - b.ts.getTime());
+}
+
 // The archived SWG runs, oldest first, shaped like a share-page SWG entry.
 export function archivedSwgEvents(): { ts: Date; ppmPerDay: number; hrs: number; pct: number }[] {
     return readPoolMathArchive().entries
         .filter(isSwgEntry)
         .map(e => ({ ts: new Date(e.ts), ppmPerDay: e.amount, hrs: e.runTime, pct: e.percent }))
+        .sort((a, b) => a.ts.getTime() - b.ts.getTime());
+}
+
+// The archived CYA (stabilizer) readings, oldest first.
+export function archivedCyaReadings(): { ts: Date; value: number }[] {
+    return readPoolMathArchive().entries
+        .filter(e => e.type === 'testlog' && typeof e.cya === 'number')
+        .map(e => ({ ts: new Date(e.ts), value: e.cya }))
         .sort((a, b) => a.ts.getTime() - b.ts.getTime());
 }
 
