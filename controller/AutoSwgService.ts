@@ -76,6 +76,10 @@ export interface AutoSwgParams {
     // them, the partial day between FC readings (and since the last one) is weighted by how
     // much of the day's chlorine loss falls in daylight vs. night rather than by the clock
     // alone. Omit either and time is counted by the clock, as before.
+    // Credit liquid chlorine additions logged in PoolMath as FC added (default true): an addition
+    // between two FC readings raises the second reading without the SWG having done it, so
+    // without the credit the consumption between them is understated.
+    creditChlorineAdditions?: boolean;
     sunriseTime?: string;
     sunsetTime?: string;
     // Share (percent) of a day's FC consumption that happens in daylight. 0 or omitted =
@@ -243,7 +247,26 @@ function cardTimestamp(cardInner: string): Date | null {
     return m ? parseTimestamp(m[1]) : null;
 }
 
+// A liquid chlorine addition logged in PoolMath: `percent` strength, `ml` volume added.
+export interface ChlorineAddition { ts: Date; percent: number; ml: number; }
+
+// Milliliters per unit PoolMath may show an amount in on the share page (the JSON reports a
+// normalized mL amount directly).
+const ML_PER_UNIT: { [unit: string]: number } = {
+    'oz': 29.5735295625, 'fl oz': 29.5735295625, 'gal': 3785.411784, 'qt': 946.352946, 'pt': 473.176473,
+    'cup': 236.5882365, 'cups': 236.5882365, 'ml': 1, 'l': 1000,
+};
+// "70 oz of Liquid Chlorine - 10%" as the share page's addition card reads once its markup is stripped.
+const LIQUID_CHLORINE_PATTERN = /([\d.,]+)\s*(fl\s*oz|oz|gal|qt|pt|cups?|ml|l)\b\s*of\s*Liquid\s*Chlorine[^\d]*([\d.]+)\s*%/i;
+
+// ppm of FC a liquid chlorine addition adds to a pool of `gallons`: strength x volume / pool
+// volume (1 gal of 10% in 10,000 gal is 10 ppm).
+export function chlorineAdditionPpm(a: { percent: number; ml: number }, gallons: number): number {
+    return gallons > 0 ? (a.percent / 100) * 1_000_000 * a.ml / (gallons * 3785.411784) : 0;
+}
+
 interface ParsedCards {
+    chlorineAdditions: ChlorineAddition[];
     fcEvents: FcEvent[];
     swgEvents: SwgEvent[];
     cyaEvents: FcEvent[];
@@ -260,12 +283,13 @@ export interface PageReadings {
     cc: { ts: Date; value: number }[];
     cya: { ts: Date; value: number }[];
     swg: { ts: Date; ppmPerDay: number; hrs: number; pct: number }[];
+    chlorine: ChlorineAddition[];
 }
 
 function pageReadings(p: ParsedCards): PageReadings {
-    const all = [...p.fcEvents, ...p.ccEvents, ...p.cyaEvents, ...p.swgEvents];
+    const all = [...p.fcEvents, ...p.ccEvents, ...p.cyaEvents, ...p.swgEvents, ...p.chlorineAdditions];
     const coverageStart = all.length ? new Date(Math.min(...all.map(e => e.ts.getTime()))) : undefined;
-    return { coverageStart, fc: p.fcEvents, cc: p.ccEvents, cya: p.cyaEvents, swg: p.swgEvents.map(e => ({ ts: e.ts, ppmPerDay: e.ppmPerDay, hrs: e.hrs, pct: e.pct })) };
+    return { coverageStart, fc: p.fcEvents, cc: p.ccEvents, cya: p.cyaEvents, swg: p.swgEvents.map(e => ({ ts: e.ts, ppmPerDay: e.ppmPerDay, hrs: e.hrs, pct: e.pct })), chlorine: p.chlorineAdditions };
 }
 
 function parseCards(html: string, poolHeading?: string): ParsedCards {
@@ -276,6 +300,7 @@ function parseCards(html: string, poolHeading?: string): ParsedCards {
     const swgEvents: SwgEvent[] = [];
     const cyaEvents: FcEvent[] = [];
     const ccEvents: FcEvent[] = [];
+    const chlorineAdditions: ChlorineAddition[] = [];
 
     for (const card of cards) {
         const ts = cardTimestamp(card.inner);
@@ -291,6 +316,15 @@ function parseCards(html: string, poolHeading?: string): ParsedCards {
                 pct: parseFloat(swgMatch[3]),
                 source: 'poolmath',
             });
+            continue;
+        }
+
+        const clMatch = LIQUID_CHLORINE_PATTERN.exec(text);
+        if (clMatch) {
+            const amount = parseFloat(clMatch[1].replace(/,/g, ''));
+            const perUnit = ML_PER_UNIT[clMatch[2].toLowerCase().replace(/\s+/g, ' ')];
+            const percent = parseFloat(clMatch[3]);
+            if (isFinite(amount) && isFinite(percent) && perUnit) chlorineAdditions.push({ ts, percent, ml: amount * perUnit });
             continue;
         }
 
@@ -326,6 +360,7 @@ function parseCards(html: string, poolHeading?: string): ParsedCards {
         swgEvents: sortDedupe(swgEvents),
         cyaEvents: sortDedupe(cyaEvents),
         ccEvents: sortDedupe(ccEvents),
+        chlorineAdditions: sortDedupe(chlorineAdditions),
     };
 }
 
@@ -678,6 +713,13 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     }
     const dayEquivalents = (a: Date, b: Date): number => daylight ? consumptionDayEquivalents(a, b, params.timezone, daylight) : (b.getTime() - a.getTime()) / 86400000;
 
+    // Liquid chlorine added between two points counts as FC the SWG didn't make.
+    const additions = parsedCards.chlorineAdditions;
+    const creditAdditions = params.creditChlorineAdditions !== false && params.gallons > 0 && additions.length > 0;
+    const addedBetween = (a: Date, b: Date): number => creditAdditions
+        ? additions.filter(x => x.ts.getTime() > a.getTime() && x.ts.getTime() <= b.getTime()).reduce((sum, x) => sum + chlorineAdditionPpm(x, params.gallons), 0)
+        : 0;
+
     // Time-weighted running average FC consumption over the last windowDays.
     const intervals: { t1: Date; t2: Date; perDay: number }[] = [];
     for (let i = 0; i < fcEvents.length - 1; i++) {
@@ -686,7 +728,7 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         if (t2.getTime() <= t1.getTime()) continue;
         const gen = generatedBetween(swgEvents, t1, t2);
         const rawDelta = fc2 - fc1;
-        const consumed = gen - rawDelta;
+        const consumed = gen + addedBetween(t1, t2) - rawDelta;
         const days = dayEquivalents(t1, t2);
         intervals.push({ t1, t2, perDay: days > 0 ? consumed / days : 0 });
     }
@@ -724,6 +766,10 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         : '';
     const avgConsumptionSummary = `Running ${windowLabel}-day average FC consumption (${windowRange}${extensionNote}): ${avgPerDay.toFixed(2)} ppm/day (from ${fcEvents.length} FC readings, ${swgEvents.length} SWG log entries).`;
     rationale.push(avgConsumptionSummary);
+    if (creditAdditions) {
+        const inWindow = additions.filter(x => x.ts.getTime() >= windowStart.getTime());
+        if (inWindow.length) rationale.push(`Liquid chlorine additions credited as FC added: ${inWindow.map(x => `${formatLocalDateTime(x.ts, params.timezone)} +${chlorineAdditionPpm(x, params.gallons).toFixed(2)} ppm`).join('; ')}.`);
+    }
     if (daylight) rationale.push(`Daylight weighting: day length ${daylight.dayHours.toFixed(1)}h (${params.sunriseTime}-${params.sunsetTime} ${params.timezone}); ${(daylight.share * 100).toFixed(0)}% of a day's FC consumption counted as daytime (${daylight.auto ? 'parabolic estimate from the day length' : 'configured'}). Whole 24h blocks count as one day; only the partial block is weighted.`);
     if (swgMerge.localUsed > 0) {
         rationale.push(`SWG entries: ${swgMerge.localUsed} from the local SWG % change log, ${poolMathSwgEvents.length - swgMerge.replaced} from PoolMath; ${swgMerge.replaced} PoolMath ${swgMerge.replaced === 1 ? 'entry' : 'entries'} within 1h of a local entry ignored in favor of the local one.`);
@@ -754,8 +800,9 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     const latestSwg = swgEvents[swgEvents.length - 1];
     const swgGeneratedSinceReading = swgGeneratedSinceLastReading(swgEvents, lastFc.ts, rightNow, swgStart, params.timezone);
     const elapsedEq = dayEquivalents(lastFc.ts, rightNow);
-    const projectedCurrentFc = lastFc.value - (avgPerDay * elapsedEq) + swgGeneratedSinceReading;
-    rationale.push(`Projected current FC: ${projectedCurrentFc.toFixed(2)} ppm (last reading ${lastFc.value} ppm, ${elapsedDays.toFixed(2)} days ago${daylight ? ` = ${elapsedEq.toFixed(2)} days of consumption, daylight-weighted` : ''}; minus ${(avgPerDay * elapsedEq).toFixed(2)} ppm consumed; plus ${swgGeneratedSinceReading.toFixed(2)} ppm generated).`);
+    const addedSinceReading = addedBetween(lastFc.ts, rightNow);
+    const projectedCurrentFc = lastFc.value - (avgPerDay * elapsedEq) + swgGeneratedSinceReading + addedSinceReading;
+    rationale.push(`Projected current FC: ${projectedCurrentFc.toFixed(2)} ppm (last reading ${lastFc.value} ppm, ${elapsedDays.toFixed(2)} days ago${daylight ? ` = ${elapsedEq.toFixed(2)} days of consumption, daylight-weighted` : ''}; minus ${(avgPerDay * elapsedEq).toFixed(2)} ppm consumed; plus ${swgGeneratedSinceReading.toFixed(2)} ppm generated${addedSinceReading > 0 ? `; plus ${addedSinceReading.toFixed(2)} ppm of liquid chlorine added` : ''}).`);
     // With the last reading this old, the projection is mostly extrapolation from an
     // average -- worth saying so rather than presenting it with the same confidence as one
     // anchored to a recent test.
@@ -887,14 +934,32 @@ export interface CombinedHistory {
     localSwgEntriesUsed: number;
     poolMathSwgEntriesReplaced: number;   // PoolMath SWG entries left out because a local entry is within an hour
     poolMathError?: string;               // set if PoolMath couldn't be read; entries then hold local data only
+    // The CYA readings (oldest first) from the page plus the archive -- not part of `entries`
+    // (which hold the FC and SWG rows the history dialog lists), kept for features that want to
+    // relate chlorine consumption to the stabilizer level.
+    cya?: { ts: string; value: number }[];
+    // Liquid chlorine additions (oldest first) from the page plus the archive, with the ppm FC each
+    // adds to the configured pool volume (when `gallons` was given) -- likewise kept for features
+    // that relate consumption to what was added.
+    chlorineAdditions?: { ts: string; percent: number; ml: number; ppm?: number }[];
+}
+
+// Older PoolMath history from the background-synced archive (see AutoSwgPoolMathArchive).
+export interface ArchivedHistory {
+    fc: { ts: Date; value: number }[];
+    swg: { ts: Date; ppmPerDay: number; hrs: number; pct: number }[];
+    cya: { ts: Date; value: number }[];
+    chlorine: ChlorineAddition[];
 }
 
 // The SWG % and FC history exactly as a calculation would see it: FC readings
 // from PoolMath, and SWG entries from the local log plus PoolMath's, with a
 // PoolMath SWG entry dropped when a local one is within an hour of it. If
 // PoolMath can't be read, the local SWG entries are still returned.
-export async function buildCombinedHistory(params: { shareCode?: string; poolName?: string }, html?: string, localSwgEntries: LocalSwgEntry[] = [], archivedFc: { ts: Date; value: number }[] = [], archivedSwg: { ts: Date; ppmPerDay: number; hrs: number; pct: number }[] = [], onPageParsed?: (page: PageReadings) => void): Promise<CombinedHistory> {
+export async function buildCombinedHistory(params: { shareCode?: string; poolName?: string; gallons?: number }, html?: string, localSwgEntries: LocalSwgEntry[] = [], archive?: () => ArchivedHistory, onPageParsed?: (page: PageReadings) => void): Promise<CombinedHistory> {
     let fcEvents: FcEvent[] = [];
+    let cyaEvents: FcEvent[] = [];
+    let chlorine: ChlorineAddition[] = [];
     let poolMathSwgEvents: SwgEvent[] = [];
     let poolMathError: string;
     try {
@@ -905,26 +970,31 @@ export async function buildCombinedHistory(params: { shareCode?: string; poolNam
             catch (err) { logger.warn(`AutoSwg: could not refresh the PoolMath history archive from the page: ${err.message}`); }
         }
         fcEvents = parsed.fcEvents;
+        cyaEvents = parsed.cyaEvents;
+        chlorine = parsed.chlorineAdditions;
         poolMathSwgEvents = parsed.swgEvents;
     }
     catch (err) { poolMathError = err.message; }
-    // Older FC readings from the background-synced archive that the share page no longer
-    // lists; a reading the page still has is the same one (same time and value).
-    if (archivedFc.length) {
-        const seen = new Set(fcEvents.map(e => `${e.ts.getTime()}|${e.value}`));
-        fcEvents = [...fcEvents, ...archivedFc.filter(e => !seen.has(`${e.ts.getTime()}|${e.value}`))];
-    }
-    // Likewise older SWG entries from the archive; the page's own entry wins when both have one.
-    if (archivedSwg.length) {
-        const onPage = (t: number) => poolMathSwgEvents.some(e => Math.abs(e.ts.getTime() - t) <= 2 * 60 * 1000);
-        poolMathSwgEvents = [...poolMathSwgEvents, ...archivedSwg.filter(a => !onPage(a.ts.getTime())).map(a => ({ ts: a.ts, ppmPerDay: a.ppmPerDay, hrs: a.hrs, pct: a.pct, source: 'poolmath' as SwgSource }))];
+    // Older readings from the background-synced archive that the share page no longer lists.
+    // The archive is read only now, after the page read above had its chance to refresh it, and
+    // the page's own entry wins when both have one at (nearly) the same time -- so an edited
+    // reading isn't listed twice.
+    if (archive) {
+        const arch = archive();
+        const near = (list: { ts: Date }[], t: number) => list.some(e => Math.abs(e.ts.getTime() - t) <= 2 * 60 * 1000);
+        fcEvents = [...fcEvents, ...arch.fc.filter(a => !near(fcEvents, a.ts.getTime()))];
+        cyaEvents = [...cyaEvents, ...arch.cya.filter(a => !near(cyaEvents, a.ts.getTime()))];
+        chlorine = [...chlorine, ...arch.chlorine.filter(a => !near(chlorine, a.ts.getTime()))];
+        poolMathSwgEvents = [...poolMathSwgEvents, ...arch.swg.filter(a => !near(poolMathSwgEvents, a.ts.getTime())).map(a => ({ ts: a.ts, ppmPerDay: a.ppmPerDay, hrs: a.hrs, pct: a.pct, source: 'poolmath' as SwgSource }))];
     }
     const swgMerge = mergeSwgEvents(poolMathSwgEvents, localSwgEntries);
     const entries: CombinedHistoryEntry[] = [
         ...fcEvents.map(e => ({ ts: e.ts.toISOString(), type: 'FC' as const, source: 'poolmath' as SwgSource, value: e.value })),
         ...swgEventsToEntries(swgMerge.events),
     ].sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime());
-    return { entries, localSwgEntriesUsed: swgMerge.localUsed, poolMathSwgEntriesReplaced: swgMerge.replaced, poolMathError };
+    const cya = cyaEvents.map(e => ({ ts: e.ts.toISOString(), value: e.value })).sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime());
+    return { entries, localSwgEntriesUsed: swgMerge.localUsed, poolMathSwgEntriesReplaced: swgMerge.replaced, poolMathError, cya,
+        chlorineAdditions: chlorine.sort((a, b) => a.ts.getTime() - b.ts.getTime()).map(a => ({ ts: a.ts.toISOString(), percent: a.percent, ml: a.ml, ppm: params.gallons > 0 ? chlorineAdditionPpm(a, params.gallons) : undefined })) };
 }
 
 function swgEventsToEntries(events: SwgEvent[]): CombinedHistoryEntry[] {
