@@ -1027,7 +1027,7 @@ export class ConfigRoute {
                 // so enabling it (or changing the interval) takes effect immediately rather
                 // than needing a restart.
                 armAutoSwgAutoCheck();
-                // The share code or pool may have changed, so re-sync the history archive soon.
+                // If the share code or pool changed, pull its history soon (a no-op otherwise).
                 armAutoSwgArchiveSync(60 * 1000);
                 return res.status(200).send(sys.autoSwg.get(true));
             }
