@@ -94,6 +94,9 @@ export interface AutoSwgParams {
     // between two FC readings raises the second reading without the SWG having done it, so
     // without the credit the consumption between them is understated.
     creditChlorineAdditions?: boolean;
+    // Run the calculation as of this moment instead of now, using only the data logged up to then
+    // (see buildProjectionAccuracy). Omit for a normal calculation.
+    asOf?: Date;
     // How many ppm of FC rise beyond what the SWG output and logged additions explain marks an
     // interval as suspect and leaves it out of the average (default 2; 0 = don't check).
     fcAnomalyTolerancePpm?: number;
@@ -702,7 +705,13 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
 
     const pageHtml = html || await fetchHtml(params.shareCode);
     const parsedCards = parseCards(pageHtml, params.poolName);
-    const { fcEvents, swgEvents: poolMathSwgEvents, cyaEvents } = parsedCards;
+    // With `asOf`, only what had been logged by then counts.
+    const asOfMs = params.asOf ? params.asOf.getTime() : undefined;
+    const upTo = <T extends { ts: Date }>(list: T[]): T[] => typeof asOfMs === 'undefined' ? list : list.filter(e => e.ts.getTime() <= asOfMs);
+    const fcEvents = upTo(parsedCards.fcEvents);
+    const poolMathSwgEvents = upTo(parsedCards.swgEvents);
+    const cyaEvents = upTo(parsedCards.cyaEvents);
+    if (typeof asOfMs !== 'undefined') localSwgEntries = localSwgEntries.filter(e => new Date(e.ts).getTime() <= asOfMs);
     if (onPageParsed) {
         try { onPageParsed(pageReadings(parsedCards)); }
         catch (err) { logger.warn(`AutoSwg: could not refresh the PoolMath history archive from the page: ${err.message}`); }
@@ -733,7 +742,7 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     const dayEquivalents = (a: Date, b: Date): number => daylight ? consumptionDayEquivalents(a, b, params.timezone, daylight) : (b.getTime() - a.getTime()) / 86400000;
 
     // Liquid chlorine added between two points counts as FC the SWG didn't make.
-    const additions = parsedCards.chlorineAdditions;
+    const additions = upTo(parsedCards.chlorineAdditions);
     const creditAdditions = params.creditChlorineAdditions !== false && params.gallons > 0 && additions.length > 0;
     const addedBetween = (a: Date, b: Date): number => creditAdditions
         ? additions.filter(x => x.ts.getTime() > a.getTime() && x.ts.getTime() <= b.getTime()).reduce((sum, x) => sum + chlorineAdditionPpm(x, params.gallons), 0)
@@ -753,7 +762,7 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         intervals.push({ t1, t2, perDay: days > 0 ? consumed / days : 0, consumed, rise: rawDelta, suspect: anomalyTolerance > 0 && consumed < -anomalyTolerance });
     }
 
-    const rightNow = new Date();
+    const rightNow = params.asOf ? new Date(params.asOf) : new Date();
     let windowStart = new Date(rightNow.getTime() - params.windowDays * 86400000);
     // Require at least MIN_FC_READINGS_IN_WINDOW readings so the average spans
     // more than a single interval. If the configured window (which ends at
@@ -932,6 +941,7 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     // the target actually aimed at in place of the configured one.
     const inputsUsed: any = Object.assign({}, params, { targetFc: targetFc, targetDays: targetDays });
     delete inputsUsed.inFlight;
+    delete inputsUsed.asOf;
 
     return {
         currentPct: latestSwg.pct,
@@ -1060,6 +1070,105 @@ export async function buildCombinedHistory(params: { shareCode?: string; poolNam
         ...chlorineAdditions.map(a => ({ ts: a.ts, type: 'CL' as const, source: 'poolmath' as SwgSource, percent: a.percent, ml: a.ml, ppm: a.ppm })),
     ].sort(byTime);
     return { entries, localSwgEntriesUsed: swgMerge.localUsed, poolMathSwgEntriesReplaced: swgMerge.replaced, poolMathError, cya, chlorineAdditions };
+}
+
+// One FC reading and what the algorithm projected for that moment from only the data logged before it.
+export interface ProjectionAccuracyRow {
+    ts: string;                        // the FC reading's time
+    previousTs: string;                // the reading the projection started from
+    days: number;                      // days between them
+    measured: number;                  // the FC actually measured
+    projected: number;                 // the projected FC just before that reading
+    error: number;                     // projected - measured (positive = projected too high)
+    avgConsumptionPpmPerDay: number;   // the burn rate the projection used
+}
+
+// A target an apply aimed at, and the FC measured nearest its deadline.
+export interface TargetTrackingRow {
+    appliedAt: string;
+    targetFc: number;
+    targetDate: string;
+    passed: boolean;                   // the deadline is behind us
+    nearest?: { ts: string; value: number; offsetHours: number };
+    difference?: number;               // nearest.value - targetFc
+}
+
+export interface ProjectionAccuracy {
+    rows: ProjectionAccuracyRow[];     // oldest first
+    summary: { count: number; meanAbsError?: number; rmse?: number; bias?: number; within1?: number; within2?: number;
+        byGap: { label: string; count: number; meanAbsError?: number }[] };
+    targets: TargetTrackingRow[];      // oldest first
+    skipped: number;                   // readings that couldn't be scored (long gaps, too little history)
+}
+
+// How well the algorithm predicts FC, checked against what was measured: for each FC reading in
+// the last `lookbackDays`, re-run the calculation as of a minute before it -- with only the data
+// logged by then and today's settings -- and compare the projected FC with the measured one. Also
+// matches each apply's target FC and deadline with the FC measured nearest the deadline.
+// Limits: it reads the share page (so only what the page lists), and uses today's run window and
+// sunrise/sunset for past days.
+export async function buildProjectionAccuracy(params: AutoSwgParams, options: { lookbackDays: number; html?: string; localSwgEntries?: LocalSwgEntry[]; historyRecords?: any[] }): Promise<ProjectionAccuracy> {
+    const html = options.html || await fetchHtml(params.shareCode);
+    const fc = parseCards(html, params.poolName).fcEvents;
+    const from = Date.now() - options.lookbackDays * 86400000;
+    const rows: ProjectionAccuracyRow[] = [];
+    let skipped = 0;
+    for (let k = 1; k < fc.length; k++) {
+        const t1 = fc[k - 1].ts, t2 = fc[k].ts;
+        if (t2.getTime() < from) continue;
+        const days = (t2.getTime() - t1.getTime()) / 86400000;
+        if (days < 0.1 || days > 14) { skipped++; continue; }
+        try {
+            const r = await computeRecommendation(Object.assign({}, params, { inFlight: undefined, asOf: new Date(t2.getTime() - 60000) }), html, options.localSwgEntries || []);
+            if (!r.mostRecentFc || r.mostRecentFc.ts !== t1.toISOString()) { skipped++; continue; }
+            rows.push({
+                ts: t2.toISOString(), previousTs: t1.toISOString(), days: Math.round(days * 100) / 100,
+                measured: fc[k].value, projected: r.projectedCurrentFc, error: Math.round((r.projectedCurrentFc - fc[k].value) * 100) / 100,
+                avgConsumptionPpmPerDay: r.avgConsumptionPpmPerDay,
+            });
+        }
+        catch (err) { skipped++; } // too little history before this reading
+    }
+    const mean = (xs: number[]) => xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : undefined;
+    const round2 = (v: number | undefined) => typeof v === 'number' ? Math.round(v * 100) / 100 : undefined;
+    const abs = rows.map(r => Math.abs(r.error));
+    const bucket = (label: string, lo: number, hi: number) => {
+        const e = rows.filter(r => r.days >= lo && r.days < hi).map(r => Math.abs(r.error));
+        return { label, count: e.length, meanAbsError: round2(mean(e)) };
+    };
+    const summary = {
+        count: rows.length,
+        meanAbsError: round2(mean(abs)),
+        rmse: rows.length ? round2(Math.sqrt(mean(rows.map(r => r.error * r.error)))) : undefined,
+        bias: round2(mean(rows.map(r => r.error))),
+        within1: rows.length ? Math.round(100 * abs.filter(e => e <= 1).length / rows.length) : undefined,
+        within2: rows.length ? Math.round(100 * abs.filter(e => e <= 2).length / rows.length) : undefined,
+        byGap: [bucket('under 2 days', 0, 2), bucket('2 to 5 days', 2, 5), bucket('5 to 14 days', 5, 15)],
+    };
+
+    // Targets from the local log of applied recommendations (one row per distinct target).
+    const targets: TargetTrackingRow[] = [];
+    const seen = new Set<string>();
+    for (const rec of (options.historyRecords || []).slice().sort((a, b) => new Date(a.appliedAt).getTime() - new Date(b.appliedAt).getTime())) {
+        const o = rec && rec.outputs;
+        if (!o || o.autoStep || typeof o.lastAppliedTargetFc !== 'number' || !o.lastAppliedTargetDate) continue;
+        const key = `${o.lastAppliedTargetDate}|${o.lastAppliedTargetFc}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const when = new Date(o.lastAppliedTargetDate).getTime();
+        if (isNaN(when)) continue;
+        const row: TargetTrackingRow = { appliedAt: rec.appliedAt, targetFc: o.lastAppliedTargetFc, targetDate: new Date(when).toISOString(), passed: when <= Date.now() };
+        if (row.passed) {
+            let best: { ts: string; value: number; offsetHours: number } | undefined;
+            for (const e of fc) {
+                const off = (e.ts.getTime() - when) / 3600000;
+                if (Math.abs(off) <= 72 && (!best || Math.abs(off) < Math.abs(best.offsetHours))) best = { ts: e.ts.toISOString(), value: e.value, offsetHours: Math.round(off * 10) / 10 };
+            }
+            if (best) { row.nearest = best; row.difference = Math.round((best.value - row.targetFc) * 100) / 100; }
+        }
+        targets.push(row);
+    }
+    return { rows, summary, targets, skipped };
 }
 
 function swgEventsToEntries(events: SwgEvent[]): CombinedHistoryEntry[] {
