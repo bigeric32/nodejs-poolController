@@ -29,6 +29,7 @@ import { config } from "../../../config/Config";
 import { ServiceParameterError } from "../../../controller/Errors";
 import { buildCombinedHistory, computeRecommendation, computeSwgCapacity, formatLocalDateTime, minutesToHHMM, nextScheduledCheck } from "../../../controller/AutoSwgService";
 import { appendAutoSwgHistory, readAutoSwgHistory, toLocalSwgEntries } from "../../../controller/AutoSwgHistory";
+import { archivedFcReadings, syncPoolMathArchive } from "../../../controller/AutoSwgPoolMathArchive";
 
 // 'HH:MM' wall-clock time of `dt` in `timeZone`.
 function formatHHMMInZone(dt: Date, timeZone: string): string {
@@ -509,6 +510,49 @@ function autoSwgResponse(skipped?: string) {
     return skipped ? Object.assign({}, data, { skipped: skipped }) : data;
 }
 
+// Background PoolMath history sync: pulls up to 18 months of logs from the share link's JSON
+// interface into a local archive (see AutoSwgPoolMathArchive). Runs shortly after startup and
+// then every 12 hours; a failure (including PoolMath rate limiting) is retried sooner.
+const AUTO_SWG_ARCHIVE_FIRST_DELAY_MS = 3 * 60 * 1000;
+const AUTO_SWG_ARCHIVE_INTERVAL_MS = 12 * 60 * 60 * 1000;
+const AUTO_SWG_ARCHIVE_RETRY_MS = 30 * 60 * 1000;
+let autoSwgArchiveTimer: NodeJS.Timeout | undefined;
+let autoSwgArchiveRunning = false;
+
+export function armAutoSwgArchiveSync(delayMs: number = AUTO_SWG_ARCHIVE_FIRST_DELAY_MS) {
+    if (autoSwgArchiveTimer) clearTimeout(autoSwgArchiveTimer);
+    autoSwgArchiveTimer = undefined;
+    if (!sys.autoSwg.enabled || !sys.autoSwg.shareCode) return;
+    autoSwgArchiveTimer = setTimeout(() => { runAutoSwgArchiveSync().catch(err => logger.error(`AutoSwg: PoolMath history sync failed: ${err.message}`)); }, delayMs);
+}
+
+async function runAutoSwgArchiveSync(): Promise<void> {
+    autoSwgArchiveTimer = undefined;
+    if (autoSwgArchiveRunning) return;
+    let cfg = sys.autoSwg;
+    if (!cfg.enabled || !cfg.shareCode) return;
+    autoSwgArchiveRunning = true;
+    let nextMs = AUTO_SWG_ARCHIVE_INTERVAL_MS;
+    try {
+        let r = await syncPoolMathArchive(cfg.shareCode, cfg.poolName || undefined);
+        state.autoSwg.archiveSyncedAt = new Date().toISOString();
+        state.autoSwg.archiveCount = r.total;
+        state.autoSwg.archiveOldest = r.oldest;
+        state.autoSwg.archiveError = undefined;
+        logger.info(`AutoSwg: PoolMath history sync: ${r.fetched} entries returned (asked for ${r.requested}), ${r.added} new, ${r.total} archived back to ${r.oldest ? r.oldest.slice(0, 10) : 'n/a'}.`);
+    }
+    catch (err) {
+        nextMs = AUTO_SWG_ARCHIVE_RETRY_MS;
+        state.autoSwg.archiveError = err.message;
+        logger.warn(`AutoSwg: PoolMath history sync failed (${err.message}); trying again in ${nextMs / 60000} minutes.`);
+    }
+    finally {
+        autoSwgArchiveRunning = false;
+        state.autoSwg.emitEquipmentChange();
+        armAutoSwgArchiveSync(nextMs);
+    }
+}
+
 async function runAutoSwgAutoCheck() {
     autoSwgAutoCheckTimer = undefined;
     let cfg = sys.autoSwg;
@@ -554,6 +598,7 @@ export class StateRoute {
         };
         armAutoSwgStep(AUTO_SWG_STEP_MIN_DELAY_MS);
         armAutoSwgAutoCheck(AUTO_SWG_AUTO_CHECK_MIN_DELAY_MS);
+        armAutoSwgArchiveSync();
         app.get('/state/rs485Port/:id', async (req, res, next) => {
             try {
                 let portId = parseInt(req.params.id, 10);
@@ -1060,10 +1105,34 @@ export class StateRoute {
         // be read (see poolMathError in the response).
         app.get('/state/autoSwg/history/combined', async (req, res, next) => {
             try {
-                let combined = await buildCombinedHistory({ shareCode: sys.autoSwg.shareCode, poolName: sys.autoSwg.poolName || undefined }, undefined, toLocalSwgEntries(readAutoSwgHistory()));
+                let combined = await buildCombinedHistory({ shareCode: sys.autoSwg.shareCode, poolName: sys.autoSwg.poolName || undefined }, undefined, toLocalSwgEntries(readAutoSwgHistory()), archivedFcReadings());
                 return res.status(200).send(combined);
             }
             catch (err) { next(err); }
+        });
+        // Runs the background PoolMath history sync now (rather than at its next scheduled time)
+        // and reports what it archived. PoolMath rate limits the share endpoint, so this can
+        // take a minute or more when a request was made recently.
+        app.post('/state/autoSwg/history/poolmath/sync', async (req, res, next) => {
+            try {
+                if (autoSwgArchiveRunning) throw new ServiceParameterError('A PoolMath history sync is already running.', 'autoSwg', 'sync', 'running');
+                let cfg = sys.autoSwg;
+                autoSwgArchiveRunning = true;
+                let r;
+                try { r = await syncPoolMathArchive(cfg.shareCode, cfg.poolName || undefined); }
+                finally { autoSwgArchiveRunning = false; }
+                state.autoSwg.archiveSyncedAt = new Date().toISOString();
+                state.autoSwg.archiveCount = r.total;
+                state.autoSwg.archiveOldest = r.oldest;
+                state.autoSwg.archiveError = undefined;
+                state.autoSwg.emitEquipmentChange();
+                return res.status(200).send(r);
+            }
+            catch (err) {
+                state.autoSwg.archiveError = err.message;
+                state.autoSwg.emitEquipmentChange();
+                next(err);
+            }
         });
         app.post('/state/autoSwg/recommend', async (req, res, next) => {
             try {
