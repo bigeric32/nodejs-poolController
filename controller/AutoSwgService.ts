@@ -153,6 +153,7 @@ export interface AutoSwgResult {
     targetDaysUsed: number;          // days from calculation time until targetDateUsed
     refreshed: boolean;              // true if it stayed on course for params.inFlight rather than starting a new target
     targetWarning?: string;          // set when even 100% can't reach targetFc within the window (the % above is capped at 100)
+    targetDateExtended?: boolean;    // true when the deadline was moved out to when consumption alone reaches the target (see targetInfo)
     targetInfo?: string;             // set when FC is so far above targetFc that consumption alone (SWG at 0%) won't bring it down by targetDateUsed -- informational, not a problem
     ratingNote?: string;             // set when PoolMath's recent SWG entries imply a rated output that disagrees with swgLbsPerDay
     fcAnomalyNote?: string;          // set when intervals in the averaging window were left out for an FC rise the SWG and logged additions can't explain
@@ -1000,6 +1001,7 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     // date out to when consumption alone is projected to bring FC down to it (the SWG then
     // just stays off until then). Never moves a deadline earlier.
     let targetInfo: string | undefined;
+    let targetDateExtended = false;
     if (projectedCurrentFc - (avgPerDay * targetDays) > targetFc + 0.005) {
         const origWindow = `${Math.round(targetDays * 10) / 10} day${Math.round(targetDays * 10) / 10 === 1 ? '' : 's'}`;
         const origDate = targetDate;
@@ -1008,6 +1010,7 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
             const daysToTarget = (projectedCurrentFc - targetFc) / avgPerDay;
             targetDays = daysToTarget;
             targetDate = new Date(rightNow.getTime() + daysToTarget * 86400000);
+            targetDateExtended = true;
             targetInfo = `${head} At the projected burn of ${avgPerDay.toFixed(2)} ppm/day it should reach the target in about ${daysToTarget.toFixed(1)} days, later than the ${origWindow} to the original deadline (${formatLocalDateTime(origDate, params.timezone)}) -- so the target date is moved to ${formatLocalDateTime(targetDate, params.timezone)}, and the SWG isn't needed and is held at 0% until then.`;
         }
         else targetInfo = `${head} No FC consumption was measured, so there's no burn rate to project when it will reach the target; the SWG isn't needed and is held at 0%.`;
@@ -1064,6 +1067,7 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         refreshed: refreshed,
         targetWarning: targetWarning,
         targetInfo: targetInfo,
+        targetDateExtended: targetDateExtended,
         staleFcNote: staleFcNote,
         fcAnomalyNote: fcAnomalyNote,
         ratingNote: ratingNote,
