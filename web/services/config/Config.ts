@@ -1028,6 +1028,8 @@ export class ConfigRoute {
                 let before = tuningKeys.map(k => (sys.autoSwg as any)[k]);
                 sys.autoSwg.set(req.body);
                 if (tuningKeys.some((k, i) => (sys.autoSwg as any)[k] !== before[i])) sys.autoSwg.tuningChangedAt = new Date().toISOString();
+                // The Tune dialog marks its own Apply, so a later Tune can tell its changes from ones made by hand.
+                if (req.body && req.body.tuneApplied === true) sys.autoSwg.lastTuneAppliedAt = sys.autoSwg.lastTuneAt = new Date().toISOString();
                 // Re-arm fully-automatic mode's periodic check against the just-saved config,
                 // so enabling it (or changing the interval) takes effect immediately rather
                 // than needing a restart.

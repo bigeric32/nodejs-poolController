@@ -2498,6 +2498,12 @@ export class AutoSwg extends EqItem {
     // When one of the tuning settings (averaging window, daylight share, chlorine credit, anomaly tolerance,
     // projection weighting and taper) last changed, so the accuracy report can score only the readings
     // that came after -- the ones the settings weren't tuned on.
+    // When the Tune button last ran (or applied a change), and when it last APPLIED one, so a later Tune can tell
+    // whether anything has changed since -- by hand, or by enough new readings to be worth tuning again.
+    public get lastTuneAt(): string { return this.data.lastTuneAt; }
+    public set lastTuneAt(val: string) { this.setDataVal('lastTuneAt', val); }
+    public get lastTuneAppliedAt(): string { return this.data.lastTuneAppliedAt; }
+    public set lastTuneAppliedAt(val: string) { this.setDataVal('lastTuneAppliedAt', val); }
     public get tuningChangedAt(): string { return this.data.tuningChangedAt; }
     public set tuningChangedAt(val: string) { this.setDataVal('tuningChangedAt', val); }
     public get projectionTaperStartDays(): number { return this.data.projectionTaperStartDays; }
