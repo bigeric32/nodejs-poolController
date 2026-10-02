@@ -3884,6 +3884,16 @@ export class AutoSwgState extends EqState {
     public set targetWarning(val: string) { this.setDataVal('targetWarning', val); }
     public get lastAppliedTargetWarning(): string { return this.data.lastAppliedTargetWarning; }
     public set lastAppliedTargetWarning(val: string) { this.setDataVal('lastAppliedTargetWarning', val); }
+    // Set when the newest FC reading behind a calculation is several days old (the projection
+    // is then mostly extrapolation). Same lifecycle as targetWarning / lastAppliedTargetWarning.
+    public get staleFcNote(): string { return this.data.staleFcNote; }
+    public set staleFcNote(val: string) { this.setDataVal('staleFcNote', val); }
+    public get lastAppliedStaleFcNote(): string { return this.data.lastAppliedStaleFcNote; }
+    public set lastAppliedStaleFcNote(val: string) { this.setDataVal('lastAppliedStaleFcNote', val); }
+    // Timestamp (ISO) of the newest PoolMath FC reading the last apply was based on. A
+    // Refresh against the same reading has nothing new to work from, so it is skipped.
+    public get lastAppliedFcAt(): string { return this.data.lastAppliedFcAt; }
+    public set lastAppliedFcAt(val: string) { this.setDataVal('lastAppliedFcAt', val); }
     // True when the most recent AUTOMATIC apply (fully-automatic mode, no human review)
     // moved the setpoint by at least AutoSwg.autoApplyWarnThresholdPct percentage points,
     // so the dashboard can flag it prominently. Cleared by any manual apply/override --
