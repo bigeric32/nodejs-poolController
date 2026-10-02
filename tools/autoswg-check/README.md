@@ -47,7 +47,7 @@ You can also point it at a saved copy of the share JSON instead of a code:
   the rating each entry implies should be steady. The report shows the implied rating by period (a
   step is a cell swap or a changed rating setting; PoolMath keeps each entry's own credit, so history
   stays consistent), compares the latest one with njsPC's rating if you pass `--njspc-lbs`, and flags
-  entries that don't fit their period. For each odd entry it also checks which credit the FC
+  entries that don't fit their period (which the other reports then ignore). For each odd entry it also checks which credit the FC
   readings support, because a credit that disagrees with the rating can still be the right one
   (the % or run hours entered may not reflect what actually ran).
 * **Projection accuracy:** for each reading, the algorithm re-run as of just before it with only the
@@ -76,6 +76,7 @@ You can also point it at a saved copy of the share JSON instead of a code:
 | `--pool NAME` | Choose a pool when the account has several (default: the first). A part of the name is enough. |
 | `--report` | `summary`, `capacity`, `accuracy`, `whatif`, `anomalies` or `all` (default). |
 | `--njspc-lbs 1.47` | njsPC's AutoSwg SWG rating (lbs/day), so the capacity report can compare it with what PoolMath's entries imply. A mismatch shifts both the recommended % and the SWG output njsPC logs locally. |
+| `--keep-odd-swg` | By default the script **flags and ignores** SWG entries that don't fit the pool's own rating (for example a one-day entry whose credit disagrees with the rest): the intervals that depend on such an entry are left out of the averages and the scoring, and the capacity report lists them. This puts them back in. |
 | `--include-uncovered` | Also score readings from before the SWG record starts. Not recommended: with no SWG output on record, consumption comes out wrong. |
 | `--cache DIR`, `--refresh` | Where the sanitized data is cached, and re-fetch instead of using it. |
 

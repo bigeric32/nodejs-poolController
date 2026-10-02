@@ -683,8 +683,9 @@ def main():
     if not args.keep_odd_swg:
         ds.excluded = odd_swg_spans(ds)
         if ds.excluded:
-            print('note: ignoring %d SWG entr%s that don\'t fit the pool\'s rating (run --report capacity for details; --keep-odd-swg to include)' % (
-                len(ds.excluded), 'y' if len(ds.excluded) == 1 else 'ies'), file=sys.stderr)
+            n = len(ds.excluded)
+            print("note: ignoring %d SWG %s that %s fit the pool's rating (run --report capacity for details; --keep-odd-swg to include)" % (
+                n, 'entry' if n == 1 else 'entries', "doesn't" if n == 1 else "don't"), file=sys.stderr)
     csv_dir = None
     if args.csv:
         os.makedirs(args.csv, exist_ok=True)
