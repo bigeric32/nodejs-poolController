@@ -2495,6 +2495,11 @@ export class AutoSwg extends EqItem {
     public set targetFc(val: number) { this.setDataVal('targetFc', val); }
     public get autoCheckStartTime(): string { return this.data.autoCheckStartTime; }
     public set autoCheckStartTime(val: string) { this.setDataVal('autoCheckStartTime', val); }
+    // When one of the tuning settings (averaging window, daylight share, chlorine credit, anomaly tolerance,
+    // projection weighting and taper) last changed, so the accuracy report can score only the readings
+    // that came after -- the ones the settings weren't tuned on.
+    public get tuningChangedAt(): string { return this.data.tuningChangedAt; }
+    public set tuningChangedAt(val: string) { this.setDataVal('tuningChangedAt', val); }
     public get projectionTaperStartDays(): number { return this.data.projectionTaperStartDays; }
     public set projectionTaperStartDays(val: number) { this.setDataVal('projectionTaperStartDays', val); }
     public get projectionTaperEndDays(): number { return this.data.projectionTaperEndDays; }

@@ -1200,7 +1200,10 @@ export interface ProjectionAccuracy {
         byGap: { label: string; count: number; meanAbsError?: number }[];
         unchangedMae?: number;         // error of the no-model baseline "FC is what it was at the last reading"
         skill?: number;                // 1 - meanAbsError / unchangedMae (positive = better than the baseline)
-        weighting: { current: WeightingChoice; best?: WeightingChoice; suggested?: WeightingChoice; maeCurrent?: number; maeBest?: number; maeSuggested?: number } };
+        weighting: { current: WeightingChoice; best?: WeightingChoice; suggested?: WeightingChoice; maeCurrent?: number; maeBest?: number; maeSuggested?: number };
+        // The readings since the tuning settings last changed -- the ones they weren't tuned on, so an honest
+        // read of how they are doing.
+        sinceChange?: { since: string; count: number; meanAbsError?: number; unchangedMae?: number; bias?: number } };
     targets: TargetTrackingRow[];      // oldest first
     skipped: number;                   // readings that couldn't be scored (long gaps, too little history)
 }
@@ -1211,7 +1214,7 @@ export interface ProjectionAccuracy {
 // matches each apply's target FC and deadline with the FC measured nearest the deadline.
 // Limits: it reads the share page (so only what the page lists), and uses today's run window and
 // sunrise/sunset for past days.
-export async function buildProjectionAccuracy(params: AutoSwgParams, options: { lookbackDays: number; html?: string; localSwgEntries?: LocalSwgEntry[]; historyRecords?: any[] }): Promise<ProjectionAccuracy> {
+export async function buildProjectionAccuracy(params: AutoSwgParams, options: { lookbackDays: number; html?: string; localSwgEntries?: LocalSwgEntry[]; historyRecords?: any[]; tuningChangedAt?: string }): Promise<ProjectionAccuracy> {
     const html = options.html || await fetchHtml(params.shareCode);
     const parsedPage = parseCardsCached(html, params.poolName);
     const fc = parsedPage.fcEvents;
@@ -1254,6 +1257,7 @@ export async function buildProjectionAccuracy(params: AutoSwgParams, options: { 
         byGap: [bucket('under 2 days', 0, 2), bucket('2 to 5 days', 2, 5), bucket('5 to 14 days', 5, 15)],
         unchangedMae: undefined as number | undefined,
         skill: undefined as number | undefined,
+        sinceChange: undefined as { since: string; count: number; meanAbsError?: number; unchangedMae?: number; bias?: number } | undefined,
         weighting: {
             current: {
                 weight: typeof params.projectionDamping === 'number' ? params.projectionDamping : 1,
@@ -1290,6 +1294,18 @@ export async function buildProjectionAccuracy(params: AutoSwgParams, options: { 
         summary.unchangedMae = round2(unchanged);
         summary.skill = round2(1 - (summary.meanAbsError as number) / unchanged);
         summary.weighting = { current: summary.weighting.current, best, suggested, maeCurrent: summary.meanAbsError, maeBest: round2(bestMae), maeSuggested: round2(maeAt(suggested)) };
+    }
+
+    if (options.tuningChangedAt && !isNaN(new Date(options.tuningChangedAt).getTime())) {
+        const since = new Date(options.tuningChangedAt).getTime();
+        const recent = rows.filter(r => new Date(r.ts).getTime() >= since);
+        summary.sinceChange = {
+            since: options.tuningChangedAt,
+            count: recent.length,
+            meanAbsError: recent.length ? round2(mean(recent.map(r => Math.abs(r.error)))) : undefined,
+            unchangedMae: recent.length ? round2(mean(recent.map(r => Math.abs(r.previous - r.measured)))) : undefined,
+            bias: recent.length ? round2(mean(recent.map(r => r.error))) : undefined,
+        };
     }
 
     // Targets from the local log of applied recommendations (one row per distinct target).

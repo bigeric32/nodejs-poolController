@@ -1231,7 +1231,7 @@ export class StateRoute {
         projectionDamping: cfg.projectionDamping,
         projectionTaperStartDays: cfg.projectionTaperStartDays,
         projectionTaperEndDays: cfg.projectionTaperEndDays,
-                }, { lookbackDays: days, localSwgEntries: toLocalSwgEntries(readAutoSwgHistory()), historyRecords: readAutoSwgHistory() });
+                }, { lookbackDays: days, localSwgEntries: toLocalSwgEntries(readAutoSwgHistory()), historyRecords: readAutoSwgHistory(), tuningChangedAt: cfg.tuningChangedAt });
                 return res.status(200).send(report);
             }
             catch (err) { next(err); }

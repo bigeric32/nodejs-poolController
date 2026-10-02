@@ -1022,7 +1022,12 @@ export class ConfigRoute {
         });
         app.put('/config/autoSwg', async (req, res, next) => {
             try {
+                // Note when a tuning setting actually changes (saving the same values again doesn't count), so the
+                // accuracy report can show how the new settings do on readings they weren't tuned on.
+                let tuningKeys = ['windowDays', 'daytimeLossSharePct', 'creditChlorineAdditions', 'fcAnomalyTolerancePpm', 'projectionDamping', 'projectionTaperStartDays', 'projectionTaperEndDays'];
+                let before = tuningKeys.map(k => (sys.autoSwg as any)[k]);
                 sys.autoSwg.set(req.body);
+                if (tuningKeys.some((k, i) => (sys.autoSwg as any)[k] !== before[i])) sys.autoSwg.tuningChangedAt = new Date().toISOString();
                 // Re-arm fully-automatic mode's periodic check against the just-saved config,
                 // so enabling it (or changing the interval) takes effect immediately rather
                 // than needing a restart.
