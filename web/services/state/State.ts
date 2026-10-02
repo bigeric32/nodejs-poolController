@@ -543,6 +543,12 @@ function refreshAutoSwgArchiveFromPage(page: PageReadings) {
     }
 }
 
+// The PoolMath archive as the reports use it, alongside what the share page lists (empty until the archive has
+// been pulled for this share code, in which case the reports see the page alone).
+function autoSwgArchiveForReports() {
+    return { fc: archivedFcReadings(), swg: archivedSwgEvents(), cya: archivedCyaReadings(), chlorine: archivedChlorineAdditions() };
+}
+
 // Background PoolMath history sync: pulls up to 18 months of logs from the share link's JSON
 // interface into a local archive (see AutoSwgPoolMathArchive). It is a one-time pull per share
 // code and pool -- it runs only when the archive isn't already for the configured ones (the first
@@ -1207,7 +1213,7 @@ export class StateRoute {
                 let cfg = sys.autoSwg;
                 if (!cfg.shareCode) throw new ServiceParameterError('AutoSwg is not configured: shareCode is required.', 'autoSwg', 'shareCode', cfg.shareCode);
                 let days = parseInt(String(req.query.days), 10);
-                days = isNaN(days) ? 120 : Math.max(14, Math.min(540, days));
+                days = isNaN(days) ? 365 : Math.max(14, Math.min(540, days));
                 // The same inputs a normal calculation uses (see runAutoSwgRecommendation).
                 let { swgStartTime, swgStopTime } = resolveAutoSwgRunWindow(cfg);
                 let sunTimes = autoSwgSunTimes(cfg.timezone);
@@ -1231,7 +1237,7 @@ export class StateRoute {
         projectionDamping: cfg.projectionDamping,
         projectionTaperStartDays: cfg.projectionTaperStartDays,
         projectionTaperEndDays: cfg.projectionTaperEndDays,
-                }, { lookbackDays: days, localSwgEntries: toLocalSwgEntries(readAutoSwgHistory()), historyRecords: readAutoSwgHistory(), tuningChangedAt: cfg.tuningChangedAt });
+                }, { lookbackDays: days, localSwgEntries: toLocalSwgEntries(readAutoSwgHistory()), historyRecords: readAutoSwgHistory(), tuningChangedAt: cfg.tuningChangedAt, archive: autoSwgArchiveForReports() });
                 return res.status(200).send(report);
             }
             catch (err) { next(err); }
@@ -1267,7 +1273,7 @@ export class StateRoute {
         projectionDamping: cfg.projectionDamping,
         projectionTaperStartDays: cfg.projectionTaperStartDays,
         projectionTaperEndDays: cfg.projectionTaperEndDays,
-                }, { lookbackDays: days, localSwgEntries: toLocalSwgEntries(readAutoSwgHistory()) });
+                }, { lookbackDays: days, localSwgEntries: toLocalSwgEntries(readAutoSwgHistory()), archive: autoSwgArchiveForReports() });
                 return res.status(200).send(sweep);
             }
             catch (err) { next(err); }
