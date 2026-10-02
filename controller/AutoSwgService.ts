@@ -1329,6 +1329,7 @@ export interface WhatIfVariant {
     diffLow?: number;                    // 90% bootstrap interval of that change
     diffHigh?: number;
     verdict: 'current' | 'better' | 'worse' | 'no clear difference';
+    settings?: { [setting: string]: number | boolean };   // the AutoSwg settings that make it differ from the current ones (none for e.g. daylight weighting, which is automatic)
 }
 
 export interface WhatIfSweep {
@@ -1396,9 +1397,18 @@ export async function buildWhatIfSweep(params: AutoSwgParams, options: { lookbac
     let seed = 12345; // deterministic bootstrap (mulberry32), so the same data gives the same intervals
     const rand = () => { seed |= 0; seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
     const baseAbs = common.map(k => Math.abs(errors[0].get(k)));
+    // The settings a variant changes, by their config names, so a result can be applied as is. A taper
+    // change always carries both of its days.
+    const SETTABLE = ['windowDays', 'creditChlorineAdditions', 'fcAnomalyTolerancePpm', 'projectionDamping', 'projectionTaperStartDays', 'projectionTaperEndDays'];
+    const settingsOf = (p: AutoSwgParams): { [setting: string]: number | boolean } | undefined => {
+        const diff: { [setting: string]: number | boolean } = {};
+        for (const k of SETTABLE) if ((p as any)[k] !== (params as any)[k] && typeof (p as any)[k] !== 'undefined') diff[k] = (p as any)[k];
+        if (typeof diff.projectionTaperEndDays !== 'undefined' && typeof diff.projectionTaperStartDays === 'undefined') diff.projectionTaperStartDays = typeof p.projectionTaperStartDays === 'number' ? p.projectionTaperStartDays : 3;
+        return Object.keys(diff).length ? diff : undefined;
+    };
     const out: WhatIfVariant[] = variants.map((v, i) => {
         const e = common.map(k => errors[i].get(k));
-        const row: WhatIfVariant = { key: v.key, label: v.label, count: e.length, verdict: 'current' };
+        const row: WhatIfVariant = { key: v.key, label: v.label, count: e.length, verdict: 'current', settings: i > 0 ? settingsOf(v.params) : undefined };
         if (!e.length) return row;
         row.meanAbsError = round2(mean(e.map(Math.abs)));
         row.rmse = round2(Math.sqrt(mean(e.map(x => x * x))));
