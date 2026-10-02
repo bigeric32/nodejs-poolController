@@ -46,6 +46,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 import * as https from 'https';
 import { logger } from '../logger/Logger';
 
+// How old the newest FC reading can be before the result says its projection is mostly
+// extrapolation.
+const STALE_FC_DAYS = 3;
+
 export interface AutoSwgParams {
     shareCode: string;
     poolName?: string;
@@ -88,6 +92,7 @@ export interface AutoSwgResult {
     targetDaysUsed: number;          // days from calculation time until targetDateUsed
     refreshed: boolean;              // true if it stayed on course for params.inFlight rather than starting a new target
     targetWarning?: string;          // set when even 100% can't reach targetFc within the window (the % above is capped at 100)
+    staleFcNote?: string;            // set when the last FC reading is STALE_FC_DAYS or more old
     mostRecentFc?: { value: number; ts: string };
     mostRecentCya?: { value: number; ts: string };
     mostRecentSwg?: { ppmPerDay: number; hrs: number; pct: number; ts: string; source: SwgSource };
@@ -626,6 +631,14 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     const swgGeneratedSinceReading = swgGeneratedSinceLastReading(swgEvents, lastFc.ts, rightNow, swgStart, params.timezone);
     const projectedCurrentFc = lastFc.value - (avgPerDay * elapsedDays) + swgGeneratedSinceReading;
     rationale.push(`Projected current FC: ${projectedCurrentFc.toFixed(2)} ppm (last reading ${lastFc.value} ppm, ${elapsedDays.toFixed(2)} days ago; minus ${(avgPerDay * elapsedDays).toFixed(2)} ppm consumed; plus ${swgGeneratedSinceReading.toFixed(2)} ppm generated).`);
+    // With the last reading this old, the projection is mostly extrapolation from an
+    // average -- worth saying so rather than presenting it with the same confidence as one
+    // anchored to a recent test.
+    let staleFcNote: string | undefined;
+    if (elapsedDays >= STALE_FC_DAYS) {
+        staleFcNote = `The last FC reading is ${elapsedDays.toFixed(1)} days old, so the projected FC (${projectedCurrentFc.toFixed(2)} ppm) is mostly extrapolation from the average consumption -- log a fresh FC test in PoolMath for a more reliable result.`;
+        rationale.push(`NOTE: ${staleFcNote}`);
+    }
 
     // What to aim at. If there's an in-flight target and the projected FC is still within
     // its stray threshold of the configured target, stay on course for it: same FC, same
@@ -700,6 +713,7 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         targetDaysUsed: targetDays,
         refreshed: refreshed,
         targetWarning: targetWarning,
+        staleFcNote: staleFcNote,
         mostRecentFc: { value: lastFc.value, ts: lastFc.ts.toISOString() },
         mostRecentCya: cyaEvents.length ? { value: cyaEvents[cyaEvents.length - 1].value, ts: cyaEvents[cyaEvents.length - 1].ts.toISOString() } : undefined,
         mostRecentSwg: { ppmPerDay: latestSwg.ppmPerDay, hrs: latestSwg.hrs, pct: latestSwg.pct, ts: latestSwg.ts.toISOString(), source: latestSwg.source },

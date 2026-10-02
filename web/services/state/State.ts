@@ -28,7 +28,7 @@ import { config } from "../../../config/Config";
 
 import { ServiceParameterError } from "../../../controller/Errors";
 import { ChlorinatorStateMessage } from "../../../controller/comms/messages/status/ChlorinatorStateMessage";
-import { buildCombinedHistory, computeRecommendation, computeSwgCapacity, minutesToHHMM } from "../../../controller/AutoSwgService";
+import { buildCombinedHistory, computeRecommendation, computeSwgCapacity, formatLocalDateTime, minutesToHHMM } from "../../../controller/AutoSwgService";
 import { appendAutoSwgHistory, readAutoSwgHistory, toLocalSwgEntries } from "../../../controller/AutoSwgHistory";
 
 // 'HH:MM' wall-clock time of `dt` in `timeZone`.
@@ -142,6 +142,7 @@ function clearAutoSwgCalculation() {
     state.autoSwg.details = undefined;
     state.autoSwg.rationale = undefined;
     state.autoSwg.targetWarning = undefined;
+    state.autoSwg.staleFcNote = undefined;
     state.autoSwg.error = undefined;
 }
 
@@ -207,6 +208,7 @@ async function runAutoSwgStep() {
     let completedTargetDate = state.autoSwg.lastAppliedTargetDate;
     state.autoSwg.lastAppliedTargetDate = undefined;
     state.autoSwg.lastAppliedTargetWarning = undefined;
+    state.autoSwg.lastAppliedStaleFcNote = undefined;
     try {
         let win = resolveAutoSwgRunWindow(cfg);
         let capacity: { ppmPerDayAtFull: number; hours: number };
@@ -241,7 +243,9 @@ type AutoSwgCheckMode = 'new' | 'refine' | 'auto';
 // Runs a Check Now-style recommendation against the configured PoolMath page and
 // populates state.autoSwg with the result -- shared by every way of asking for one, and by
 // the fully-automatic mode's periodic check, so they can't drift apart.
-async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNote?: string): Promise<void> {
+// Resolves to a skip message (and changes nothing) when a Refresh has no new FC reading to
+// work from, otherwise undefined.
+async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNote?: string): Promise<string | undefined> {
     let cfg = sys.autoSwg;
     if (!cfg.shareCode) throw new ServiceParameterError('AutoSwg is not configured: shareCode is required.', 'autoSwg', 'shareCode', cfg.shareCode);
     // The in-flight target (the last apply's FC and deadline), if there's one still ahead.
@@ -276,6 +280,13 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
         targetDaysBelow: cfg.targetDaysBelow,
         inFlight: inFlight,
     }, undefined, toLocalSwgEntries(readAutoSwgHistory()));
+    // A Refresh works from fresh PoolMath data; if the newest FC reading is the very one the
+    // last apply was already based on, there is nothing new and re-running would only restate
+    // the same number (or nudge it with extrapolation). Leave everything as it is. Check Now
+    // ('new') always runs -- it's the explicit "start over" and also picks up config changes.
+    if (mode !== 'new' && inFlight && state.autoSwg.lastAppliedFcAt && result.mostRecentFc && result.mostRecentFc.ts === state.autoSwg.lastAppliedFcAt) {
+        return `No new FC reading in PoolMath since ${formatLocalDateTime(new Date(result.mostRecentFc.ts), cfg.timezone)}; nothing to refresh.`;
+    }
     if (extraRationaleNote) result.rationale.unshift(extraRationaleNote);
     if (scheduleNote) result.rationale.unshift(scheduleNote);
     state.autoSwg.lastCheckedAt = new Date().toISOString();
@@ -287,6 +298,7 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
     state.autoSwg.pendingTargetFc = result.targetFcUsed;
     state.autoSwg.pendingTargetDate = result.targetDateUsed;
     state.autoSwg.targetWarning = result.targetWarning;
+    state.autoSwg.staleFcNote = result.staleFcNote;
     state.autoSwg.currentPct = schlor ? schlor.targetOutput : result.currentPct;
     // recommendedPct is what Apply sends to the chlorinator, so it needs to be
     // the duty cycle that actually reaches targetFc within the target window -- not
@@ -315,6 +327,7 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
     state.autoSwg.error = undefined;
     state.autoSwg.pending = true;
     state.autoSwg.emitEquipmentChange();
+    return undefined;
 }
 
 // Applies the currently pending AutoSwg recommendation to the chlorinator -- shared by
@@ -349,6 +362,11 @@ async function applyAutoSwgRecommendation(isAutoApply: boolean, pctOverride?: nu
     state.autoSwg.lastAppliedTargetFc = typeof state.autoSwg.pendingTargetFc === 'number' ? state.autoSwg.pendingTargetFc : sys.autoSwg.targetFc;
     state.autoSwg.lastAppliedTargetDate = state.autoSwg.pendingTargetDate;
     state.autoSwg.lastAppliedTargetWarning = state.autoSwg.targetWarning;
+    state.autoSwg.lastAppliedStaleFcNote = state.autoSwg.staleFcNote;
+    // Which FC reading this apply was based on, so a later Refresh can tell whether
+    // PoolMath has anything newer (see the skip in runAutoSwgRecommendation).
+    let appliedFc = state.autoSwg.details ? state.autoSwg.details.mostRecentFc : undefined;
+    state.autoSwg.lastAppliedFcAt = appliedFc ? appliedFc.ts : undefined;
     if (isAutoApply) {
         let threshold = sys.autoSwg.autoApplyWarnThresholdPct;
         let movedBy = typeof previousAppliedPct === 'number' ? Math.abs(pct - previousAppliedPct) : undefined;
@@ -430,8 +448,15 @@ export function armAutoSwgAutoCheck(minDelayMs: number = 0) {
 // it immediately with no further confirmation if AutoSwg.autoApplyEnabled is on -- this is
 // what lets auto-apply be used standalone (manual-trigger only), independent of whether the
 // periodic autoCheckEnabled timer is running at all.
-async function applyIfAutoApplyEnabled(): Promise<void> {
-    if (sys.autoSwg.autoApplyEnabled) await applyAutoSwgRecommendation(true);
+async function applyIfAutoApplyEnabled(skipped?: string): Promise<void> {
+    if (!skipped && sys.autoSwg.autoApplyEnabled) await applyAutoSwgRecommendation(true);
+}
+
+// The calculation state plus, when a Refresh was skipped for want of a new FC reading,
+// that message (response-only -- nothing about a skip is persisted).
+function autoSwgResponse(skipped?: string) {
+    let data = state.autoSwg.get(true);
+    return skipped ? Object.assign({}, data, { skipped: skipped }) : data;
 }
 
 async function runAutoSwgAutoCheck() {
@@ -442,8 +467,9 @@ async function runAutoSwgAutoCheck() {
         // Same decision as the "Refresh and Apply" button: stay on course for an in-flight
         // target unless the projected FC has strayed past the new-target threshold (or
         // there's no in-flight target left), in which case start a new one.
-        await runAutoSwgRecommendation('auto', 'Automatic check.');
-        await applyAutoSwgRecommendation(true);
+        let skipped = await runAutoSwgRecommendation('auto', 'Automatic check.');
+        if (skipped) logger.info(`AutoSwg: automatic check skipped. ${skipped}`);
+        else await applyAutoSwgRecommendation(true);
     }
     catch (err) { logger.error(`AutoSwg: automatic check/apply failed: ${err.message}`); }
     finally { armAutoSwgAutoCheck(); }
@@ -470,6 +496,7 @@ export class StateRoute {
             // no original deadline left to refine toward.
             state.autoSwg.lastAppliedTargetDate = undefined;
             state.autoSwg.lastAppliedTargetWarning = undefined;
+            state.autoSwg.lastAppliedStaleFcNote = undefined;
             // A human just acted directly on the chlorinator -- nothing unreviewed left to warn about.
             state.autoSwg.lastAutoApplyLargeChange = false;
             state.autoSwg.emitEquipmentChange();
@@ -1005,9 +1032,9 @@ export class StateRoute {
         });
         app.post('/state/autoSwg/recommend', async (req, res, next) => {
             try {
-                await runAutoSwgRecommendation('new');
-                await applyIfAutoApplyEnabled();
-                return res.status(200).send(state.autoSwg.get(true));
+                let skipped = await runAutoSwgRecommendation('new');
+                await applyIfAutoApplyEnabled(skipped);
+                return res.status(200).send(autoSwgResponse(skipped));
             }
             catch (err) {
                 state.autoSwg.error = err.message;
@@ -1024,9 +1051,9 @@ export class StateRoute {
         // Auto-Apply on, /refreshAndApply below decides between this and a new target).
         app.post('/state/autoSwg/refine', async (req, res, next) => {
             try {
-                await runAutoSwgRecommendation('refine');
-                await applyIfAutoApplyEnabled();
-                return res.status(200).send(state.autoSwg.get(true));
+                let skipped = await runAutoSwgRecommendation('refine');
+                await applyIfAutoApplyEnabled(skipped);
+                return res.status(200).send(autoSwgResponse(skipped));
             }
             catch (err) {
                 state.autoSwg.error = err.message;
@@ -1041,9 +1068,9 @@ export class StateRoute {
         // deadline) the way Check Now does -- and applies the result either way.
         app.post('/state/autoSwg/refreshAndApply', async (req, res, next) => {
             try {
-                await runAutoSwgRecommendation('auto');
-                await applyIfAutoApplyEnabled();
-                return res.status(200).send(state.autoSwg.get(true));
+                let skipped = await runAutoSwgRecommendation('auto');
+                await applyIfAutoApplyEnabled(skipped);
+                return res.status(200).send(autoSwgResponse(skipped));
             }
             catch (err) {
                 state.autoSwg.error = err.message;
@@ -1164,4 +1191,4 @@ export class StateRoute {
             res.status(200).send(state.getState(req.params.section));
         });
     }
-}
+}
