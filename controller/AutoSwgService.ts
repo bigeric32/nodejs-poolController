@@ -68,6 +68,17 @@ function hashString(s: string): string {
     return (h >>> 0).toString(36);
 }
 
+// The weight on the modelled FC change when the last reading is `days` old: `base` up to `start` days, falling
+// linearly to 0 at `end` days (end <= 0, or not past start, means no taper). The model is useful between
+// nearby tests and hurts across long gaps, where weather and anything unlogged have had time to matter.
+export function projectionWeight(base: number, days: number, start: number, end: number): number {
+    const b = Math.max(0, Math.min(1, base));
+    if (!(end > 0) || !(end > start)) return b;
+    if (days <= start) return b;
+    if (days >= end) return 0;
+    return b * (end - days) / (end - start);
+}
+
 export interface AutoSwgParams {
     shareCode: string;
     poolName?: string;
@@ -110,6 +121,10 @@ export interface AutoSwgParams {
     // buildProjectionAccuracy, which suggests one from the history). Liquid chlorine logged since the
     // reading is always added in full -- it is known, not modelled.
     projectionDamping?: number;
+    // Gap-aware taper of that weight: full weight until the last reading is projectionTaperStartDays old
+    // (default 3), then falling to 0 at projectionTaperEndDays (default 0 = no taper).
+    projectionTaperStartDays?: number;
+    projectionTaperEndDays?: number;
     sunriseTime?: string;
     sunsetTime?: string;
     // Share (percent) of a day's FC consumption that happens in daylight. 0 or omitted =
@@ -915,10 +930,12 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     const swgGeneratedSinceReading = swgGeneratedSinceLastReading(swgEvents, lastFc.ts, rightNow, swgStart, params.timezone);
     const elapsedEq = dayEquivalents(lastFc.ts, rightNow);
     const addedSinceReading = addedBetween(lastFc.ts, rightNow);
-    const damping = typeof params.projectionDamping === 'number' ? Math.max(0, Math.min(1, params.projectionDamping)) : 1;
+    const baseDamping = typeof params.projectionDamping === 'number' ? Math.max(0, Math.min(1, params.projectionDamping)) : 1;
+    const damping = projectionWeight(baseDamping, elapsedDays, typeof params.projectionTaperStartDays === 'number' ? params.projectionTaperStartDays : 3,
+        typeof params.projectionTaperEndDays === 'number' ? params.projectionTaperEndDays : 0);
     const modelChange = swgGeneratedSinceReading - (avgPerDay * elapsedEq);
     const projectedCurrentFc = lastFc.value + damping * modelChange + addedSinceReading;
-    rationale.push(`Projected current FC: ${projectedCurrentFc.toFixed(2)} ppm (last reading ${lastFc.value} ppm, ${elapsedDays.toFixed(2)} days ago${daylight ? ` = ${elapsedEq.toFixed(2)} days of consumption, daylight-weighted` : ''}; minus ${(avgPerDay * elapsedEq).toFixed(2)} ppm consumed; plus ${swgGeneratedSinceReading.toFixed(2)} ppm generated${addedSinceReading > 0 ? `; plus ${addedSinceReading.toFixed(2)} ppm of liquid chlorine added` : ''}${damping < 1 ? `; only ${Math.round(damping * 100)}% of the modelled change is applied (Projection Weighting)` : ''}).`);
+    rationale.push(`Projected current FC: ${projectedCurrentFc.toFixed(2)} ppm (last reading ${lastFc.value} ppm, ${elapsedDays.toFixed(2)} days ago${daylight ? ` = ${elapsedEq.toFixed(2)} days of consumption, daylight-weighted` : ''}; minus ${(avgPerDay * elapsedEq).toFixed(2)} ppm consumed; plus ${swgGeneratedSinceReading.toFixed(2)} ppm generated${addedSinceReading > 0 ? `; plus ${addedSinceReading.toFixed(2)} ppm of liquid chlorine added` : ''}${damping < 1 ? `; only ${Math.round(damping * 100)}% of the modelled change is applied (Projection Weighting${damping < baseDamping ? `, reduced because the last reading is ${elapsedDays.toFixed(1)} days old` : ''})` : ''}).`);
     // With the last reading this old, the projection is mostly extrapolation from an
     // average -- worth saying so rather than presenting it with the same confidence as one
     // anchored to a recent test.
@@ -1174,13 +1191,16 @@ export interface TargetTrackingRow {
     difference?: number;               // nearest.value - targetFc
 }
 
+// A projection weighting and its gap taper (taperEnd 0 = no taper).
+export interface WeightingChoice { weight: number; taperStart: number; taperEnd: number; }
+
 export interface ProjectionAccuracy {
     rows: ProjectionAccuracyRow[];     // oldest first
     summary: { count: number; meanAbsError?: number; rmse?: number; bias?: number; within1?: number; within2?: number;
         byGap: { label: string; count: number; meanAbsError?: number }[];
         unchangedMae?: number;         // error of the no-model baseline "FC is what it was at the last reading"
         skill?: number;                // 1 - meanAbsError / unchangedMae (positive = better than the baseline)
-        weighting: { current: number; best?: number; suggested?: number; maeCurrent?: number; maeBest?: number; maeSuggested?: number } };
+        weighting: { current: WeightingChoice; best?: WeightingChoice; suggested?: WeightingChoice; maeCurrent?: number; maeBest?: number; maeSuggested?: number } };
     targets: TargetTrackingRow[];      // oldest first
     skipped: number;                   // readings that couldn't be scored (long gaps, too little history)
 }
@@ -1234,16 +1254,38 @@ export async function buildProjectionAccuracy(params: AutoSwgParams, options: { 
         byGap: [bucket('under 2 days', 0, 2), bucket('2 to 5 days', 2, 5), bucket('5 to 14 days', 5, 15)],
         unchangedMae: undefined as number | undefined,
         skill: undefined as number | undefined,
-        weighting: { current: typeof params.projectionDamping === 'number' ? params.projectionDamping : 1 } as { current: number; best?: number; suggested?: number; maeCurrent?: number; maeBest?: number; maeSuggested?: number },
+        weighting: {
+            current: {
+                weight: typeof params.projectionDamping === 'number' ? params.projectionDamping : 1,
+                taperStart: typeof params.projectionTaperStartDays === 'number' ? params.projectionTaperStartDays : 3,
+                taperEnd: typeof params.projectionTaperEndDays === 'number' ? params.projectionTaperEndDays : 0,
+            },
+        } as { current: WeightingChoice; best?: WeightingChoice; suggested?: WeightingChoice; maeCurrent?: number; maeBest?: number; maeSuggested?: number },
     };
     if (rows.length) {
         // What would each weighting of the modelled change have scored on these same readings? The suggestion
         // shrinks the best one toward 0.5 until there are plenty of readings, since a few dozen is thin.
-        const maeAt = (lam: number) => mean(rows.map(r => Math.abs(r.previous + lam * r.modelChange + r.added - r.measured))) as number;
-        let best = 0, bestMae = Infinity;
-        for (let i = 0; i <= 20; i++) { const m = maeAt(i / 20); if (m < bestMae) { bestMae = m; best = i / 20; } }
+        // The taper (weight falling to zero for long gaps) is chosen from a few candidates, and only when it
+        // beats no taper by a clear margin.
+        const maeAt = (c: WeightingChoice) => mean(rows.map(r => Math.abs(r.previous + projectionWeight(c.weight, r.days, c.taperStart, c.taperEnd) * r.modelChange + r.added - r.measured))) as number;
+        const tapers: [number, number][] = [[3, 0], [3, 8], [4, 10], [2, 6], [5, 12]];
+        let best: WeightingChoice = { weight: 0, taperStart: 3, taperEnd: 0 }, bestMae = Infinity;
+        for (let i = 0; i <= 20; i++) {
+            for (const [ts, te] of tapers) {
+                const c = { weight: i / 20, taperStart: ts, taperEnd: te };
+                const m = maeAt(c);
+                if (m < bestMae - 1e-9) { bestMae = m; best = c; }
+            }
+        }
         const w = rows.length / (rows.length + 30);
-        const suggested = Math.round((w * best + (1 - w) * 0.5) * 20) / 20;
+        const weight = Math.round((w * best.weight + (1 - w) * 0.5) * 20) / 20;
+        let suggested: WeightingChoice = { weight, taperStart: 3, taperEnd: 0 };
+        const noTaper = maeAt(suggested);
+        for (const [ts, te] of tapers.slice(1)) {
+            const c = { weight, taperStart: ts, taperEnd: te };
+            if (maeAt(c) < maeAt(suggested) - 1e-9) suggested = c;
+        }
+        if (maeAt(suggested) > noTaper * 0.97) suggested = { weight, taperStart: 3, taperEnd: 0 }; // not clearly better: no taper
         const unchanged = mean(rows.map(r => Math.abs(r.previous - r.measured))) as number;
         summary.unchangedMae = round2(unchanged);
         summary.skill = round2(1 - (summary.meanAbsError as number) / unchanged);
@@ -1317,6 +1359,11 @@ export async function buildWhatIfSweep(params: AutoSwgParams, options: { lookbac
     add('creditToggle', params.creditChlorineAdditions !== false ? 'Liquid chlorine credit off' : 'Liquid chlorine credit on', Object.assign({}, params, { creditChlorineAdditions: params.creditChlorineAdditions === false }));
     const curDamp = typeof params.projectionDamping === 'number' ? params.projectionDamping : 1;
     for (const d of [0, 0.25, 0.5, 0.75, 1]) if (d !== curDamp) add(`damp${d}`, `Projection weighting ${Math.round(d * 100)}%`, Object.assign({}, params, { projectionDamping: d }));
+    // Gap taper: the weight falls to zero as the last reading gets older (with the weighting as set, and at 50%).
+    for (const [ts, te] of [[3, 8], [4, 10], [2, 6]]) {
+        add(`taper${ts}_${te}`, `Taper off ${ts} to ${te} days`, Object.assign({}, params, { projectionTaperStartDays: ts, projectionTaperEndDays: te }));
+        add(`taper${ts}_${te}_50`, `Weighting 50% + taper ${ts} to ${te} days`, Object.assign({}, params, { projectionDamping: 0.5, projectionTaperStartDays: ts, projectionTaperEndDays: te }));
+    }
     const curTol = typeof params.fcAnomalyTolerancePpm === 'number' ? params.fcAnomalyTolerancePpm : ANOMALY_TOLERANCE_PPM;
     for (const t of [0, 1, 3]) if (t !== curTol) add(`tol${t}`, t === 0 ? 'FC anomaly check off' : `FC anomaly tolerance ${t} ppm`, Object.assign({}, params, { fcAnomalyTolerancePpm: t }));
 

@@ -2452,6 +2452,10 @@ export class AutoSwg extends EqItem {
         // How much of the modelled FC change since the last reading to apply when projecting the current FC:
         // 1 = all of it (no damping), 0 = start from the last reading unchanged.
         if (typeof this.data.projectionDamping === 'undefined') this.data.projectionDamping = 1;
+        // Gap-aware taper of that weight: full weight until the last reading is this many days old, then
+        // falling to 0 at the end (days). End 0 = no taper.
+        if (typeof this.data.projectionTaperStartDays === 'undefined') this.data.projectionTaperStartDays = 3;
+        if (typeof this.data.projectionTaperEndDays === 'undefined') this.data.projectionTaperEndDays = 0;
     }
     public get enabled(): boolean { return this.data.enabled; }
     public set enabled(val: boolean) { this.setDataVal('enabled', val); }
@@ -2491,6 +2495,10 @@ export class AutoSwg extends EqItem {
     public set targetFc(val: number) { this.setDataVal('targetFc', val); }
     public get autoCheckStartTime(): string { return this.data.autoCheckStartTime; }
     public set autoCheckStartTime(val: string) { this.setDataVal('autoCheckStartTime', val); }
+    public get projectionTaperStartDays(): number { return this.data.projectionTaperStartDays; }
+    public set projectionTaperStartDays(val: number) { this.setDataVal('projectionTaperStartDays', val); }
+    public get projectionTaperEndDays(): number { return this.data.projectionTaperEndDays; }
+    public set projectionTaperEndDays(val: number) { this.setDataVal('projectionTaperEndDays', val); }
     public get projectionDamping(): number { return this.data.projectionDamping; }
     public set projectionDamping(val: number) { this.setDataVal('projectionDamping', val); }
     public get fcAnomalyTolerancePpm(): number { return this.data.fcAnomalyTolerancePpm; }
