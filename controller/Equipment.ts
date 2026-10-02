@@ -2407,7 +2407,11 @@ export class AutoSwg extends EqItem {
         if (typeof this.data.timezone === 'undefined') this.data.timezone = 'America/New_York';
         if (typeof this.data.windowDays === 'undefined') this.data.windowDays = 14;
         if (typeof this.data.targetFc === 'undefined') this.data.targetFc = 9.0;
-        if (typeof this.data.targetDays === 'undefined') this.data.targetDays = 3.0;
+        // Days to take reaching targetFc, depending on which side of it the projected FC
+        // is on: coming down from above is the slow, gentle direction, building back up
+        // from below is the one to hurry. (Replaces the single targetDays this used to be.)
+        if (typeof this.data.targetDaysAbove === 'undefined') this.data.targetDaysAbove = 3;
+        if (typeof this.data.targetDaysBelow === 'undefined') this.data.targetDaysBelow = 1;
         if (typeof this.data.autoStepEnabled === 'undefined') this.data.autoStepEnabled = false;
         // When true, a recommendation gets applied with no manual review -- whenever one is
         // produced, whether that's a manual Check Now/Refresh & Adjust click, or (if
@@ -2462,11 +2466,13 @@ export class AutoSwg extends EqItem {
     public set windowDays(val: number) { this.setDataVal('windowDays', val); }
     public get targetFc(): number { return this.data.targetFc; }
     public set targetFc(val: number) { this.setDataVal('targetFc', val); }
-    public get targetDays(): number { return this.data.targetDays; }
-    public set targetDays(val: number) { this.setDataVal('targetDays', val); }
+    public get targetDaysAbove(): number { return this.data.targetDaysAbove; }
+    public set targetDaysAbove(val: number) { this.setDataVal('targetDaysAbove', val); }
+    public get targetDaysBelow(): number { return this.data.targetDaysBelow; }
+    public set targetDaysBelow(val: number) { this.setDataVal('targetDaysBelow', val); }
     // When true, applying a recommendation that differs from the maintenance duty cycle
     // (catching up toward targetFc, or backing off toward it from above) schedules an
-    // automatic step to the maintenance % after targetDays, so the applied % doesn't keep
+    // automatic step to the maintenance % once the target period ends, so the applied % doesn't keep
     // pushing FC past targetFc indefinitely.
     public get autoStepEnabled(): boolean { return this.data.autoStepEnabled; }
     public set autoStepEnabled(val: boolean) { this.setDataVal('autoStepEnabled', val); }

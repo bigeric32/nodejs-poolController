@@ -146,7 +146,7 @@ function clearAutoSwgCalculation() {
 
 // Automatic step: after applying a % that differs from maintenance (catching up toward
 // targetFc from below, or backing off toward it from above), move to the maintenance %
-// once targetDays have passed -- the direction depends on which side of maintenance the
+// once the target period has passed -- the direction depends on which side of maintenance the
 // applied % was on. The due time and % live in state.autoSwg (persisted); this timer is
 // re-armed from them at startup.
 const AUTO_SWG_STEP_MIN_DELAY_MS = 60 * 1000;
@@ -169,7 +169,7 @@ function armAutoSwgStep(minDelayMs: number = 0) {
     autoSwgStepTimer = undefined;
     let at = state.autoSwg.stepAt ? new Date(state.autoSwg.stepAt).getTime() : NaN;
     if (isNaN(at) || typeof state.autoSwg.stepPct !== 'number') return;
-    // Wake at least every couple of days so a long targetDays never overflows setTimeout.
+    // Wake at least every couple of days so a long target window never overflows setTimeout.
     let delay = Math.min(Math.max(at - Date.now(), minDelayMs), AUTO_SWG_TIMER_MAX_MS);
     autoSwgStepTimer = setTimeout(() => { runAutoSwgStep().catch(err => logger.error(`AutoSwg: step failed: ${err.message}`)); }, delay);
 }
@@ -193,16 +193,17 @@ async function runAutoSwgStep() {
         armAutoSwgStep(AUTO_SWG_STEP_RETRY_MS);
         return;
     }
-    logger.info(`AutoSwg: stepped SWG ${direction} to the maintenance ${pct}% after the ${cfg.targetDays}-day target period.`);
+    logger.info(`AutoSwg: stepped SWG ${direction} to the maintenance ${pct}% now that the target period has ended.`);
     state.autoSwg.lastAppliedAt = new Date().toISOString();
     state.autoSwg.lastAppliedPct = pct;
     state.autoSwg.currentPct = pct;
     // This step has no calculation of its own (it's just moving to the already-known
     // maintenance %), so give it its own one-line explanation rather than leaving whatever
     // rationale happened to be sitting there from an unrelated, possibly much older check.
-    state.autoSwg.lastAppliedRationale = [`Automatically stepped ${direction} to the maintenance ${pct}% after the ${cfg.targetDays}-day target period (from ${previous}%).`];
+    state.autoSwg.lastAppliedRationale = [`Automatically stepped ${direction} to the maintenance ${pct}% now that the target period ended (from ${previous}%).`];
     // The original glide-to-target completed (that's what this step is) -- there's no
     // longer an in-flight deadline to refine toward, just steady maintenance.
+    let completedTargetDate = state.autoSwg.lastAppliedTargetDate;
     state.autoSwg.lastAppliedTargetDate = undefined;
     try {
         let win = resolveAutoSwgRunWindow(cfg);
@@ -218,7 +219,7 @@ async function runAutoSwgStep() {
             ppmPerDay: capacity && isFinite(capacity.ppmPerDayAtFull) ? Math.round(capacity.ppmPerDayAtFull * pct) / 100 : undefined,
             hrs: capacity ? capacity.hours : undefined,
             inputs: { gallons: cfg.gallons, swgLbsPerDay: cfg.swgLbsPerDay, swgStartTime: win.swgStartTime, swgStopTime: win.swgStopTime, timezone: cfg.timezone, runWindowNote: win.scheduleNote },
-            outputs: { autoStep: true, direction: direction, targetFc: cfg.targetFc, targetDays: cfg.targetDays },
+            outputs: { autoStep: true, direction: direction, targetFc: state.autoSwg.lastAppliedTargetFc, targetDate: completedTargetDate },
         });
     }
     catch (err) { logger.error(`AutoSwg: stepped ${direction} to ${pct}% but could not write the history log: ${err.message}`); }
@@ -227,11 +228,13 @@ async function runAutoSwgStep() {
 
 // Runs a Check Now-style recommendation against the configured PoolMath page and
 // populates state.autoSwg with the result -- shared by /recommend (today's calc,
-// using config's targetFc/targetDays) and /refine (re-aiming at an already-applied
-// recommendation's original target date/FC with fresh PoolMath data), and intended
-// to also back a future fully-automatic refresh/apply cycle without duplicating this
-// logic a third time.
-async function runAutoSwgRecommendation(targetFc: number, targetDays: number, extraRationaleNote?: string): Promise<void> {
+// using config's targetFc and its above/below days pair) and /refine (re-aiming at an
+// already-applied recommendation's original target date/FC with fresh PoolMath data),
+// and intended to also back a future fully-automatic refresh/apply cycle without
+// duplicating this logic a third time. `days` is a single fixed window (a refine: the
+// days remaining until a deadline that's already been committed to), or the
+// above/below pair to choose between once the projected FC is known.
+async function runAutoSwgRecommendation(targetFc: number, days: number | { above: number; below: number }, extraRationaleNote?: string): Promise<void> {
     let cfg = sys.autoSwg;
     if (!cfg.shareCode) throw new ServiceParameterError('AutoSwg is not configured: shareCode is required.', 'autoSwg', 'shareCode', cfg.shareCode);
     let { swgStartTime, swgStopTime, scheduleNote } = resolveAutoSwgRunWindow(cfg);
@@ -247,22 +250,22 @@ async function runAutoSwgRecommendation(targetFc: number, targetDays: number, ex
         timezone: cfg.timezone,
         windowDays: cfg.windowDays,
         targetFc: targetFc,
-        targetDays: targetDays,
+        ...(typeof days === 'number' ? { targetDays: days } : { targetDaysAbove: days.above, targetDaysBelow: days.below }),
     }, undefined, toLocalSwgEntries(readAutoSwgHistory()));
     if (extraRationaleNote) result.rationale.unshift(extraRationaleNote);
     if (scheduleNote) result.rationale.unshift(scheduleNote);
     state.autoSwg.lastCheckedAt = new Date().toISOString();
     // What this specific calculation was aiming for -- a fresh Check Now passes today's
-    // targetFc/targetDays (a new target date, computed right now); a refine passes
-    // lastAppliedTargetFc and the days remaining until lastAppliedTargetDate (which
-    // reconstructs that SAME original date here, not a new one). Either way,
-    // applyAutoSwgRecommendation() uses exactly this pair rather than re-deriving
-    // something from live config at apply time.
+    // targetFc and the above/below window that applied (a new target date, computed right
+    // now); a refine passes lastAppliedTargetFc and the days remaining until
+    // lastAppliedTargetDate (which reconstructs that SAME original date here, not a new
+    // one). Either way, applyAutoSwgRecommendation() uses exactly this pair rather than
+    // re-deriving something from live config at apply time.
     state.autoSwg.pendingTargetFc = targetFc;
-    state.autoSwg.pendingTargetDate = new Date(Date.now() + targetDays * 86400000).toISOString();
+    state.autoSwg.pendingTargetDate = new Date(Date.now() + result.targetDaysUsed * 86400000).toISOString();
     state.autoSwg.currentPct = schlor ? schlor.targetOutput : result.currentPct;
     // recommendedPct is what Apply sends to the chlorinator, so it needs to be
-    // the duty cycle that actually reaches targetFc within targetDays -- not
+    // the duty cycle that actually reaches targetFc within the target window -- not
     // just the one that treads water at the current level. Plain steady-state
     // "match demand" is kept as maintenancePct for context only (it's also
     // still spelled out in the rationale text below).
@@ -314,12 +317,13 @@ async function applyAutoSwgRecommendation(isAutoApply: boolean, pctOverride?: nu
     // Use whatever target this specific calculation actually aimed for (set by
     // runAutoSwgRecommendation) rather than re-deriving one from live config here -- a
     // refine's whole point is to preserve the ORIGINAL target FC/date, and re-deriving from
-    // today's live config would silently reset it back to "targetDays from right now" on
-    // every apply, undermining that. Falls back to live config only if something applied
-    // without ever going through runAutoSwgRecommendation (shouldn't normally happen, since
-    // /apply requires state.autoSwg.pending, which only that function sets).
+    // today's live config would silently reset it back to "the target window from right now"
+    // on every apply, undermining that. If something applied without ever going through
+    // runAutoSwgRecommendation (shouldn't normally happen, since /apply requires
+    // state.autoSwg.pending, which only that function sets) there's no date to record, and
+    // none is invented -- so no refine is offered and no step is scheduled off it.
     state.autoSwg.lastAppliedTargetFc = typeof state.autoSwg.pendingTargetFc === 'number' ? state.autoSwg.pendingTargetFc : sys.autoSwg.targetFc;
-    state.autoSwg.lastAppliedTargetDate = state.autoSwg.pendingTargetDate || new Date(Date.now() + sys.autoSwg.targetDays * 86400000).toISOString();
+    state.autoSwg.lastAppliedTargetDate = state.autoSwg.pendingTargetDate;
     if (isAutoApply) {
         let threshold = sys.autoSwg.autoApplyWarnThresholdPct;
         let movedBy = typeof previousAppliedPct === 'number' ? Math.abs(pct - previousAppliedPct) : undefined;
@@ -356,9 +360,9 @@ async function applyAutoSwgRecommendation(isAutoApply: boolean, pctOverride?: nu
     // period elapses -- runAutoSwgStep() figures out the direction when it runs.
     // The step should fire at exactly the target date this apply is aiming for -- reuse
     // lastAppliedTargetDate (just set above, either preserved from a refine or freshly
-    // computed from live config) rather than independently recomputing "targetDays from
-    // right now" here, which would silently restart the countdown using whatever
-    // targetDays happens to be configured NOW -- e.g. if it was edited in Settings after
+    // computed from live config) rather than independently recomputing "the target window
+    // from right now" here, which would silently restart the countdown using whatever
+    // days happen to be configured NOW -- e.g. if they were edited in Settings after
     // the original apply/refine chain started.
     let maintenancePct = state.autoSwg.maintenancePct;
     let stepAtMs = state.autoSwg.lastAppliedTargetDate ? new Date(state.autoSwg.lastAppliedTargetDate).getTime() : NaN;
@@ -421,7 +425,7 @@ async function runAutoSwgAutoCheck() {
             await runAutoSwgRecommendation(targetFc, remainingDays, note);
         }
         else {
-            await runAutoSwgRecommendation(cfg.targetFc, cfg.targetDays, 'Automatic check: starting a fresh calculation.');
+            await runAutoSwgRecommendation(cfg.targetFc, { above: cfg.targetDaysAbove, below: cfg.targetDaysBelow }, 'Automatic check: starting a fresh calculation.');
         }
         await applyAutoSwgRecommendation(true);
     }
@@ -985,7 +989,7 @@ export class StateRoute {
         app.post('/state/autoSwg/recommend', async (req, res, next) => {
             try {
                 let cfg = sys.autoSwg;
-                await runAutoSwgRecommendation(cfg.targetFc, cfg.targetDays);
+                await runAutoSwgRecommendation(cfg.targetFc, { above: cfg.targetDaysAbove, below: cfg.targetDaysBelow });
                 await applyIfAutoApplyEnabled();
                 return res.status(200).send(state.autoSwg.get(true));
             }
@@ -997,7 +1001,7 @@ export class StateRoute {
             }
         });
         // Re-runs the calculation against the SAME target FC/date an already-applied
-        // recommendation committed to (not today's config targetDays, which would just
+        // recommendation committed to (not today's configured target days, which would just
         // restart the countdown), using fresh PoolMath data -- lets a glide-to-target
         // already in progress be corrected mid-flight instead of waiting out a stale
         // estimate until the original deadline arrives. Still only produces a preview;
@@ -1007,6 +1011,10 @@ export class StateRoute {
             try {
                 if (!state.autoSwg.lastAppliedTargetDate) throw new ServiceParameterError('There is no in-flight AutoSwg target to refine toward -- apply a recommendation first.', 'autoSwg', 'lastAppliedTargetDate', state.autoSwg.lastAppliedTargetDate);
                 let targetDate = new Date(state.autoSwg.lastAppliedTargetDate);
+                // With no pending step to clear it (auto-step off), a deadline can pass and
+                // linger -- there's nothing left to re-aim at, and a non-positive window would
+                // quietly degrade to the maintenance % rather than say so.
+                if (isNaN(targetDate.getTime()) || targetDate.getTime() <= Date.now()) throw new ServiceParameterError('The target date of the last AutoSwg apply has already passed, so there is nothing left to refine toward -- run Check Now to start a new target.', 'autoSwg', 'lastAppliedTargetDate', state.autoSwg.lastAppliedTargetDate);
                 let targetFc = state.autoSwg.lastAppliedTargetFc;
                 let remainingDays = (targetDate.getTime() - Date.now()) / 86400000;
                 let note = `Refined against the original target of ${targetFc} ppm by ${formatLocalDateTime(targetDate, sys.autoSwg.timezone)} ${sys.autoSwg.timezone} (same deadline as the last apply, recalculated with fresh PoolMath data).`;

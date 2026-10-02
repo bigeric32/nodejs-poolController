@@ -56,7 +56,14 @@ export interface AutoSwgParams {
     timezone: string;     // IANA zone name, e.g. 'America/New_York'
     windowDays: number;   // running-average window, e.g. 14
     targetFc: number;
-    targetDays: number;
+    // How many days to take reaching targetFc. Either a single fixed window (targetDays --
+    // e.g. a refine re-aiming at a deadline that's already been committed to), or a pair
+    // (targetDaysAbove/targetDaysBelow) chosen between by which side of targetFc the
+    // projected current FC turns out to be on. When both of the pair are given they take
+    // precedence over targetDays.
+    targetDays?: number;
+    targetDaysAbove?: number;
+    targetDaysBelow?: number;
 }
 
 export interface AutoSwgResult {
@@ -69,6 +76,7 @@ export interface AutoSwgResult {
     avgWindowEnd: string;            // ISO end of that window (calculation time)
     avgWindowExtended: boolean;      // true if the window was extended back to include MIN_FC_READINGS_IN_WINDOW readings
     projectedCurrentFc: number;
+    targetDaysUsed: number;          // the window recommendedPctForTarget was actually computed over (see AutoSwgParams)
     mostRecentFc?: { value: number; ts: string };
     mostRecentCya?: { value: number; ts: string };
     mostRecentSwg?: { ppmPerDay: number; hrs: number; pct: number; ts: string; source: SwgSource };
@@ -606,10 +614,23 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     const projectedCurrentFc = lastFc.value - (avgPerDay * elapsedDays) + swgGeneratedSinceReading;
     rationale.push(`Projected current FC: ${projectedCurrentFc.toFixed(2)} ppm (last reading ${lastFc.value} ppm, ${elapsedDays.toFixed(2)} days ago; minus ${(avgPerDay * elapsedDays).toFixed(2)} ppm consumed; plus ${swgGeneratedSinceReading.toFixed(2)} ppm generated).`);
 
+    // Which window to take reaching targetFc: a single fixed one if the caller gave
+    // that, otherwise the above/below pair, picked by which side of targetFc the
+    // projected FC is on -- coming down from above and building back up from below
+    // are different jobs and don't have to take the same number of days.
+    let targetDays: number;
+    if (typeof params.targetDaysAbove === 'number' && typeof params.targetDaysBelow === 'number') {
+        const above = projectedCurrentFc > params.targetFc;
+        targetDays = above ? params.targetDaysAbove : params.targetDaysBelow;
+        rationale.push(`Projected current FC is ${above ? 'above' : 'at or below'} the ${params.targetFc} ppm target: using the ${targetDays}-day window for FC ${above ? 'above' : 'below'} target.`);
+    }
+    else if (typeof params.targetDays === 'number') targetDays = params.targetDays;
+    else throw new Error('AutoSwg: either targetDays, or both targetDaysAbove and targetDaysBelow, is required.');
+
     // Duty cycle needed to reach targetFc in targetDays.
-    const targetHours = params.targetDays * 24;
-    const neededPpm = (params.targetFc - projectedCurrentFc) + (avgPerDay * params.targetDays);
-    const producibleAtFull = maxDailyPpmAtFull * params.targetDays;
+    const targetHours = targetDays * 24;
+    const neededPpm = (params.targetFc - projectedCurrentFc) + (avgPerDay * targetDays);
+    const producibleAtFull = maxDailyPpmAtFull * targetDays;
     let recommendedPctForTarget = recommendedPct;
     if (producibleAtFull > 0) {
         recommendedPctForTarget = Math.max(0, Math.min(100, (neededPpm / producibleAtFull) * 100));
@@ -627,10 +648,11 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         avgWindowEnd: rightNow.toISOString(),
         avgWindowExtended: windowExtended,
         projectedCurrentFc: Math.round(projectedCurrentFc * 100) / 100,
+        targetDaysUsed: targetDays,
         mostRecentFc: { value: lastFc.value, ts: lastFc.ts.toISOString() },
         mostRecentCya: cyaEvents.length ? { value: cyaEvents[cyaEvents.length - 1].value, ts: cyaEvents[cyaEvents.length - 1].ts.toISOString() } : undefined,
         mostRecentSwg: { ppmPerDay: latestSwg.ppmPerDay, hrs: latestSwg.hrs, pct: latestSwg.pct, ts: latestSwg.ts.toISOString(), source: latestSwg.source },
-        inputs: params,
+        inputs: Object.assign({}, params, { targetDays: targetDays }), // targetDays = the window actually used (also what history export reads)
         swgCapacityPpmPerDay: maxDailyPpmAtFull,
         swgRunHours: swgHours,
         localSwgEntriesUsed: swgMerge.localUsed,
