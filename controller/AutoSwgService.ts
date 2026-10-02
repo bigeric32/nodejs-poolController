@@ -120,7 +120,7 @@ export interface AutoSwgParams {
     // Between tests FC moves less than the model expects, so a weight below 1 often predicts better (see
     // buildProjectionAccuracy, which suggests one from the history). Liquid chlorine logged since the
     // reading is always added in full -- it is known, not modelled.
-    projectionDamping?: number;
+    projectionWeight?: number;
     // Gap-aware taper of that weight: full weight until the last reading is projectionTaperStartDays old
     // (default 3), then falling to 0 at projectionTaperEndDays (default 0 = no taper).
     projectionTaperStartDays?: number;
@@ -144,7 +144,7 @@ export interface AutoSwgResult {
     projectedCurrentFc: number;
     fcModelChange: number;           // the modelled FC change since the last reading, before weighting (generated minus consumed)
     fcAdded: number;                 // liquid chlorine added since the last reading (ppm)
-    projectionDamping: number;       // the weight applied to the modelled change
+    projectionWeight: number;       // the weight applied to the modelled change
     // What recommendedPctForTarget was actually aimed at: a new target (today's configured
     // FC, reached in the above/below window that applied) or, if `refreshed`, the
     // in-flight one (its original FC and deadline, unchanged).
@@ -952,12 +952,12 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     const swgGeneratedSinceReading = swgGeneratedSinceLastReading(swgEvents, lastFc.ts, rightNow, swgStart, params.timezone);
     const elapsedEq = dayEquivalents(lastFc.ts, rightNow);
     const addedSinceReading = addedBetween(lastFc.ts, rightNow);
-    const baseDamping = typeof params.projectionDamping === 'number' ? Math.max(0, Math.min(1, params.projectionDamping)) : 1;
-    const damping = projectionWeight(baseDamping, elapsedDays, typeof params.projectionTaperStartDays === 'number' ? params.projectionTaperStartDays : 3,
+    const baseWeight = typeof params.projectionWeight === 'number' ? Math.max(0, Math.min(1, params.projectionWeight)) : 1;
+    const effectiveWeight = projectionWeight(baseWeight, elapsedDays, typeof params.projectionTaperStartDays === 'number' ? params.projectionTaperStartDays : 3,
         typeof params.projectionTaperEndDays === 'number' ? params.projectionTaperEndDays : 0);
     const modelChange = swgGeneratedSinceReading - (avgPerDay * elapsedEq);
-    const projectedCurrentFc = lastFc.value + damping * modelChange + addedSinceReading;
-    rationale.push(`Projected current FC: ${projectedCurrentFc.toFixed(2)} ppm (last reading ${lastFc.value} ppm, ${elapsedDays.toFixed(2)} days ago${daylight ? ` = ${elapsedEq.toFixed(2)} days of consumption, daylight-weighted` : ''}; minus ${(avgPerDay * elapsedEq).toFixed(2)} ppm consumed; plus ${swgGeneratedSinceReading.toFixed(2)} ppm generated${addedSinceReading > 0 ? `; plus ${addedSinceReading.toFixed(2)} ppm of liquid chlorine added` : ''}${damping < 1 ? `; only ${Math.round(damping * 100)}% of the modelled change is applied (Projection Weighting${damping < baseDamping ? `, reduced because the last reading is ${elapsedDays.toFixed(1)} days old` : ''})` : ''}).`);
+    const projectedCurrentFc = lastFc.value + effectiveWeight * modelChange + addedSinceReading;
+    rationale.push(`Projected current FC: ${projectedCurrentFc.toFixed(2)} ppm (last reading ${lastFc.value} ppm, ${elapsedDays.toFixed(2)} days ago${daylight ? ` = ${elapsedEq.toFixed(2)} days of consumption, daylight-weighted` : ''}; minus ${(avgPerDay * elapsedEq).toFixed(2)} ppm consumed; plus ${swgGeneratedSinceReading.toFixed(2)} ppm generated${addedSinceReading > 0 ? `; plus ${addedSinceReading.toFixed(2)} ppm of liquid chlorine added` : ''}${effectiveWeight < 1 ? `; only ${Math.round(effectiveWeight * 100)}% of the modelled change is applied (Projection Weighting${effectiveWeight < baseWeight ? `, reduced because the last reading is ${elapsedDays.toFixed(1)} days old` : ''})` : ''}).`);
     // With the last reading this old, the projection is mostly extrapolation from an
     // average -- worth saying so rather than presenting it with the same confidence as one
     // anchored to a recent test.
@@ -1057,7 +1057,7 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         projectedCurrentFc: Math.round(projectedCurrentFc * 100) / 100,
         fcModelChange: modelChange,
         fcAdded: addedSinceReading,
-        projectionDamping: damping,
+        projectionWeight: effectiveWeight,
         targetFcUsed: targetFc,
         targetDateUsed: targetDate.toISOString(),
         targetDaysUsed: targetDays,
@@ -1283,7 +1283,7 @@ export async function buildProjectionAccuracy(params: AutoSwgParams, options: { 
         sinceChange: undefined as { since: string; count: number; meanAbsError?: number; unchangedMae?: number; bias?: number } | undefined,
         weighting: {
             current: {
-                weight: typeof params.projectionDamping === 'number' ? params.projectionDamping : 1,
+                weight: typeof params.projectionWeight === 'number' ? params.projectionWeight : 1,
                 taperStart: typeof params.projectionTaperStartDays === 'number' ? params.projectionTaperStartDays : 3,
                 taperEnd: typeof params.projectionTaperEndDays === 'number' ? params.projectionTaperEndDays : 0,
             },
@@ -1395,7 +1395,7 @@ export async function buildWhatIfSweep(params: AutoSwgParams, options: { lookbac
     const variants: { key: string; label: string; params: AutoSwgParams }[] = [{ key: 'current', label: 'Current settings', params }];
     // A variant identical to the current settings (now that the defaults are a 50% weighting with a 3 to 8 day taper, a
     // couple of the candidates are) would only add a row that says nothing changes, so it is left out.
-    const TUNING = ['windowDays', 'creditChlorineAdditions', 'fcAnomalyTolerancePpm', 'projectionDamping', 'projectionTaperStartDays', 'projectionTaperEndDays', 'sunriseTime', 'sunsetTime'];
+    const TUNING = ['windowDays', 'creditChlorineAdditions', 'fcAnomalyTolerancePpm', 'projectionWeight', 'projectionTaperStartDays', 'projectionTaperEndDays', 'sunriseTime', 'sunsetTime'];
     const add = (key: string, label: string, p: AutoSwgParams) => {
         if (TUNING.every(k => (p as any)[k] === (params as any)[k])) return;
         variants.push({ key, label, params: p });
@@ -1403,12 +1403,12 @@ export async function buildWhatIfSweep(params: AutoSwgParams, options: { lookbac
     for (const w of [7, 14, 21, 28, 42, 56]) if (w !== params.windowDays) add(`window${w}`, `Averaging window ${w} days`, Object.assign({}, params, { windowDays: w }));
     if (params.sunriseTime && params.sunsetTime) add('noDaylight', 'Daylight weighting off', Object.assign({}, params, { sunriseTime: undefined, sunsetTime: undefined }));
     add('creditToggle', params.creditChlorineAdditions !== false ? 'Liquid chlorine credit off' : 'Liquid chlorine credit on', Object.assign({}, params, { creditChlorineAdditions: params.creditChlorineAdditions === false }));
-    const curDamp = typeof params.projectionDamping === 'number' ? params.projectionDamping : 1;
-    for (const d of [0, 0.25, 0.5, 0.75, 1]) if (d !== curDamp) add(`damp${d}`, `Projection weighting ${Math.round(d * 100)}%`, Object.assign({}, params, { projectionDamping: d }));
+    const curWeight = typeof params.projectionWeight === 'number' ? params.projectionWeight : 1;
+    for (const d of [0, 0.25, 0.5, 0.75, 1]) if (d !== curWeight) add(`weight${d}`, `Projection weighting ${Math.round(d * 100)}%`, Object.assign({}, params, { projectionWeight: d }));
     // Gap taper: the weight falls to zero as the last reading gets older (with the weighting as set, and at 50%).
     for (const [ts, te] of [[3, 8], [4, 10], [2, 6]]) {
         add(`taper${ts}_${te}`, `Taper off ${ts} to ${te} days`, Object.assign({}, params, { projectionTaperStartDays: ts, projectionTaperEndDays: te }));
-        add(`taper${ts}_${te}_50`, `Weighting 50% + taper ${ts} to ${te} days`, Object.assign({}, params, { projectionDamping: 0.5, projectionTaperStartDays: ts, projectionTaperEndDays: te }));
+        add(`taper${ts}_${te}_50`, `Weighting 50% + taper ${ts} to ${te} days`, Object.assign({}, params, { projectionWeight: 0.5, projectionTaperStartDays: ts, projectionTaperEndDays: te }));
     }
     const curTol = typeof params.fcAnomalyTolerancePpm === 'number' ? params.fcAnomalyTolerancePpm : ANOMALY_TOLERANCE_PPM;
     for (const t of [0, 1, 3]) if (t !== curTol) add(`tol${t}`, t === 0 ? 'FC anomaly check off' : `FC anomaly tolerance ${t} ppm`, Object.assign({}, params, { fcAnomalyTolerancePpm: t }));
@@ -1444,7 +1444,7 @@ export async function buildWhatIfSweep(params: AutoSwgParams, options: { lookbac
     const baseAbs = common.map(k => Math.abs(errors[0].get(k)));
     // The settings a variant changes, by their config names, so a result can be applied as is. A taper
     // change always carries both of its days.
-    const SETTABLE = ['windowDays', 'creditChlorineAdditions', 'fcAnomalyTolerancePpm', 'projectionDamping', 'projectionTaperStartDays', 'projectionTaperEndDays'];
+    const SETTABLE = ['windowDays', 'creditChlorineAdditions', 'fcAnomalyTolerancePpm', 'projectionWeight', 'projectionTaperStartDays', 'projectionTaperEndDays'];
     const settingsOf = (p: AutoSwgParams): { [setting: string]: number | boolean } | undefined => {
         const diff: { [setting: string]: number | boolean } = {};
         for (const k of SETTABLE) if ((p as any)[k] !== (params as any)[k] && typeof (p as any)[k] !== 'undefined') diff[k] = (p as any)[k];
