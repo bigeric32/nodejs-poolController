@@ -55,15 +55,19 @@ export interface AutoSwgParams {
     swgStopTime: string;  // e.g. '19:00' or '7pm'
     timezone: string;     // IANA zone name, e.g. 'America/New_York'
     windowDays: number;   // running-average window, e.g. 14
+    // The configured target for a NEW target: reach targetFc in targetDaysAbove days if the
+    // projected current FC is above it, or targetDaysBelow days if it's at or below it --
+    // coming down from above and building back up from below are different jobs and
+    // needn't take the same time.
     targetFc: number;
-    // How many days to take reaching targetFc. Either a single fixed window (targetDays --
-    // e.g. a refine re-aiming at a deadline that's already been committed to), or a pair
-    // (targetDaysAbove/targetDaysBelow) chosen between by which side of targetFc the
-    // projected current FC turns out to be on. When both of the pair are given they take
-    // precedence over targetDays.
-    targetDays?: number;
-    targetDaysAbove?: number;
-    targetDaysBelow?: number;
+    targetDaysAbove: number;
+    targetDaysBelow: number;
+    // An already-committed target (a previous apply's FC and deadline) to stay on course
+    // for instead of starting a new one, as long as the projected FC is within strayPpm of
+    // targetFc. Infinity always stays on course (an explicit refresh); a finite value lets
+    // an FC that has wandered further than that from the target abandon the old deadline
+    // and start fresh. The deadline must still be ahead.
+    inFlight?: { targetFc: number; targetDate: Date; strayPpm: number };
 }
 
 export interface AutoSwgResult {
@@ -76,11 +80,19 @@ export interface AutoSwgResult {
     avgWindowEnd: string;            // ISO end of that window (calculation time)
     avgWindowExtended: boolean;      // true if the window was extended back to include MIN_FC_READINGS_IN_WINDOW readings
     projectedCurrentFc: number;
-    targetDaysUsed: number;          // the window recommendedPctForTarget was actually computed over (see AutoSwgParams)
+    // What recommendedPctForTarget was actually aimed at: a new target (today's configured
+    // FC, reached in the above/below window that applied) or, if `refreshed`, the
+    // in-flight one (its original FC and deadline, unchanged).
+    targetFcUsed: number;
+    targetDateUsed: string;          // ISO
+    targetDaysUsed: number;          // days from calculation time until targetDateUsed
+    refreshed: boolean;              // true if it stayed on course for params.inFlight rather than starting a new target
     mostRecentFc?: { value: number; ts: string };
     mostRecentCya?: { value: number; ts: string };
     mostRecentSwg?: { ppmPerDay: number; hrs: number; pct: number; ts: string; source: SwgSource };
-    inputs: AutoSwgParams;           // the parameters this result was computed from
+    // The parameters this result was computed from, with targetFc/targetDays being what was
+    // actually aimed at (also what the history export reads).
+    inputs: Omit<AutoSwgParams, 'inFlight'> & { targetDays: number };
     swgCapacityPpmPerDay: number;    // ppm/day at 100% duty cycle over swgRunHours
     swgRunHours: number;             // length of the daily run window used
     localSwgEntriesUsed: number;     // entries from the local SWG % change log that fed the calculation
@@ -614,29 +626,50 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     const projectedCurrentFc = lastFc.value - (avgPerDay * elapsedDays) + swgGeneratedSinceReading;
     rationale.push(`Projected current FC: ${projectedCurrentFc.toFixed(2)} ppm (last reading ${lastFc.value} ppm, ${elapsedDays.toFixed(2)} days ago; minus ${(avgPerDay * elapsedDays).toFixed(2)} ppm consumed; plus ${swgGeneratedSinceReading.toFixed(2)} ppm generated).`);
 
-    // Which window to take reaching targetFc: a single fixed one if the caller gave
-    // that, otherwise the above/below pair, picked by which side of targetFc the
-    // projected FC is on -- coming down from above and building back up from below
-    // are different jobs and don't have to take the same number of days.
+    // What to aim at. If there's an in-flight target and the projected FC is still within
+    // its stray threshold of the configured target, stay on course for it: same FC, same
+    // deadline, only the % gets re-worked from fresh data. Otherwise start a new target
+    // from the configured FC, in the above/below window that applies to where the
+    // projected FC is.
+    let targetFc = params.targetFc;
     let targetDays: number;
-    if (typeof params.targetDaysAbove === 'number' && typeof params.targetDaysBelow === 'number') {
+    let targetDate: Date;
+    let refreshed = false;
+    const inFlight = params.inFlight;
+    const strayedBy = Math.abs(projectedCurrentFc - params.targetFc);
+    if (inFlight && strayedBy <= inFlight.strayPpm) {
+        refreshed = true;
+        targetFc = inFlight.targetFc;
+        targetDate = inFlight.targetDate;
+        targetDays = (targetDate.getTime() - rightNow.getTime()) / 86400000;
+        const when = `${formatLocalDateTime(targetDate, params.timezone)} ${params.timezone}`;
+        if (isFinite(inFlight.strayPpm)) rationale.push(`Projected current FC is within ${inFlight.strayPpm} ppm of the ${params.targetFc} ppm target: refreshing against the original ${targetFc} ppm target by ${when} (same deadline as the last apply).`);
+        else rationale.push(`Refreshed against the original target of ${targetFc} ppm by ${when} (same deadline as the last apply, recalculated with fresh PoolMath data).`);
+    }
+    else {
         const above = projectedCurrentFc > params.targetFc;
+        if (inFlight) rationale.push(`Projected current FC is ${strayedBy.toFixed(2)} ppm ${above ? 'above' : 'below'} the ${params.targetFc} ppm target, more than the ${inFlight.strayPpm} ppm new-target threshold: starting a new target instead of refreshing the old one.`);
         targetDays = above ? params.targetDaysAbove : params.targetDaysBelow;
+        targetDate = new Date(rightNow.getTime() + targetDays * 86400000);
         rationale.push(`Projected current FC is ${above ? 'above' : 'at or below'} the ${params.targetFc} ppm target: using the ${targetDays}-day window for FC ${above ? 'above' : 'below'} target.`);
     }
-    else if (typeof params.targetDays === 'number') targetDays = params.targetDays;
-    else throw new Error('AutoSwg: either targetDays, or both targetDaysAbove and targetDaysBelow, is required.');
 
     // Duty cycle needed to reach targetFc in targetDays.
     const targetHours = targetDays * 24;
-    const neededPpm = (params.targetFc - projectedCurrentFc) + (avgPerDay * targetDays);
+    const neededPpm = (targetFc - projectedCurrentFc) + (avgPerDay * targetDays);
     const producibleAtFull = maxDailyPpmAtFull * targetDays;
     let recommendedPctForTarget = recommendedPct;
     if (producibleAtFull > 0) {
         recommendedPctForTarget = Math.max(0, Math.min(100, (neededPpm / producibleAtFull) * 100));
-        if (neededPpm <= 0) rationale.push(`Already at/above ${params.targetFc} ppm target given ongoing consumption.`);
-        else rationale.push(`Recommended SWG duty cycle to reach ${params.targetFc} ppm FC in ${targetHours}h: ${recommendedPctForTarget.toFixed(1)}%.`);
+        if (neededPpm <= 0) rationale.push(`Already at/above ${targetFc} ppm target given ongoing consumption.`);
+        else rationale.push(`Recommended SWG duty cycle to reach ${targetFc} ppm FC in ${Math.round(targetHours * 10) / 10}h: ${recommendedPctForTarget.toFixed(1)}%.`);
     }
+
+    // What gets recorded as this result's inputs: the parameters, minus the in-flight
+    // object (a Date and possibly Infinity -- neither survives being logged as JSON), with
+    // the target actually aimed at in place of the configured one.
+    const inputsUsed: any = Object.assign({}, params, { targetFc: targetFc, targetDays: targetDays });
+    delete inputsUsed.inFlight;
 
     return {
         currentPct: latestSwg.pct,
@@ -648,11 +681,14 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         avgWindowEnd: rightNow.toISOString(),
         avgWindowExtended: windowExtended,
         projectedCurrentFc: Math.round(projectedCurrentFc * 100) / 100,
+        targetFcUsed: targetFc,
+        targetDateUsed: targetDate.toISOString(),
         targetDaysUsed: targetDays,
+        refreshed: refreshed,
         mostRecentFc: { value: lastFc.value, ts: lastFc.ts.toISOString() },
         mostRecentCya: cyaEvents.length ? { value: cyaEvents[cyaEvents.length - 1].value, ts: cyaEvents[cyaEvents.length - 1].ts.toISOString() } : undefined,
         mostRecentSwg: { ppmPerDay: latestSwg.ppmPerDay, hrs: latestSwg.hrs, pct: latestSwg.pct, ts: latestSwg.ts.toISOString(), source: latestSwg.source },
-        inputs: Object.assign({}, params, { targetDays: targetDays }), // targetDays = the window actually used (also what history export reads)
+        inputs: inputsUsed,
         swgCapacityPpmPerDay: maxDailyPpmAtFull,
         swgRunHours: swgHours,
         localSwgEntriesUsed: swgMerge.localUsed,
