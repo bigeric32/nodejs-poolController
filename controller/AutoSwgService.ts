@@ -72,6 +72,15 @@ export interface AutoSwgParams {
     // an FC that has wandered further than that from the target abandon the old deadline
     // and start fresh. The deadline must still be ahead.
     inFlight?: { targetFc: number; targetDate: Date; strayPpm: number };
+    // Today's sunrise and sunset as wall-clock times in `timezone` (like swgStartTime). With
+    // them, the partial day between FC readings (and since the last one) is weighted by how
+    // much of the day's chlorine loss falls in daylight vs. night rather than by the clock
+    // alone. Omit either and time is counted by the clock, as before.
+    sunriseTime?: string;
+    sunsetTime?: string;
+    // Share (percent) of a day's FC consumption that happens in daylight. 0 or omitted =
+    // estimate it from the day length with the parabolic model (see parabolicDaytimeShare).
+    daytimeSharePct?: number;
 }
 
 export interface AutoSwgResult {
@@ -527,6 +536,46 @@ function roundDutyCyclePct(pct: number): number {
     return (pct - floor) > 0.5 ? floor + 1 : floor;
 }
 
+// Share (0..1) of a day's chlorine loss that falls in daylight under the parabolic model:
+// loss rate follows a parabola over the 24h day, peaking at solar noon and falling to zero
+// at midnight, so with a day of `dayHours` (half-length h) the daylight area is
+// 2h - h^3/216 out of a 24h total of 16. ~0.56 for a 9.5h winter day, ~0.67 for 11.6h,
+// ~0.78 for a 14h summer day.
+export function parabolicDaytimeShare(dayHours: number): number {
+    const h = Math.max(0, Math.min(12, dayHours / 2));
+    return (2 * h - (h * h * h) / 216) / 16;
+}
+
+// Local wall-clock minutes since midnight (0..1440) of `instant` in `timeZone`.
+function localMinuteOfDay(instant: Date, timeZone: string): number {
+    const dtf = new Intl.DateTimeFormat('en-US', { timeZone, hourCycle: 'h23', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const parts: any = {};
+    for (const p of dtf.formatToParts(instant)) parts[p.type] = p.value;
+    return (+parts.hour) * 60 + (+parts.minute) + (+parts.second) / 60;
+}
+
+// How many "days" of consumption the span [from, to] represents. Every whole 24h block
+// counts as exactly 1 (whatever time of day it starts); only the leftover partial block is
+// weighted -- daylight minutes carry `share` of a day's loss spread evenly over the day
+// length, night minutes the rest spread over the night. Today's sunrise/sunset are used for
+// every day, a few minutes' drift either way across a window.
+export function consumptionDayEquivalents(from: Date, to: Date, timeZone: string, daylight: { sunriseMin: number; sunsetMin: number; share: number }): number {
+    const spanMin = (to.getTime() - from.getTime()) / 60000;
+    if (spanMin <= 0) return 0;
+    const whole = Math.floor(spanMin / 1440);
+    const leftover = spanMin - whole * 1440;
+    if (leftover <= 0) return whole;
+    const dayLen = daylight.sunsetMin - daylight.sunriseMin;
+    const s = localMinuteOfDay(new Date(from.getTime() + whole * 86400000), timeZone);
+    let dayMin = 0;
+    for (const k of [0, 1]) {
+        const lo = daylight.sunriseMin + 1440 * k, hi = daylight.sunsetMin + 1440 * k;
+        dayMin += Math.max(0, Math.min(s + leftover, hi) - Math.max(s, lo));
+    }
+    const nightMin = leftover - dayMin;
+    return whole + dayMin * (daylight.share / dayLen) + nightMin * ((1 - daylight.share) / (1440 - dayLen));
+}
+
 // ppm/day the SWG can add at 100% duty cycle over a `swgHours`-long daily run
 // window. swgLbsPerDay is the manufacturer's rated output over a full 24h day, so
 // only swgHours/24 of it is achievable within the window.
@@ -556,6 +605,25 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     const swgEvents = swgMerge.events;
     if (swgEvents.length === 0) throw new Error('No SWG log entries found on the PoolMath page or in the local SWG % change log. The page markup may have changed, or the share code/pool name may be wrong.');
 
+    // Daylight weighting for the partial days between FC readings (see
+    // consumptionDayEquivalents); undefined when sunrise/sunset aren't known, in which case
+    // time is counted by the clock.
+    let daylight: { sunriseMin: number; sunsetMin: number; share: number; dayHours: number; auto: boolean } | undefined;
+    if (params.sunriseTime && params.sunsetTime) {
+        try {
+            const sr = parseTimeOfDay(params.sunriseTime), ss = parseTimeOfDay(params.sunsetTime);
+            const sunriseMin = sr.hour * 60 + sr.minute, sunsetMin = ss.hour * 60 + ss.minute;
+            const dayMin = sunsetMin - sunriseMin;
+            if (dayMin > 0 && dayMin < 1440) {
+                const auto = !(params.daytimeSharePct > 0);
+                const share = auto ? parabolicDaytimeShare(dayMin / 60) : Math.min(0.99, params.daytimeSharePct / 100);
+                daylight = { sunriseMin, sunsetMin, share, dayHours: dayMin / 60, auto };
+            }
+        }
+        catch (err) { logger.warn(`AutoSwg: ignoring unusable sunrise/sunset (${err.message}); counting time by the clock.`); }
+    }
+    const dayEquivalents = (a: Date, b: Date): number => daylight ? consumptionDayEquivalents(a, b, params.timezone, daylight) : (b.getTime() - a.getTime()) / 86400000;
+
     // Time-weighted running average FC consumption over the last windowDays.
     const intervals: { t1: Date; t2: Date; perDay: number }[] = [];
     for (let i = 0; i < fcEvents.length - 1; i++) {
@@ -565,7 +633,7 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         const gen = generatedBetween(swgEvents, t1, t2);
         const rawDelta = fc2 - fc1;
         const consumed = gen - rawDelta;
-        const days = (t2.getTime() - t1.getTime()) / 86400000;
+        const days = dayEquivalents(t1, t2);
         intervals.push({ t1, t2, perDay: days > 0 ? consumed / days : 0 });
     }
 
@@ -584,7 +652,7 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         const clipStart = new Date(Math.max(iv.t1.getTime(), windowStart.getTime()));
         const clipEnd = new Date(Math.min(iv.t2.getTime(), rightNow.getTime()));
         if (clipEnd.getTime() <= clipStart.getTime()) continue;
-        const overlapDays = (clipEnd.getTime() - clipStart.getTime()) / 86400000;
+        const overlapDays = dayEquivalents(clipStart, clipEnd);
         weightedTotal += iv.perDay * overlapDays;
         coveredDays += overlapDays;
     }
@@ -602,6 +670,7 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         : '';
     const avgConsumptionSummary = `Running ${windowLabel}-day average FC consumption (${windowRange}${extensionNote}): ${avgPerDay.toFixed(2)} ppm/day (from ${fcEvents.length} FC readings, ${swgEvents.length} SWG log entries).`;
     rationale.push(avgConsumptionSummary);
+    if (daylight) rationale.push(`Daylight weighting: day length ${daylight.dayHours.toFixed(1)}h (${params.sunriseTime}-${params.sunsetTime} ${params.timezone}); ${(daylight.share * 100).toFixed(0)}% of a day's FC consumption counted as daytime (${daylight.auto ? 'parabolic estimate from the day length' : 'configured'}). Whole 24h blocks count as one day; only the partial block is weighted.`);
     if (swgMerge.localUsed > 0) {
         rationale.push(`SWG entries: ${swgMerge.localUsed} from the local SWG % change log, ${poolMathSwgEvents.length - swgMerge.replaced} from PoolMath; ${swgMerge.replaced} PoolMath ${swgMerge.replaced === 1 ? 'entry' : 'entries'} within 1h of a local entry ignored in favor of the local one.`);
     }
@@ -630,8 +699,9 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     const elapsedDays = (rightNow.getTime() - lastFc.ts.getTime()) / 86400000;
     const latestSwg = swgEvents[swgEvents.length - 1];
     const swgGeneratedSinceReading = swgGeneratedSinceLastReading(swgEvents, lastFc.ts, rightNow, swgStart, params.timezone);
-    const projectedCurrentFc = lastFc.value - (avgPerDay * elapsedDays) + swgGeneratedSinceReading;
-    rationale.push(`Projected current FC: ${projectedCurrentFc.toFixed(2)} ppm (last reading ${lastFc.value} ppm, ${elapsedDays.toFixed(2)} days ago; minus ${(avgPerDay * elapsedDays).toFixed(2)} ppm consumed; plus ${swgGeneratedSinceReading.toFixed(2)} ppm generated).`);
+    const elapsedEq = dayEquivalents(lastFc.ts, rightNow);
+    const projectedCurrentFc = lastFc.value - (avgPerDay * elapsedEq) + swgGeneratedSinceReading;
+    rationale.push(`Projected current FC: ${projectedCurrentFc.toFixed(2)} ppm (last reading ${lastFc.value} ppm, ${elapsedDays.toFixed(2)} days ago${daylight ? ` = ${elapsedEq.toFixed(2)} days of consumption, daylight-weighted` : ''}; minus ${(avgPerDay * elapsedEq).toFixed(2)} ppm consumed; plus ${swgGeneratedSinceReading.toFixed(2)} ppm generated).`);
     // With the last reading this old, the projection is mostly extrapolation from an
     // average -- worth saying so rather than presenting it with the same confidence as one
     // anchored to a recent test.

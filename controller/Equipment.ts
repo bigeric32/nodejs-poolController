@@ -2434,6 +2434,10 @@ export class AutoSwg extends EqItem {
         // applied %) meets or exceeds this is flagged prominently on the dashboard, since
         // no human reviewed it before it took effect.
         if (typeof this.data.autoApplyWarnThresholdPct === 'undefined') this.data.autoApplyWarnThresholdPct = 10;
+        // Percent of a day's FC consumption that happens in daylight, used to weight the
+        // partial day between FC readings. 0 = estimate it from today's day length with the
+        // parabolic model (~56% winter to ~78% summer).
+        if (typeof this.data.daytimeLossSharePct === 'undefined') this.data.daytimeLossSharePct = 0;
     }
     public get enabled(): boolean { return this.data.enabled; }
     public set enabled(val: boolean) { this.setDataVal('enabled', val); }
@@ -2471,6 +2475,8 @@ export class AutoSwg extends EqItem {
     public set windowDays(val: number) { this.setDataVal('windowDays', val); }
     public get targetFc(): number { return this.data.targetFc; }
     public set targetFc(val: number) { this.setDataVal('targetFc', val); }
+    public get daytimeLossSharePct(): number { return this.data.daytimeLossSharePct; }
+    public set daytimeLossSharePct(val: number) { this.setDataVal('daytimeLossSharePct', val); }
     public get targetDaysAbove(): number { return this.data.targetDaysAbove; }
     public set targetDaysAbove(val: number) { this.setDataVal('targetDaysAbove', val); }
     public get targetDaysBelow(): number { return this.data.targetDaysBelow; }
