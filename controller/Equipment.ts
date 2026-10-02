@@ -2450,12 +2450,14 @@ export class AutoSwg extends EqItem {
         // as suspect (left out of the average, with a banner). 0 = off.
         if (typeof this.data.fcAnomalyTolerancePpm === 'undefined') this.data.fcAnomalyTolerancePpm = 2;
         // How much of the modelled FC change since the last reading to apply when projecting the current FC:
-        // 1 = all of it (no damping), 0 = start from the last reading unchanged.
-        if (typeof this.data.projectionDamping === 'undefined') this.data.projectionDamping = 1;
+        // 1 = all of it (no damping), 0 = start from the last reading unchanged. Between tests FC moves less than the
+        // model expects, so the default damps it to half (on two pools' histories this beat the full model by 0.3 to
+        // 0.6 ppm; the Tune button tunes it for a particular pool).
+        if (typeof this.data.projectionDamping === 'undefined') this.data.projectionDamping = 0.5;
         // Gap-aware taper of that weight: full weight until the last reading is this many days old, then
-        // falling to 0 at the end (days). End 0 = no taper.
+        // falling to 0 at the end (days). End 0 = no taper. The model hurts across long gaps, hence 3 to 8 days.
         if (typeof this.data.projectionTaperStartDays === 'undefined') this.data.projectionTaperStartDays = 3;
-        if (typeof this.data.projectionTaperEndDays === 'undefined') this.data.projectionTaperEndDays = 0;
+        if (typeof this.data.projectionTaperEndDays === 'undefined') this.data.projectionTaperEndDays = 8;
     }
     public get enabled(): boolean { return this.data.enabled; }
     public set enabled(val: boolean) { this.setDataVal('enabled', val); }
