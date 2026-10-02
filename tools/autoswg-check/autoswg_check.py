@@ -123,6 +123,8 @@ def sanitize(raw):
             logs.append(keep)
         out['pools'].append({
             'pool': {'name': pool.get('name'), 'volume': pool.get('volume'),
+                     'swgLbsPerDay': pool.get('swgLbsPerDay') if isinstance(pool.get('swgLbsPerDay'), (int, float)) else None,
+                     'swgModelId': pool.get('swgModelId') if isinstance(pool.get('swgModelId'), str) else None,
                      'lat': round(pool['lat'], 1) if isinstance(pool.get('lat'), (int, float)) else None,
                      'lon': round(pool['lon'], 1) if isinstance(pool.get('lon'), (int, float)) else None},
             'recentLogs': logs})
@@ -174,6 +176,8 @@ class Dataset:
         self.adds = sorted([(ts(l), (l['percent'] / 100.0) * 1e6 * l['normalizedAmount'] / (self.gallons * ML_PER_GAL))
                             for l in logs if l['type'] == 'chemlog' and l.get('chemical') == POOLMATH_LIQUID_CHLORINE
                             and l.get('percent') and l.get('normalizedAmount')], key=lambda x: x[0])
+        self.pm_swg_lbs = pool['pool'].get('swgLbsPerDay')      # PoolMath's current SWG rating setting
+        self.pm_swg_model = pool['pool'].get('swgModelId')
         self.lat = args.lat if args.lat is not None else pool['pool'].get('lat')
         self.lon = args.lon if args.lon is not None else pool['pool'].get('lon')
 
@@ -507,6 +511,92 @@ def report_whatif(ds, p, args, csv_dir):
                 w.writerow([r[0]] + [('' if v is None else round(v, 3) if isinstance(v, float) else v) for v in r[1:]])
 
 
+def report_capacity(ds, p, args):
+    """Does each SWG entry's ppm credit agree with one rated capacity (lbs/day)? PoolMath credits each entry
+    with ppm = % x rated lbs/day x hours/24 (in ppm for this pool), so the rating each entry implies should
+    be steady; a step change is a cell swap and a lone odd entry is probably mis-logged."""
+    print('\n== SWG capacity agreement ==')
+    k = 1e6 / (ds.gallons * 8.34)   # ppm per lb of chlorine
+    ents = [(t, a, h, pc, a / (pc / 100.0) / (h / 24.0) / k) for t, a, h, pc in ds.swg if pc > 0 and h > 0 and a > 0]
+    if len(ents) < 3:
+        print('too few SWG entries to check')
+        return
+    TOL = 0.15
+    med = statistics.median
+    # split into regimes: a level change counts only if the next two entries agree with it
+    regimes, outliers = [[ents[0]]], []
+    i = 1
+    while i < len(ents):
+        cur = med([e[4] for e in regimes[-1][-5:]])
+        e = ents[i]
+        if abs(e[4] / cur - 1) <= TOL:
+            regimes[-1].append(e)
+            i += 1
+            continue
+        nxt = ents[i + 1:i + 3]
+        if len(nxt) == 2 and all(abs(n[4] / e[4] - 1) <= TOL for n in nxt):
+            regimes.append([e])             # a new level that the next entries confirm: a cell swap
+        else:
+            outliers.append((e, cur, len(ents) - i - 1))
+        i += 1
+    print('PoolMath rating setting: %s lbs/day%s | %d SWG entries, %d level(s)' % (
+        ds.pm_swg_lbs if ds.pm_swg_lbs else 'unknown', (' (%s)' % ds.pm_swg_model) if ds.pm_swg_model else '', len(ents), len(regimes)))
+    print('\n  implied rated capacity by period (lbs/day over 24 h):')
+    for r in regimes:
+        # entries whose ppm is tiny are rounded to 0.1, so prefer the larger ones for the level
+        use = [e[4] for e in r if e[1] >= 1.5] or [e[4] for e in r]
+        print('    %s .. %s   %2d entries   %.2f lbs/day' % (r[0][0].date(), r[-1][0].date(), len(r), med(use)))
+    if len(regimes) > 1:
+        print('  -> the level changes between periods: a cell swap or a changed rating setting. PoolMath keeps each entry\'s own credit, so the history stays consistent.')
+    latest = med([e[4] for e in regimes[-1] if e[1] >= 1.5] or [e[4] for e in regimes[-1]])
+    if args.njspc_lbs:
+        diff = 100.0 * (args.njspc_lbs / latest - 1)
+        verdict = 'agrees' if abs(diff) <= 5 else ('is somewhat off' if abs(diff) <= 15 else 'DISAGREES')
+        print('\n  njsPC rating %.2f lbs/day vs PoolMath\'s latest implied %.2f: %+.0f%% -> %s' % (args.njspc_lbs, latest, diff, verdict))
+        if abs(diff) > 5:
+            print('     njsPC turns a % into ppm with its own rating, so a mismatch shifts both the recommended % and the SWG output it logs locally.')
+    else:
+        print('\n  latest implied rating %.2f lbs/day. Pass --njspc-lbs <your njsPC SWG rating> to compare.' % latest)
+    if outliers:
+        calc = Calc(ds, p)
+        first_swg = ds.swg[0][0]
+        typical_list = []
+        for (t1, f1), (t2, f2) in zip(ds.fc, ds.fc[1:]):
+            d = (t2 - t1).total_seconds() / DAY
+            if 0.25 <= d <= 14 and t1 >= first_swg:
+                typical_list.append((calc.generated_between(ds.swg, t1, t2) - (f2 - f1)) / d)
+        typical = med(typical_list) if typical_list else None
+        print('\n  entries that do not fit their period (rating off by more than %d%%):' % int(TOL * 100))
+        for (e, cur, after) in outliers:
+            nxt = [x[0] for x in ds.swg if x[0] > e[0]]
+            hold_end = nxt[0] if nxt else datetime.now(timezone.utc)
+            hold_days = (hold_end - e[0]).total_seconds() / DAY
+            expected = e[3] / 100.0 * cur * (e[2] / 24.0) * k
+            note = '' if after >= 2 else ' (among the latest entries: a new level can\'t be told from a typo yet)'
+            print('    %s  %.0f%% for %.0f h credited %.1f ppm/day, but %.2f lbs/day would give %.1f (held %.1f days)%s' % (
+                e[0].date(), e[3], e[2], e[1], cur, expected, hold_days, note))
+            # which credit do the FC readings support? compare the implied consumption with the typical level
+            mod = [(t, expected if t == e[0] else a, h, pc) for t, a, h, pc in ds.swg]
+            lg, ex = [], []
+            for (t1, f1), (t2, f2) in zip(ds.fc, ds.fc[1:]):
+                d = (t2 - t1).total_seconds() / DAY
+                ov = (min(t2, hold_end) - max(t1, e[0])).total_seconds() / DAY
+                if d >= 0.25 and ov >= 0.5 * d:
+                    lg.append((calc.generated_between(ds.swg, t1, t2) - (f2 - f1)) / d)
+                    ex.append((calc.generated_between(mod, t1, t2) - (f2 - f1)) / d)
+            if lg and typical is not None:
+                a, b = mean(lg), mean(ex)
+                better = 'the LOGGED credit' if abs(a - typical) <= abs(b - typical) else "the rating's credit"
+                print('       FC over that period implies consumption of %.2f ppm/day with the logged credit, %.2f with the rating\'s (typical for this pool %.2f): %s fits the FC readings better.' % (a, b, typical, better))
+                if better == 'the LOGGED credit':
+                    print('       So the credit may be right and the % or run hours entered may not reflect what actually ran (or the credit was edited).')
+                else:
+                    print('       So the credit looks too small: fix the entry in PoolMath.')
+        print('     A wrong credit on an entry makes the consumption around it come out too low or too high; the FC check above says which way to look.')
+    else:
+        print('\n  every entry fits its period within %d%%.' % int(TOL * 100))
+
+
 def report_anomalies(ds, p):
     calc = Calc(ds, p)
     print('\n== FC rises the SWG output and logged additions do not explain ==')
@@ -535,7 +625,8 @@ def main():
     ap.add_argument('--pool', help='pool name when the account has several (default: the first)')
     ap.add_argument('--cache', default=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cache'), help='where sanitized fetched data is cached')
     ap.add_argument('--refresh', action='store_true', help='re-fetch even if cached')
-    ap.add_argument('--report', choices=['all', 'summary', 'accuracy', 'whatif', 'anomalies'], default='all')
+    ap.add_argument('--report', choices=['all', 'summary', 'capacity', 'accuracy', 'whatif', 'anomalies'], default='all')
+    ap.add_argument('--njspc-lbs', type=float, help="njsPC's AutoSwg SWG rating (lbs/day), to compare with what PoolMath's entries imply")
     ap.add_argument('--days', type=int, default=365, help='how far back to score readings (default 365)')
     ap.add_argument('--include-uncovered', action='store_true', help='also score readings before the SWG record starts (not recommended)')
     ap.add_argument('--csv', help='write accuracy.csv / whatif.csv into this folder')
@@ -564,6 +655,8 @@ def main():
         sys.exit('no FC readings in the data')
     if args.report in ('all', 'summary'):
         report_summary(ds, p)
+    if args.report in ('all', 'capacity'):
+        report_capacity(ds, p, args)
     if args.report in ('all', 'accuracy'):
         report_accuracy(ds, p, args, csv_dir)
     if args.report in ('all', 'whatif'):

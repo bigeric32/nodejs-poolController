@@ -12,6 +12,7 @@ liquid chlorine additions to answer:
 * **What does the pool's consumption look like by month, and where does its SWG record start?**
   (dataset summary)
 * **Which FC rises can't the SWG output and logged additions explain?** (anomalies)
+* **Do the SWG entries agree with one cell rating, and with njsPC's setting?** (capacity)
 
 It is a port of `controller/AutoSwgService.ts`, not the same code. Run it on a pool you also have in
 njsPC and compare with the app's **Projection Accuracy** and **What-If Sweep** dialogs; if the numbers
@@ -42,6 +43,13 @@ You can also point it at a saved copy of the share JSON instead of a code:
   the SWG record starts (readings before it can't be used) and whether daylight weighting is on.
 * **Consumption by month:** day-weighted FC consumption, the SWG output, and the median FC for each
   month with a complete SWG record. Look for the seasonal swing and for months with no data.
+* **SWG capacity agreement:** PoolMath credits each SWG entry with `% x rated lbs/day x hours/24`, so
+  the rating each entry implies should be steady. The report shows the implied rating by period (a
+  step is a cell swap or a changed rating setting; PoolMath keeps each entry's own credit, so history
+  stays consistent), compares the latest one with njsPC's rating if you pass `--njspc-lbs`, and flags
+  entries that don't fit their period. For each odd entry it also checks which credit the FC
+  readings support, because a credit that disagrees with the rating can still be the right one
+  (the % or run hours entered may not reflect what actually ran).
 * **Projection accuracy:** for each reading, the algorithm re-run as of just before it with only the
   data logged by then, compared with what was measured. Error is `projected - measured` in ppm (positive
   means it projected too high). Shown as mean absolute error, RMSE, bias, the share within 1 and 2 ppm,
@@ -66,7 +74,8 @@ You can also point it at a saved copy of the share JSON instead of a code:
 | `--gallons 12000` | Pool volume. Defaults to PoolMath's value; set it if that is wrong, because it scales the ppm credited for liquid chlorine. |
 | `--days 365` | How far back to score readings (default 365). A shorter value focuses on recent behaviour; a longer one adds earlier seasons if the data goes back that far. |
 | `--pool NAME` | Choose a pool when the account has several (default: the first). A part of the name is enough. |
-| `--report` | `summary`, `accuracy`, `whatif`, `anomalies` or `all` (default). |
+| `--report` | `summary`, `capacity`, `accuracy`, `whatif`, `anomalies` or `all` (default). |
+| `--njspc-lbs 1.47` | njsPC's AutoSwg SWG rating (lbs/day), so the capacity report can compare it with what PoolMath's entries imply. A mismatch shifts both the recommended % and the SWG output njsPC logs locally. |
 | `--include-uncovered` | Also score readings from before the SWG record starts. Not recommended: with no SWG output on record, consumption comes out wrong. |
 | `--cache DIR`, `--refresh` | Where the sanitized data is cached, and re-fetch instead of using it. |
 
