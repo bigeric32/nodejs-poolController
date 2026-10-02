@@ -245,6 +245,18 @@ type AutoSwgCheckMode = 'new' | 'refine' | 'auto';
 // Runs a Check Now-style recommendation against the configured PoolMath page and
 // populates state.autoSwg with the result -- shared by every way of asking for one, and by
 // the fully-automatic mode's periodic check, so they can't drift apart.
+// Today's sunrise and sunset as 'HH:MM' in `timeZone`, for weighting consumption by daylight;
+// empty (so time is counted by the clock) when the controller's location isn't set up.
+function autoSwgSunTimes(timeZone: string): { sunrise?: string; sunset?: string } {
+    try {
+        if (state.heliotrope.isValid && state.heliotrope.sunrise && state.heliotrope.sunset) {
+            return { sunrise: formatHHMMInZone(state.heliotrope.sunrise, timeZone), sunset: formatHHMMInZone(state.heliotrope.sunset, timeZone) };
+        }
+    }
+    catch (err) { logger.warn(`AutoSwg: could not read today's sunrise/sunset: ${err.message}`); }
+    return {};
+}
+
 // The settings that decide what a calculation aims at (see lastAppliedSettingsKey).
 function autoSwgSettingsKey(): string {
     let cfg = sys.autoSwg;
@@ -272,6 +284,7 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
         }
     }
     let { swgStartTime, swgStopTime, scheduleNote } = resolveAutoSwgRunWindow(cfg);
+    let sunTimes = autoSwgSunTimes(cfg.timezone);
     let chlorRecord = sys.chlorinators.toArray().find(c => c.id === cfg.chlorinatorId);
     let schlor = chlorRecord ? state.chlorinators.getItemById(chlorRecord.id, false) : undefined;
     let result = await computeRecommendation({
@@ -287,6 +300,9 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
         targetDaysAbove: cfg.targetDaysAbove,
         targetDaysBelow: cfg.targetDaysBelow,
         inFlight: inFlight,
+        sunriseTime: sunTimes.sunrise,
+        sunsetTime: sunTimes.sunset,
+        daytimeSharePct: cfg.daytimeLossSharePct,
     }, undefined, toLocalSwgEntries(readAutoSwgHistory()));
     // A Refresh works from fresh PoolMath data; if the newest FC reading is the very one the
     // last apply was already based on, there is nothing new and re-running would only restate
