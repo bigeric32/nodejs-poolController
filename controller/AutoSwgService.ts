@@ -386,6 +386,16 @@ function parseCards(html: string, poolHeading?: string): ParsedCards {
     };
 }
 
+// The last page parse, kept so re-running the calculation many times over one page (the projection
+// accuracy report and what-if sweep do) doesn't re-parse it each time. Matched by the page's content.
+let parseCache: { html: string; heading?: string; parsed: ParsedCards } | undefined;
+function parseCardsCached(html: string, heading?: string): ParsedCards {
+    if (parseCache && parseCache.heading === heading && parseCache.html === html) return parseCache.parsed;
+    const parsed = parseCards(html, heading);
+    parseCache = { html, heading, parsed };
+    return parsed;
+}
+
 // Combines PoolMath SWG entries with locally logged applied recommendations. Local
 // entries always count; a PoolMath entry is dropped only if a local entry lies
 // within LOCAL_SWG_MATCH_MS of it (i.e. they describe the same change).
@@ -704,7 +714,7 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     const swgHours = durationHours(swgStart, swgStop);
 
     const pageHtml = html || await fetchHtml(params.shareCode);
-    const parsedCards = parseCards(pageHtml, params.poolName);
+    const parsedCards = parseCardsCached(pageHtml, params.poolName);
     // With `asOf`, only what had been logged by then counts.
     const asOfMs = params.asOf ? params.asOf.getTime() : undefined;
     const upTo = <T extends { ts: Date }>(list: T[]): T[] => typeof asOfMs === 'undefined' ? list : list.filter(e => e.ts.getTime() <= asOfMs);
@@ -1109,7 +1119,7 @@ export interface ProjectionAccuracy {
 // sunrise/sunset for past days.
 export async function buildProjectionAccuracy(params: AutoSwgParams, options: { lookbackDays: number; html?: string; localSwgEntries?: LocalSwgEntry[]; historyRecords?: any[] }): Promise<ProjectionAccuracy> {
     const html = options.html || await fetchHtml(params.shareCode);
-    const fc = parseCards(html, params.poolName).fcEvents;
+    const fc = parseCardsCached(html, params.poolName).fcEvents;
     const from = Date.now() - options.lookbackDays * 86400000;
     const rows: ProjectionAccuracyRow[] = [];
     let skipped = 0;
@@ -1169,6 +1179,97 @@ export async function buildProjectionAccuracy(params: AutoSwgParams, options: { 
         targets.push(row);
     }
     return { rows, summary, targets, skipped };
+}
+
+// One configuration the what-if sweep scored, and how it compared with the current settings.
+export interface WhatIfVariant {
+    key: string;
+    label: string;
+    count: number;                       // readings scored (the same readings for every variant)
+    meanAbsError?: number;
+    rmse?: number;
+    bias?: number;                       // mean(projected - measured)
+    diff?: number;                       // mean change in absolute error vs the current settings (negative = better)
+    diffLow?: number;                    // 90% bootstrap interval of that change
+    diffHigh?: number;
+    verdict: 'current' | 'better' | 'worse' | 'no clear difference';
+}
+
+export interface WhatIfSweep {
+    count: number;                       // readings every variant could score
+    skipped: number;
+    variants: WhatIfVariant[];           // current settings first, then best to worst
+}
+
+const yieldToEventLoop = () => new Promise<void>(resolve => setImmediate(resolve));
+
+// Re-scores the projection accuracy under alternative settings -- other averaging windows, daylight
+// weighting off, the liquid chlorine credit toggled, other anomaly tolerances -- on the SAME FC
+// readings as the current settings, so the comparison is like for like. Each variant's change in
+// mean absolute error vs the current settings comes with a 90% bootstrap interval, and a verdict
+// ("better"/"worse" only when that interval excludes zero). Yields to the event loop between
+// calculations so it can't hold up the rest of njsPC.
+export async function buildWhatIfSweep(params: AutoSwgParams, options: { lookbackDays: number; html?: string; localSwgEntries?: LocalSwgEntry[] }): Promise<WhatIfSweep> {
+    const html = options.html || await fetchHtml(params.shareCode);
+    const fc = parseCardsCached(html, params.poolName).fcEvents;
+    const from = Date.now() - options.lookbackDays * 86400000;
+
+    const variants: { key: string; label: string; params: AutoSwgParams }[] = [{ key: 'current', label: 'Current settings', params }];
+    const add = (key: string, label: string, p: AutoSwgParams) => variants.push({ key, label, params: p });
+    for (const w of [7, 14, 21, 28, 42, 56]) if (w !== params.windowDays) add(`window${w}`, `Averaging window ${w} days`, Object.assign({}, params, { windowDays: w }));
+    if (params.sunriseTime && params.sunsetTime) add('noDaylight', 'Daylight weighting off', Object.assign({}, params, { sunriseTime: undefined, sunsetTime: undefined }));
+    add('creditToggle', params.creditChlorineAdditions !== false ? 'Liquid chlorine credit off' : 'Liquid chlorine credit on', Object.assign({}, params, { creditChlorineAdditions: params.creditChlorineAdditions === false }));
+    const curTol = typeof params.fcAnomalyTolerancePpm === 'number' ? params.fcAnomalyTolerancePpm : ANOMALY_TOLERANCE_PPM;
+    for (const t of [0, 1, 3]) if (t !== curTol) add(`tol${t}`, t === 0 ? 'FC anomaly check off' : `FC anomaly tolerance ${t} ppm`, Object.assign({}, params, { fcAnomalyTolerancePpm: t }));
+
+    // Readings worth scoring: a previous reading 0.1 to 14 days earlier, within the lookback.
+    const candidates: number[] = [];
+    let skipped = 0;
+    for (let k = 1; k < fc.length; k++) {
+        if (fc[k].ts.getTime() < from) continue;
+        const days = (fc[k].ts.getTime() - fc[k - 1].ts.getTime()) / 86400000;
+        if (days < 0.1 || days > 14) { skipped++; continue; }
+        candidates.push(k);
+    }
+    // error (projected - measured) per variant per reading
+    const errors: Map<number, number>[] = variants.map(() => new Map<number, number>());
+    for (const k of candidates) {
+        for (let v = 0; v < variants.length; v++) {
+            try {
+                const r = await computeRecommendation(Object.assign({}, variants[v].params, { inFlight: undefined, asOf: new Date(fc[k].ts.getTime() - 60000) }), html, options.localSwgEntries || []);
+                if (r.mostRecentFc && r.mostRecentFc.ts === fc[k - 1].ts.toISOString()) errors[v].set(k, r.projectedCurrentFc - fc[k].value);
+            }
+            catch (err) { /* too little history before this reading */ }
+            await yieldToEventLoop();
+        }
+    }
+    const common = candidates.filter(k => errors.every(m => m.has(k)));
+    skipped += candidates.length - common.length;
+
+    const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
+    const round2 = (x: number) => Math.round(x * 100) / 100;
+    let seed = 12345; // deterministic bootstrap (mulberry32), so the same data gives the same intervals
+    const rand = () => { seed |= 0; seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+    const baseAbs = common.map(k => Math.abs(errors[0].get(k)));
+    const out: WhatIfVariant[] = variants.map((v, i) => {
+        const e = common.map(k => errors[i].get(k));
+        const row: WhatIfVariant = { key: v.key, label: v.label, count: e.length, verdict: 'current' };
+        if (!e.length) return row;
+        row.meanAbsError = round2(mean(e.map(Math.abs)));
+        row.rmse = round2(Math.sqrt(mean(e.map(x => x * x))));
+        row.bias = round2(mean(e));
+        if (i > 0 && e.length >= 5) {
+            const d = e.map((x, j) => Math.abs(x) - baseAbs[j]);
+            const boots: number[] = [];
+            for (let b = 0; b < 2000; b++) { let sum = 0; for (let j = 0; j < d.length; j++) sum += d[Math.floor(rand() * d.length)]; boots.push(sum / d.length); }
+            boots.sort((a, b) => a - b);
+            row.diff = round2(mean(d)); row.diffLow = round2(boots[100]); row.diffHigh = round2(boots[1899]);
+            row.verdict = boots[1899] < 0 ? 'better' : (boots[100] > 0 ? 'worse' : 'no clear difference');
+        }
+        else if (i > 0) row.verdict = 'no clear difference';
+        return row;
+    });
+    return { count: common.length, skipped, variants: [out[0], ...out.slice(1).sort((a, b) => (typeof a.meanAbsError === 'number' ? a.meanAbsError : Infinity) - (typeof b.meanAbsError === 'number' ? b.meanAbsError : Infinity))] };
 }
 
 function swgEventsToEntries(events: SwgEvent[]): CombinedHistoryEntry[] {

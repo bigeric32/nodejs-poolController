@@ -28,7 +28,7 @@ import { config } from "../../../config/Config";
 
 import { ServiceParameterError } from "../../../controller/Errors";
 import { ChlorinatorStateMessage } from "../../../controller/comms/messages/status/ChlorinatorStateMessage";
-import { buildCombinedHistory, buildProjectionAccuracy, computeRecommendation, computeSwgCapacity, formatLocalDateTime, minutesToHHMM, nextScheduledCheck } from "../../../controller/AutoSwgService";
+import { buildCombinedHistory, buildProjectionAccuracy, buildWhatIfSweep, computeRecommendation, computeSwgCapacity, formatLocalDateTime, minutesToHHMM, nextScheduledCheck } from "../../../controller/AutoSwgService";
 import type { PageReadings } from "../../../controller/AutoSwgService";
 import { appendAutoSwgHistory, readAutoSwgHistory, toLocalSwgEntries } from "../../../controller/AutoSwgHistory";
 import { archivedChlorineAdditions, archivedCyaReadings, archivedFcReadings, archivedSwgEvents, isPoolMathArchiveCurrent, poolMathArchiveSummary, refreshPoolMathArchiveFromPage, syncPoolMathArchive } from "../../../controller/AutoSwgPoolMathArchive";
@@ -1222,6 +1222,39 @@ export class StateRoute {
                     fcAnomalyTolerancePpm: cfg.fcAnomalyTolerancePpm,
                 }, { lookbackDays: days, localSwgEntries: toLocalSwgEntries(readAutoSwgHistory()), historyRecords: readAutoSwgHistory() });
                 return res.status(200).send(report);
+            }
+            catch (err) { next(err); }
+        });
+        // Scores alternative settings (averaging window, daylight weighting, chlorine credit, anomaly
+        // tolerance) on the same readings as the current ones (see buildWhatIfSweep). ?days= sets how
+        // far back (default 365). Takes a few seconds; it yields to the rest of njsPC as it goes.
+        app.get('/state/autoSwg/projectionAccuracy/whatIf', async (req, res, next) => {
+            try {
+                let cfg = sys.autoSwg;
+                if (!cfg.shareCode) throw new ServiceParameterError('AutoSwg is not configured: shareCode is required.', 'autoSwg', 'shareCode', cfg.shareCode);
+                let days = parseInt(String(req.query.days), 10);
+                days = isNaN(days) ? 365 : Math.max(14, Math.min(540, days));
+                let { swgStartTime, swgStopTime } = resolveAutoSwgRunWindow(cfg);
+                let sunTimes = autoSwgSunTimes(cfg.timezone);
+                let sweep = await buildWhatIfSweep({
+                    shareCode: cfg.shareCode,
+                    poolName: cfg.poolName || undefined,
+                    gallons: cfg.gallons,
+                    swgLbsPerDay: cfg.swgLbsPerDay,
+                    swgStartTime: swgStartTime,
+                    swgStopTime: swgStopTime,
+                    timezone: cfg.timezone,
+                    windowDays: cfg.windowDays,
+                    targetFc: cfg.targetFc,
+                    targetDaysAbove: cfg.targetDaysAbove,
+                    targetDaysBelow: cfg.targetDaysBelow,
+                    sunriseTime: sunTimes.sunrise,
+                    sunsetTime: sunTimes.sunset,
+                    daytimeSharePct: cfg.daytimeLossSharePct,
+                    creditChlorineAdditions: cfg.creditChlorineAdditions,
+                    fcAnomalyTolerancePpm: cfg.fcAnomalyTolerancePpm,
+                }, { lookbackDays: days, localSwgEntries: toLocalSwgEntries(readAutoSwgHistory()) });
+                return res.status(200).send(sweep);
             }
             catch (err) { next(err); }
         });
