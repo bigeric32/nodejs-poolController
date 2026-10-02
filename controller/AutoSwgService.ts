@@ -425,6 +425,28 @@ function parseCardsCached(html: string, heading?: string): ParsedCards {
     return parsed;
 }
 
+// The share page lists only recent history, so the reports (projection accuracy and the what-if sweep) can also
+// draw on the PoolMath archive -- up to 18 months of FC readings, SWG entries, CYA and liquid chlorine pulled from
+// the JSON interface. Where both have an entry within two minutes the page's wins, so an edit isn't listed twice.
+// The merge is remembered for the last (page, archive) pair, since the reports re-run the calculation many times.
+let mergeCache: { base: ParsedCards; archive: ArchivedHistory; merged: ParsedCards } | undefined;
+function parseWithArchive(html: string, heading: string | undefined, archive?: ArchivedHistory): ParsedCards {
+    const base = parseCardsCached(html, heading);
+    if (!archive) return base;
+    if (mergeCache && mergeCache.base === base && mergeCache.archive === archive) return mergeCache.merged;
+    const near = (list: { ts: Date }[], t: number) => list.some(e => Math.abs(e.ts.getTime() - t) <= 2 * 60 * 1000);
+    const byTime = (a: { ts: Date }, b: { ts: Date }) => a.ts.getTime() - b.ts.getTime();
+    const merged: ParsedCards = {
+        fcEvents: [...base.fcEvents, ...archive.fc.filter(a => !near(base.fcEvents, a.ts.getTime()))].sort(byTime),
+        swgEvents: [...base.swgEvents, ...archive.swg.filter(a => !near(base.swgEvents, a.ts.getTime())).map(a => ({ ts: a.ts, ppmPerDay: a.ppmPerDay, hrs: a.hrs, pct: a.pct, source: 'poolmath' as SwgSource }))].sort(byTime),
+        cyaEvents: [...base.cyaEvents, ...archive.cya.filter(a => !near(base.cyaEvents, a.ts.getTime()))].sort(byTime),
+        ccEvents: base.ccEvents,
+        chlorineAdditions: [...base.chlorineAdditions, ...archive.chlorine.filter(a => !near(base.chlorineAdditions, a.ts.getTime()))].sort(byTime),
+    };
+    mergeCache = { base, archive, merged };
+    return merged;
+}
+
 // Combines PoolMath SWG entries with locally logged applied recommendations. Local
 // entries always count; a PoolMath entry is dropped only if a local entry lies
 // within LOCAL_SWG_MATCH_MS of it (i.e. they describe the same change).
@@ -736,14 +758,14 @@ export function computeSwgCapacity(p: { gallons: number; swgLbsPerDay: number; s
     return { ppmPerDayAtFull: ppmPerDayAtFullDuty(p.gallons, p.swgLbsPerDay, hours), hours };
 }
 
-export async function computeRecommendation(params: AutoSwgParams, html?: string, localSwgEntries: LocalSwgEntry[] = [], onPageParsed?: (page: PageReadings) => void): Promise<AutoSwgResult> {
+export async function computeRecommendation(params: AutoSwgParams, html?: string, localSwgEntries: LocalSwgEntry[] = [], onPageParsed?: (page: PageReadings) => void, archive?: ArchivedHistory): Promise<AutoSwgResult> {
     const rationale: string[] = [];
     const swgStart = parseTimeOfDay(params.swgStartTime);
     const swgStop = parseTimeOfDay(params.swgStopTime);
     const swgHours = durationHours(swgStart, swgStop);
 
     const pageHtml = html || await fetchHtml(params.shareCode);
-    const parsedCards = parseCardsCached(pageHtml, params.poolName);
+    const parsedCards = parseWithArchive(pageHtml, params.poolName, archive);
     // With `asOf`, only what had been logged by then counts.
     const asOfMs = params.asOf ? params.asOf.getTime() : undefined;
     const upTo = <T extends { ts: Date }>(list: T[]): T[] => typeof asOfMs === 'undefined' ? list : list.filter(e => e.ts.getTime() <= asOfMs);
@@ -1206,6 +1228,7 @@ export interface ProjectionAccuracy {
         sinceChange?: { since: string; count: number; meanAbsError?: number; unchangedMae?: number; bias?: number } };
     targets: TargetTrackingRow[];      // oldest first
     skipped: number;                   // readings that couldn't be scored (long gaps, too little history)
+    history?: { readings: number; from?: string; archived: number };   // the FC readings available (page plus archive) and how many came from the archive
 }
 
 // How well the algorithm predicts FC, checked against what was measured: for each FC reading in
@@ -1214,9 +1237,9 @@ export interface ProjectionAccuracy {
 // matches each apply's target FC and deadline with the FC measured nearest the deadline.
 // Limits: it reads the share page (so only what the page lists), and uses today's run window and
 // sunrise/sunset for past days.
-export async function buildProjectionAccuracy(params: AutoSwgParams, options: { lookbackDays: number; html?: string; localSwgEntries?: LocalSwgEntry[]; historyRecords?: any[]; tuningChangedAt?: string }): Promise<ProjectionAccuracy> {
+export async function buildProjectionAccuracy(params: AutoSwgParams, options: { lookbackDays: number; html?: string; localSwgEntries?: LocalSwgEntry[]; historyRecords?: any[]; tuningChangedAt?: string; archive?: ArchivedHistory }): Promise<ProjectionAccuracy> {
     const html = options.html || await fetchHtml(params.shareCode);
-    const parsedPage = parseCardsCached(html, params.poolName);
+    const parsedPage = parseWithArchive(html, params.poolName, options.archive);
     const fc = parsedPage.fcEvents;
     const minK = firstScorableReading(fc, parsedPage.swgEvents, options.localSwgEntries || []);
     const from = Date.now() - options.lookbackDays * 86400000;
@@ -1229,7 +1252,7 @@ export async function buildProjectionAccuracy(params: AutoSwgParams, options: { 
         const days = (t2.getTime() - t1.getTime()) / 86400000;
         if (days < 0.1 || days > 14) { skipped++; continue; }
         try {
-            const r = await computeRecommendation(Object.assign({}, params, { inFlight: undefined, asOf: new Date(t2.getTime() - 60000) }), html, options.localSwgEntries || []);
+            const r = await computeRecommendation(Object.assign({}, params, { inFlight: undefined, asOf: new Date(t2.getTime() - 60000) }), html, options.localSwgEntries || [], undefined, options.archive);
             if (!r.mostRecentFc || r.mostRecentFc.ts !== t1.toISOString()) { skipped++; continue; }
             rows.push({
                 ts: t2.toISOString(), previousTs: t1.toISOString(), days: Math.round(days * 100) / 100,
@@ -1330,7 +1353,7 @@ export async function buildProjectionAccuracy(params: AutoSwgParams, options: { 
         }
         targets.push(row);
     }
-    return { rows, summary, targets, skipped };
+    return { rows, summary, targets, skipped, history: { readings: fc.length, from: fc.length ? fc[0].ts.toISOString() : undefined, archived: options.archive ? options.archive.fc.length : 0 } };
 }
 
 // One configuration the what-if sweep scored, and how it compared with the current settings.
@@ -1362,9 +1385,9 @@ const yieldToEventLoop = () => new Promise<void>(resolve => setImmediate(resolve
 // mean absolute error vs the current settings comes with a 90% bootstrap interval, and a verdict
 // ("better"/"worse" only when that interval excludes zero). Yields to the event loop between
 // calculations so it can't hold up the rest of njsPC.
-export async function buildWhatIfSweep(params: AutoSwgParams, options: { lookbackDays: number; html?: string; localSwgEntries?: LocalSwgEntry[] }): Promise<WhatIfSweep> {
+export async function buildWhatIfSweep(params: AutoSwgParams, options: { lookbackDays: number; html?: string; localSwgEntries?: LocalSwgEntry[]; archive?: ArchivedHistory }): Promise<WhatIfSweep> {
     const html = options.html || await fetchHtml(params.shareCode);
-    const parsedPage = parseCardsCached(html, params.poolName);
+    const parsedPage = parseWithArchive(html, params.poolName, options.archive);
     const fc = parsedPage.fcEvents;
     const minK = firstScorableReading(fc, parsedPage.swgEvents, options.localSwgEntries || []);
     const from = Date.now() - options.lookbackDays * 86400000;
@@ -1398,7 +1421,7 @@ export async function buildWhatIfSweep(params: AutoSwgParams, options: { lookbac
     for (const k of candidates) {
         for (let v = 0; v < variants.length; v++) {
             try {
-                const r = await computeRecommendation(Object.assign({}, variants[v].params, { inFlight: undefined, asOf: new Date(fc[k].ts.getTime() - 60000) }), html, options.localSwgEntries || []);
+                const r = await computeRecommendation(Object.assign({}, variants[v].params, { inFlight: undefined, asOf: new Date(fc[k].ts.getTime() - 60000) }), html, options.localSwgEntries || [], undefined, options.archive);
                 if (r.mostRecentFc && r.mostRecentFc.ts === fc[k - 1].ts.toISOString()) errors[v].set(k, r.projectedCurrentFc - fc[k].value);
             }
             catch (err) { /* too little history before this reading */ }
