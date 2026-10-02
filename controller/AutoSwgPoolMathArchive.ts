@@ -365,7 +365,6 @@ export async function syncPoolMathArchive(shareCode: string, poolName?: string):
     const pool = pickPool(data, poolName);
     const logs: any[] = Array.isArray(pool.recentLogs) ? pool.recentLogs : [];
     const now = new Date();
-    const cutoff = retentionCutoff(now);
     const deletedIds = new Set<string>();
     const fetched: PoolMathArchiveEntry[] = [];
     for (const log of logs) {
