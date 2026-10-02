@@ -2384,6 +2384,10 @@ export class Alerts extends EqItem {
         this.hasChanged = true;
     }
 }
+// Auto-Apply Recommendations and the automatic PoolMath check change the chlorinator with nobody reviewing the number.
+// They are held back in the interim 0.1.x release (the automation branch has this on). Everything else, including
+// Check Now, Apply, the step to the maintenance %, Tune and the reports, is unaffected.
+export const AUTOSWG_AUTOMATION_AVAILABLE: boolean = false;
 export class AutoSwg extends EqItem {
     // Singleton settings for the PoolMath-driven SWG% recommendation feature.
     // Persisted config only -- the computed recommendation itself lives in
@@ -2429,6 +2433,7 @@ export class AutoSwg extends EqItem {
         // nobody reviewing it would otherwise just overwrite whatever unapplied preview the
         // user is looking at on the calculation screen.
         if (typeof this.data.autoCheckEnabled === 'undefined') this.data.autoCheckEnabled = false;
+        if (!AUTOSWG_AUTOMATION_AVAILABLE) { this.data.autoApplyEnabled = false; this.data.autoCheckEnabled = false; }
         if (typeof this.data.autoCheckHours === 'undefined') this.data.autoCheckHours = 12;
         // Optional 'HH:MM' (in `timezone`) to pin periodic checks to the clock: every
         // autoCheckHours counting from this time of day. Empty = count from when the timer
@@ -2535,10 +2540,11 @@ export class AutoSwg extends EqItem {
     // pushing FC past targetFc indefinitely.
     public get autoStepEnabled(): boolean { return this.data.autoStepEnabled; }
     public set autoStepEnabled(val: boolean) { this.setDataVal('autoStepEnabled', val); }
-    public get autoApplyEnabled(): boolean { return this.data.autoApplyEnabled; }
-    public set autoApplyEnabled(val: boolean) { this.setDataVal('autoApplyEnabled', val); }
-    public get autoCheckEnabled(): boolean { return this.data.autoCheckEnabled; }
-    public set autoCheckEnabled(val: boolean) { this.setDataVal('autoCheckEnabled', val); }
+    public get automationAvailable(): boolean { return AUTOSWG_AUTOMATION_AVAILABLE; }
+    public get autoApplyEnabled(): boolean { return AUTOSWG_AUTOMATION_AVAILABLE ? this.data.autoApplyEnabled : false; }
+    public set autoApplyEnabled(val: boolean) { this.setDataVal('autoApplyEnabled', AUTOSWG_AUTOMATION_AVAILABLE ? val : false); }
+    public get autoCheckEnabled(): boolean { return AUTOSWG_AUTOMATION_AVAILABLE ? this.data.autoCheckEnabled : false; }
+    public set autoCheckEnabled(val: boolean) { this.setDataVal('autoCheckEnabled', AUTOSWG_AUTOMATION_AVAILABLE ? val : false); }
     public get autoCheckHours(): number { return this.data.autoCheckHours; }
     public set autoCheckHours(val: number) { this.setDataVal('autoCheckHours', val); }
     public get autoApplyWarnThresholdPct(): number { return this.data.autoApplyWarnThresholdPct; }
