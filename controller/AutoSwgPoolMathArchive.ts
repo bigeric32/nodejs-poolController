@@ -28,6 +28,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 // Stored in data/autoSwgPoolMathArchive.json next to poolConfig.json. PoolMath's share endpoint
 // is rate limited (about one request per minute), so a sync makes one request, waits out any
 // 429 before retrying, and shares a clock with the HTML fetch (see noteShareRequest).
+//
+// The sync is a one-time pull per share code: it runs only when the archive isn't already for
+// the configured share code and pool (the first time, or after either changes), not on a
+// schedule -- see isPoolMathArchiveCurrent.
 
 import * as fs from 'fs';
 import * as https from 'https';
@@ -37,8 +41,9 @@ import { msSinceLastShareRequest, noteShareRequest } from './AutoSwgService';
 
 export const AUTO_SWG_ARCHIVE_MONTHS = 18;
 
-// How many log entries to ask for, largest first; a rejected size falls back to the next.
-const RECENT_LOGS_SIZES = [5000, 1000, 250];
+// How many log entries to ask for, smallest first: it stops at the first size that reaches back far
+// enough (see syncPoolMathArchive), so a small account is one small request.
+const RECENT_LOGS_SIZES = [500, 2000, 5000];
 // PoolMath allows roughly one share request per minute; stay comfortably outside that.
 const MIN_GAP_MS = 90 * 1000;
 const RATE_LIMIT_RETRIES = 3;
@@ -100,6 +105,18 @@ function retentionCutoff(now: Date): number {
     const cutoff = new Date(now.getTime());
     cutoff.setMonth(cutoff.getMonth() - AUTO_SWG_ARCHIVE_MONTHS);
     return cutoff.getTime();
+}
+
+// True when the archive was pulled for this share code and pool, so no sync is needed.
+export function isPoolMathArchiveCurrent(shareCode: string, poolName?: string): boolean {
+    const a = readPoolMathArchive();
+    return !!a.syncedAt && a.shareCode === shareCode && (a.poolName || '') === (poolName || '');
+}
+
+// Summary of what's archived (for the status shown on the dashboard).
+export function poolMathArchiveSummary(): { syncedAt?: string; count: number; oldest?: string } {
+    const a = readPoolMathArchive();
+    return { syncedAt: a.syncedAt, count: a.entries.length, oldest: a.entries.length ? a.entries[0].ts : undefined };
 }
 
 // The archived FC test readings, oldest first, for merging into the combined history view.
@@ -171,38 +188,56 @@ function toEntry(log: any): PoolMathArchiveEntry | undefined {
     return e;
 }
 
-// One background sync: asks PoolMath's JSON interface for as many recent logs as it will give,
-// merges them into the archive, and writes it. Throws on any problem (rate limiting that
-// outlasts the retries, an HTTP error, an unexpected shape) leaving the archive untouched.
+// One request for the `size` most recent logs, waiting out any rate limiting first. Resolves to
+// the parsed JSON, or to `undefined` when PoolMath rejects that size (HTTP 400/413/422); throws
+// for anything else (rate limiting that outlasts the retries, another HTTP error, bad JSON).
+async function fetchRecentLogs(shareCode: string, size: number): Promise<any | undefined> {
+    for (let attempt = 0; ; attempt++) {
+        // Leave a gap since ANY recent request to the share endpoint (the HTML fetch counts).
+        const gap = MIN_GAP_MS - msSinceLastShareRequest();
+        if (gap > 0) await sleep(gap);
+        noteShareRequest();
+        const res = await httpGet(jsonUrl(shareCode, size));
+        if (res.status === 429) {
+            if (attempt >= RATE_LIMIT_RETRIES) throw new Error('PoolMath is rate limiting the JSON request (HTTP 429).');
+            const ra = parseInt(String(res.headers['retry-after'] || ''), 10);
+            const wait = Math.min(MAX_WAIT_MS, isNaN(ra) ? DEFAULT_RETRY_AFTER_MS : Math.max(ra * 1000, 1000) + 5000);
+            logger.info(`AutoSwg: PoolMath rate limited the history sync; retrying in ${Math.round(wait / 1000)}s.`);
+            await sleep(wait);
+            continue;
+        }
+        if (res.status === 400 || res.status === 413 || res.status === 422) return undefined;
+        if (res.status < 200 || res.status >= 300) throw new Error(`PoolMath returned HTTP ${res.status} for the JSON history.`);
+        try { return JSON.parse(res.body); }
+        catch (err) { throw new Error(`PoolMath's JSON response could not be parsed: ${err.message}`); }
+    }
+}
+
+// One background sync: asks PoolMath's JSON interface for recent logs until they reach back
+// AUTO_SWG_ARCHIVE_MONTHS (recentLogs is a count, not a date range, so it asks for a growing
+// number and stops as soon as the oldest entry returned is past the cutoff, or PoolMath has
+// returned everything it has), merges them into the archive, and writes it. Throws if nothing
+// could be fetched, leaving the archive untouched; if a larger request fails after a smaller one
+// succeeded, the smaller result is used.
 export async function syncPoolMathArchive(shareCode: string, poolName?: string): Promise<PoolMathSyncResult> {
     if (!shareCode) throw new Error('No PoolMath share code is configured.');
+    const cutoff = retentionCutoff(new Date());
     let data: any;
     let requested = 0;
-    for (let s = 0; s < RECENT_LOGS_SIZES.length && !data; s++) {
-        const size = RECENT_LOGS_SIZES[s];
-        for (let attempt = 0; ; attempt++) {
-            // Leave a gap since ANY recent request to the share endpoint (the HTML fetch counts).
-            const gap = MIN_GAP_MS - msSinceLastShareRequest();
-            if (gap > 0) await sleep(gap);
-            noteShareRequest();
-            const res = await httpGet(jsonUrl(shareCode, size));
-            if (res.status === 429) {
-                if (attempt >= RATE_LIMIT_RETRIES) throw new Error('PoolMath is rate limiting the JSON request (HTTP 429).');
-                const ra = parseInt(String(res.headers['retry-after'] || ''), 10);
-                const wait = Math.min(MAX_WAIT_MS, isNaN(ra) ? DEFAULT_RETRY_AFTER_MS : Math.max(ra * 1000, 1000) + 5000);
-                logger.info(`AutoSwg: PoolMath rate limited the history sync; retrying in ${Math.round(wait / 1000)}s.`);
-                await sleep(wait);
-                continue;
-            }
-            if ((res.status === 400 || res.status === 413 || res.status === 422) && s < RECENT_LOGS_SIZES.length - 1) break; // too many logs asked for -- try a smaller size
-            if (res.status < 200 || res.status >= 300) throw new Error(`PoolMath returned HTTP ${res.status} for the JSON history.`);
-            try { data = JSON.parse(res.body); }
-            catch (err) { throw new Error(`PoolMath's JSON response could not be parsed: ${err.message}`); }
-            requested = size;
-            break;
-        }
+    let lastError: Error | undefined;
+    for (const size of RECENT_LOGS_SIZES) {
+        let got: any;
+        try { got = await fetchRecentLogs(shareCode, size); }
+        catch (err) { lastError = err; break; }
+        if (typeof got === 'undefined') break; // that size isn't accepted -- keep what we have
+        data = got;
+        requested = size;
+        const logs: any[] = Array.isArray(pickPool(got, poolName).recentLogs) ? pickPool(got, poolName).recentLogs : [];
+        const oldest = logs.reduce((m, l) => { const t = new Date(l && l.logTimestamp).getTime(); return isNaN(t) ? m : Math.min(m, t); }, Infinity);
+        if (logs.length < size || oldest <= cutoff) break; // everything PoolMath has, or far enough back
     }
-    if (!data) throw new Error('PoolMath did not accept any recentLogs size for the JSON history.');
+    if (!data) throw lastError || new Error('PoolMath did not accept any recentLogs size for the JSON history.');
+    if (lastError) logger.warn(`AutoSwg: PoolMath history sync stopped early (${lastError.message}); archiving what was fetched.`);
 
     const pool = pickPool(data, poolName);
     const logs: any[] = Array.isArray(pool.recentLogs) ? pool.recentLogs : [];

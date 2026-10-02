@@ -30,7 +30,7 @@ import { ServiceParameterError } from "../../../controller/Errors";
 import { ChlorinatorStateMessage } from "../../../controller/comms/messages/status/ChlorinatorStateMessage";
 import { buildCombinedHistory, computeRecommendation, computeSwgCapacity, formatLocalDateTime, minutesToHHMM, nextScheduledCheck } from "../../../controller/AutoSwgService";
 import { appendAutoSwgHistory, readAutoSwgHistory, toLocalSwgEntries } from "../../../controller/AutoSwgHistory";
-import { archivedFcReadings, syncPoolMathArchive } from "../../../controller/AutoSwgPoolMathArchive";
+import { archivedFcReadings, isPoolMathArchiveCurrent, poolMathArchiveSummary, syncPoolMathArchive } from "../../../controller/AutoSwgPoolMathArchive";
 
 // 'HH:MM' wall-clock time of `dt` in `timeZone`.
 function formatHHMMInZone(dt: Date, timeZone: string): string {
@@ -512,10 +512,11 @@ function autoSwgResponse(skipped?: string) {
 }
 
 // Background PoolMath history sync: pulls up to 18 months of logs from the share link's JSON
-// interface into a local archive (see AutoSwgPoolMathArchive). Runs shortly after startup and
-// then every 12 hours; a failure (including PoolMath rate limiting) is retried sooner.
+// interface into a local archive (see AutoSwgPoolMathArchive). It is a one-time pull per share
+// code and pool -- it runs only when the archive isn't already for the configured ones (the first
+// time, or after either changes), not on a schedule; a failure (including PoolMath rate
+// limiting) is retried until it succeeds.
 const AUTO_SWG_ARCHIVE_FIRST_DELAY_MS = 3 * 60 * 1000;
-const AUTO_SWG_ARCHIVE_INTERVAL_MS = 12 * 60 * 60 * 1000;
 const AUTO_SWG_ARCHIVE_RETRY_MS = 30 * 60 * 1000;
 let autoSwgArchiveTimer: NodeJS.Timeout | undefined;
 let autoSwgArchiveRunning = false;
@@ -523,7 +524,19 @@ let autoSwgArchiveRunning = false;
 export function armAutoSwgArchiveSync(delayMs: number = AUTO_SWG_ARCHIVE_FIRST_DELAY_MS) {
     if (autoSwgArchiveTimer) clearTimeout(autoSwgArchiveTimer);
     autoSwgArchiveTimer = undefined;
-    if (!sys.autoSwg.enabled || !sys.autoSwg.shareCode) return;
+    let cfg = sys.autoSwg;
+    if (!cfg.enabled || !cfg.shareCode) return;
+    if (isPoolMathArchiveCurrent(cfg.shareCode, cfg.poolName || undefined)) {
+        // Already archived for this share code -- nothing to pull; just show what's there.
+        let sum = poolMathArchiveSummary();
+        if (state.autoSwg.archiveCount !== sum.count || state.autoSwg.archiveSyncedAt !== sum.syncedAt) {
+            state.autoSwg.archiveSyncedAt = sum.syncedAt;
+            state.autoSwg.archiveCount = sum.count;
+            state.autoSwg.archiveOldest = sum.oldest;
+            state.autoSwg.emitEquipmentChange();
+        }
+        return;
+    }
     autoSwgArchiveTimer = setTimeout(() => { runAutoSwgArchiveSync().catch(err => logger.error(`AutoSwg: PoolMath history sync failed: ${err.message}`)); }, delayMs);
 }
 
@@ -533,7 +546,7 @@ async function runAutoSwgArchiveSync(): Promise<void> {
     let cfg = sys.autoSwg;
     if (!cfg.enabled || !cfg.shareCode) return;
     autoSwgArchiveRunning = true;
-    let nextMs = AUTO_SWG_ARCHIVE_INTERVAL_MS;
+    let retryMs: number | undefined;
     try {
         let r = await syncPoolMathArchive(cfg.shareCode, cfg.poolName || undefined);
         state.autoSwg.archiveSyncedAt = new Date().toISOString();
@@ -543,14 +556,16 @@ async function runAutoSwgArchiveSync(): Promise<void> {
         logger.info(`AutoSwg: PoolMath history sync: ${r.fetched} entries returned (asked for ${r.requested}), ${r.added} new, ${r.total} archived back to ${r.oldest ? r.oldest.slice(0, 10) : 'n/a'}.`);
     }
     catch (err) {
-        nextMs = AUTO_SWG_ARCHIVE_RETRY_MS;
+        retryMs = AUTO_SWG_ARCHIVE_RETRY_MS;
         state.autoSwg.archiveError = err.message;
-        logger.warn(`AutoSwg: PoolMath history sync failed (${err.message}); trying again in ${nextMs / 60000} minutes.`);
+        logger.warn(`AutoSwg: PoolMath history sync failed (${err.message}); trying again in ${retryMs / 60000} minutes.`);
     }
     finally {
         autoSwgArchiveRunning = false;
         state.autoSwg.emitEquipmentChange();
-        armAutoSwgArchiveSync(nextMs);
+        // After a failure, try again; after a success this is a no-op unless the share code changed
+        // while the sync was running (then it pulls the new one's history).
+        armAutoSwgArchiveSync(typeof retryMs !== 'undefined' ? retryMs : 60 * 1000);
     }
 }
 
