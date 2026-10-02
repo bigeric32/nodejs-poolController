@@ -30,7 +30,7 @@ import { ServiceParameterError } from "../../../controller/Errors";
 import { buildCombinedHistory, buildProjectionAccuracy, buildTune, buildWhatIfSweep, computeRecommendation, computeSwgCapacity, formatLocalDateTime, minutesToHHMM, nextScheduledCheck } from "../../../controller/AutoSwgService";
 import type { AutoSwgParams, PageReadings } from "../../../controller/AutoSwgService";
 import { appendTuneHistory, readTuneHistory } from "../../../controller/AutoSwgTuneHistory";
-import { appendAutoSwgHistory, readAutoSwgHistory, toLocalSwgEntries } from "../../../controller/AutoSwgHistory";
+import { appendAutoSwgHistory, readAutoSwgHistory, toLocalSwgEntries, AutoSwgApplyTrigger } from "../../../controller/AutoSwgHistory";
 import { archivedChlorineAdditions, archivedCyaReadings, archivedFcReadings, archivedSwgEvents, isPoolMathArchiveCurrent, poolMathArchiveSummary, refreshPoolMathArchiveFromPage, syncPoolMathArchive } from "../../../controller/AutoSwgPoolMathArchive";
 
 // 'HH:MM' wall-clock time of `dt` in `timeZone`.
@@ -224,6 +224,7 @@ async function runAutoSwgStep() {
         catch (err) { logger.warn(`AutoSwg: logging the step without a ppm/day figure: ${err.message}`); }
         appendAutoSwgHistory({
             source: 'auto',
+            trigger: 'step',
             appliedAt: state.autoSwg.lastAppliedAt,
             appliedPct: pct,
             recommendedPct: pct,
@@ -371,6 +372,8 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
         mostRecentSwg: result.mostRecentSwg,
         localSwgEntriesUsed: result.localSwgEntriesUsed,
         poolMathSwgEntriesReplaced: result.poolMathSwgEntriesReplaced,
+        targetRefreshed: result.refreshed,
+        targetDateExtended: result.targetDateExtended,
     };
     state.autoSwg.rationale = result.rationale;
     state.autoSwg.error = undefined;
@@ -385,11 +388,12 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
 // the magnitude gets checked against autoApplyWarnThresholdPct and flagged for the
 // dashboard if it's large). `pctOverride` lets a manual apply send a value other than the
 // plain recommendation; the automatic path never overrides it.
-async function applyAutoSwgRecommendation(isAutoApply: boolean, pctOverride?: number): Promise<ChlorinatorState> {
+async function applyAutoSwgRecommendation(isAutoApply: boolean, pctOverride?: number, trigger?: AutoSwgApplyTrigger): Promise<ChlorinatorState> {
     if (!state.autoSwg.pending) throw new ServiceParameterError('There is no pending AutoSwg recommendation to apply. Run /state/autoSwg/recommend first.', 'autoSwg', 'pending', state.autoSwg.pending);
     if (sys.autoSwg.chlorinatorId < 0) throw new ServiceParameterError('AutoSwg is not configured with a target chlorinatorId.', 'autoSwg', 'chlorinatorId', sys.autoSwg.chlorinatorId);
     let pct = typeof pctOverride !== 'undefined' ? pctOverride : state.autoSwg.recommendedPct;
     let previousAppliedPct = state.autoSwg.lastAppliedPct;
+    let previousTargetDate = state.autoSwg.lastAppliedTargetDate;
     autoSwgApplyInFlight = { pct: pct, at: Date.now() };
     let schlor: ChlorinatorState;
     try { schlor = await sys.board.chlorinator.setChlorAsync({ id: sys.autoSwg.chlorinatorId, poolSetpoint: pct }); }
@@ -440,6 +444,11 @@ async function applyAutoSwgRecommendation(isAutoApply: boolean, pctOverride?: nu
         let outputs = Object.assign(stateSnapshot, calcOutputs);
         appendAutoSwgHistory({
             source: 'auto',
+            trigger: trigger || (isAutoApply ? undefined : 'reviewed'),
+            targetOutcome: details.targetRefreshed ? 'kept' : (details.targetDateExtended ? 'new-extended' : 'new'),
+            targetFc: state.autoSwg.lastAppliedTargetFc,
+            targetDate: state.autoSwg.lastAppliedTargetDate ? new Date(state.autoSwg.lastAppliedTargetDate).toISOString() : undefined,
+            previousTargetDate: previousTargetDate ? new Date(previousTargetDate).toISOString() : undefined,
             appliedAt: state.autoSwg.lastAppliedAt,
             appliedPct: pct,
             recommendedPct: state.autoSwg.recommendedPct,
@@ -517,8 +526,8 @@ export function armAutoSwgAutoCheck(minDelayMs: number = 0) {
 // it immediately with no further confirmation if AutoSwg.autoApplyEnabled is on -- this is
 // what lets auto-apply be used standalone (manual-trigger only), independent of whether the
 // periodic autoCheckEnabled timer is running at all.
-async function applyIfAutoApplyEnabled(skipped?: string): Promise<void> {
-    if (!skipped && sys.autoSwg.autoApplyEnabled) await applyAutoSwgRecommendation(true);
+async function applyIfAutoApplyEnabled(skipped?: string, trigger?: AutoSwgApplyTrigger): Promise<void> {
+    if (!skipped && sys.autoSwg.autoApplyEnabled) await applyAutoSwgRecommendation(true, undefined, trigger);
 }
 
 // The calculation state plus, when a Refresh was skipped for want of a new FC reading,
@@ -655,7 +664,7 @@ async function runAutoSwgAutoCheck() {
         // there's no in-flight target left), in which case start a new one.
         let skipped = await runAutoSwgRecommendation('auto', 'Automatic check.');
         if (skipped) logger.info(`AutoSwg: automatic check skipped. ${skipped}`);
-        else await applyAutoSwgRecommendation(true);
+        else await applyAutoSwgRecommendation(true, undefined, 'automatic-check');
     }
     catch (err) { logger.error(`AutoSwg: automatic check/apply failed: ${err.message}`); }
     finally { armAutoSwgAutoCheck(); }
@@ -1295,7 +1304,7 @@ export class StateRoute {
         app.post('/state/autoSwg/recommend', async (req, res, next) => {
             try {
                 let skipped = await runAutoSwgRecommendation('new');
-                await applyIfAutoApplyEnabled(skipped);
+                await applyIfAutoApplyEnabled(skipped, 'check-now');
                 return res.status(200).send(autoSwgResponse(skipped));
             }
             catch (err) {
@@ -1314,7 +1323,7 @@ export class StateRoute {
         app.post('/state/autoSwg/refine', async (req, res, next) => {
             try {
                 let skipped = await runAutoSwgRecommendation('refine');
-                await applyIfAutoApplyEnabled(skipped);
+                await applyIfAutoApplyEnabled(skipped, 'refine');
                 return res.status(200).send(autoSwgResponse(skipped));
             }
             catch (err) {
@@ -1331,7 +1340,7 @@ export class StateRoute {
         app.post('/state/autoSwg/refreshAndApply', async (req, res, next) => {
             try {
                 let skipped = await runAutoSwgRecommendation('auto');
-                await applyIfAutoApplyEnabled(skipped);
+                await applyIfAutoApplyEnabled(skipped, 'refresh-and-apply');
                 return res.status(200).send(autoSwgResponse(skipped));
             }
             catch (err) {

@@ -36,8 +36,20 @@ import type { LocalSwgEntry } from './AutoSwgService';
 
 export const AUTO_SWG_HISTORY_MONTHS = 18;
 
+// What caused an AutoSwg apply: the periodic check, the Refresh and Apply button, Check Now or Refresh: Adjust % with
+// Auto-Apply on, a person pressing Apply after reviewing the number, or the step to the maintenance % after a target.
+export type AutoSwgApplyTrigger = 'automatic-check' | 'refresh-and-apply' | 'check-now' | 'refine' | 'reviewed' | 'step';
+
 export interface AutoSwgHistoryRecord {
     source: 'auto' | 'manual'; // 'auto' = applied via AutoSwg; 'manual' = changed some other way
+    trigger?: AutoSwgApplyTrigger; // auto only: what caused it (absent on records written before this was kept)
+    // auto only: what this apply did with the target date. 'kept' = refreshed against the original deadline; 'new' = a new
+    // target was started; 'new-extended' = a new target whose deadline was then moved out to when consumption alone reaches
+    // the target FC. Absent on records written before this was kept, and on steps.
+    targetOutcome?: 'kept' | 'new' | 'new-extended';
+    targetFc?: number;
+    targetDate?: string;           // ISO: the deadline this apply is aiming for
+    previousTargetDate?: string;   // ISO: the in-flight deadline before this apply, if there was one
     appliedAt: string;        // ISO time the setpoint was sent (auto) or the change was detected (manual)
     appliedPct: number;       // the SWG % now in effect
     recommendedPct?: number;  // auto only: what the calculation recommended (differs from appliedPct if overridden)
