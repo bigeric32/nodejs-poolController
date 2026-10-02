@@ -62,6 +62,84 @@ You can also point it at a saved copy of the share JSON instead of a code:
   in absolute error versus your current settings (negative is better) with a 90% range.
 * **Anomalies:** FC rises beyond what the SWG output plus logged additions explain, at 1, 2 and 3 ppm.
 
+## Using the in-app reports: Projection Accuracy and What-If Sweep
+
+dashPanel has the same two reports for your own pool, under **Settings > Chemistry > AutoSwg > Tuning
+options** (click "Tuning options" to expand it). This script gives you the same numbers for any pool, and
+is the way to try a setting on someone else's history first.
+
+### What each one answers
+
+* **Projection Accuracy** answers *how well do the projections match what I measured?* For every recent FC
+  reading it re-runs the calculation as of just before that reading, with only the data logged by then and
+  your **current** settings, and compares the projected FC with the measured one.
+* **What-If Sweep** answers *would different settings have done better?* It re-scores the same readings
+  under other averaging windows, projection weightings and tapers, the chlorine credit toggled, and other
+  anomaly tolerances, and shows how each compares with your settings.
+
+Both are backward looking, but re-scoring is instant: change a setting, reopen a report, and the whole
+history is scored under the new setting. You don't have to wait for new readings to see the effect (but see
+"Checking it on new readings" below, because that effect is partly flattering).
+
+### A suggested routine
+
+1. **Open Projection Accuracy for a baseline.** Read these first:
+   * *Readings scored*: aim for 30 or more. With fewer, everything below is rough.
+   * *Mean absolute error*: how far off the projection typically is. Around 1.2 to 1.6 ppm is normal,
+     because an FC test is only good to about a ppm.
+   * *Baseline "FC unchanged since the last reading"*: the error of predicting no change at all. The
+     algorithm should beat it; if it is *worse*, the projection between tests is adding noise, and the
+     weighting and taper below are the fix.
+   * *By time since the previous reading*: errors usually jump for gaps over about 5 days. That is the
+     reason for the taper, and the reason to test more often.
+2. **Read the suggested weighting.** The dialog shows the weighting and taper that would have scored best on
+   your readings, pulled toward the middle because a few dozen readings is a small sample, with an
+   **Apply** button.
+3. **Open What-If Sweep to see what else would help.** Each row is a set of alternative settings:
+   * *Change* is the mean change in absolute error versus your current settings (negative is better), with
+     a 90% range. A row is called **better** or **worse** only when that range excludes zero. "No clear
+     difference" is a normal, honest answer.
+   * Differences under about **0.1 ppm** are too small to tell apart with a few dozen readings.
+   * Work in this order: the **averaging window** (usually the biggest effect), then the **projection
+     weighting and taper**. Leave daylight weighting, the chlorine credit and the anomaly tolerance alone
+     unless they are clearly better.
+4. **Apply one improvement at a time.** Press **Apply** on a "better" row, or on the accuracy suggestion. It
+   saves just those settings, and they take effect the next time you Check or Refresh. Applying several
+   rows at once makes it impossible to tell which one helped.
+5. **Check it on new readings.** See the next section.
+
+### Checking it on new readings
+
+A setting chosen from a report is tuned on the same readings the report scores, so its improvement is
+somewhat flattering. The honest test is readings that arrive *after* you changed it. When a tuning setting
+changes, the accuracy dialog adds a line such as:
+
+> Since you changed the tuning settings (10/9, 12:30): 8 new readings, mean error 1.12 ppm (the "unchanged"
+> baseline over the same readings: 1.50 ppm).
+
+* Treat it as meaningful from about **10 new readings**; with fewer it jumps around.
+* If the new readings are no better than the "unchanged" baseline after about 15, press **Reset Tuning to
+  Defaults** (in Tuning options), Save, and don't chase it further.
+
+### How often to do this
+
+* After the **first few weeks** of readings, and again when conditions change: a new season, a cell swap, a
+  change in how often you test, or a CYA change.
+* **Not after every reading.** Each reading adds noise, and re-tuning on noise makes the projections worse.
+  The defaults are reasonable for most pools.
+* Keep the data healthy first. The reports are only as good as the PoolMath log: log SWG % changes
+  promptly, log liquid chlorine as "Liquid Chlorine", and correct a mistyped reading. The anomaly note
+  and the SWG rating warning in dashPanel point at the usual problems.
+
+### What the reports do not measure
+
+* They grade the **forecast between tests**, which is the hardest test, not whether the recommended SWG % kept FC
+  near your target. The target tracking section of Projection Accuracy covers that, and fills in as your
+  applies reach their deadlines.
+* They read the PoolMath share page, so they cover what that page lists. This script reads the longer
+  history and can score further back.
+* Scoring uses today's run window and sunrise and sunset for past days.
+
 ## Options and tips
 
 | option | what it does and how to choose it |
