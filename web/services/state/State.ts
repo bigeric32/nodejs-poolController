@@ -1347,7 +1347,6 @@ export class StateRoute {
         // deadline) the way Check Now does -- and applies the result either way.
         app.post('/state/autoSwg/refreshAndApply', async (req, res, next) => {
             try {
-                if (!sys.autoSwg.automationAvailable) throw new ServiceParameterError('Auto-Apply is not available in this release. Use Check Now and apply the recommendation yourself.', 'autoSwg', 'autoApplyEnabled', false);
                 let skipped = await runAutoSwgRecommendation('auto');
                 await applyIfAutoApplyEnabled(skipped);
                 return res.status(200).send(autoSwgResponse(skipped));

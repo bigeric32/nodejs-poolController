@@ -1019,7 +1019,7 @@ export class ConfigRoute {
         // feature. The computed recommendation itself is runtime state, exposed
         // under /state/autoSwg/* (see web/services/state/State.ts).
         app.get('/config/autoSwg', (req, res) => {
-            return res.status(200).send(Object.assign({}, sys.autoSwg.get(true), { automationAvailable: sys.autoSwg.automationAvailable }));
+            return res.status(200).send(sys.autoSwg.get(true));
         });
         app.put('/config/autoSwg', async (req, res, next) => {
             try {
@@ -1041,7 +1041,7 @@ export class ConfigRoute {
                 armAutoSwgAutoCheck();
                 // If the share code or pool changed, pull its history soon (a no-op otherwise).
                 armAutoSwgArchiveSync(60 * 1000);
-                return res.status(200).send(Object.assign({}, sys.autoSwg.get(true), { automationAvailable: sys.autoSwg.automationAvailable }));
+                return res.status(200).send(sys.autoSwg.get(true));
             }
             catch (err) { next(err); }
         });
