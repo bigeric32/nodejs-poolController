@@ -208,14 +208,22 @@ changes, the accuracy dialog adds a line such as:
 
 ## What it needs from a pool
 
+AutoSwg works from your PoolMath log, so the minimum is to **log your FC tests and every change to the
+SWG % in the PoolMath app, and turn on sharing for the pool** (the share code is what njsPC and this
+script read). Without both kinds of entry there is nothing to calculate or check against.
+
 * **FC test readings.** A few a week is workable and daily is ideal. Gaps matter: scoring is noticeably
   worse across gaps of five days or more.
 * **SWG entries in PoolMath** (the chlorine generator log entries). Consumption is almost entirely the
   SWG output, so **readings from before the first SWG entry can't be used**. The summary tells you where
   the usable history starts, and a pool that logs every SWG % change is far more useful than one that
   doesn't.
-* **Liquid chlorine additions** logged as "Liquid Chlorine" with the right strength. Other chlorine
-  products aren't recognized yet.
+* **Liquid chlorine additions** logged as "Liquid Chlorine" with the right strength. **Known
+  limitation:** only SWG output and liquid chlorine are credited. Other chlorine products (cal-hypo,
+  dichlor, trichlor) are not, because more PoolMath logs that use them are needed before their
+  strengths can be set with confidence. On a pool that doses solid chlorine, projections run low after
+  each dose, and the anomaly note may flag the intervals. If your PoolMath log has these entries and you
+  are willing to share it, that is what is needed to add them.
 
 ## Reading the results
 
