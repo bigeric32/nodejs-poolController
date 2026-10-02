@@ -446,6 +446,29 @@ function zonedTimeToUtc(year: number, month: number, day: number, t: TimeOfDay, 
     return guess;
 }
 
+// The next time (at least `minMs` from now) a periodic check should fire when checks are
+// pinned to the clock: every `hours` hours counting from `startTime` (wall-clock, in
+// `timeZone`), restarting at `startTime` each day -- e.g. start 06:00 every 12h = 06:00 and
+// 18:00; start 06:00 every 5h = 06:00, 11:00, 16:00, 21:00, then 06:00 again. Only meaningful
+// for intervals under 24h (a longer interval can't be pinned to a time of day this way).
+export function nextScheduledCheck(now: Date, startTime: string, hours: number, timeZone: string, minMs: number): Date {
+    const t = parseTimeOfDay(startTime);
+    const intervalMs = hours * 3600000;
+    const earliest = now.getTime() + minMs;
+    const today = localYmd(now, timeZone);
+    const anchorOn = (ymd: { year: number; month: number; day: number }) => zonedTimeToUtc(ymd.year, ymd.month, ymd.day, t, timeZone).getTime();
+    for (let d = -1; d <= 1; d++) {
+        const day = addDays(today, d);
+        const anchor = anchorOn(day);
+        const nextAnchor = anchorOn(addDays(day, 1));
+        for (let k = 0; anchor + k * intervalMs < nextAnchor; k++) {
+            const at = anchor + k * intervalMs;
+            if (at >= earliest) return new Date(at);
+        }
+    }
+    return new Date(earliest + intervalMs);
+}
+
 // 'YYYY-MM-DD HH:mm' wall-clock time of `instant` in `timeZone`.
 export function formatLocalDateTime(instant: Date, timeZone: string): string {
     const dtf = new Intl.DateTimeFormat('en-US', {

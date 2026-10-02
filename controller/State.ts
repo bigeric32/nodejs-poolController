@@ -3892,6 +3892,10 @@ export class AutoSwgState extends EqState {
     public set targetInfo(val: string) { this.setDataVal('targetInfo', val); }
     public get lastAppliedTargetInfo(): string { return this.data.lastAppliedTargetInfo; }
     public set lastAppliedTargetInfo(val: string) { this.setDataVal('lastAppliedTargetInfo', val); }
+    // When the periodic automatic check is next due (ISO); cleared while it isn't armed.
+    // Recomputed whenever the timer is armed (startup, a settings save, after each check).
+    public get nextAutoCheckAt(): string { return this.data.nextAutoCheckAt; }
+    public set nextAutoCheckAt(val: string) { this.setDataVal('nextAutoCheckAt', val); }
     public get staleFcNote(): string { return this.data.staleFcNote; }
     public set staleFcNote(val: string) { this.setDataVal('staleFcNote', val); }
     public get lastAppliedStaleFcNote(): string { return this.data.lastAppliedStaleFcNote; }

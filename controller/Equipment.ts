@@ -2430,6 +2430,11 @@ export class AutoSwg extends EqItem {
         // user is looking at on the calculation screen.
         if (typeof this.data.autoCheckEnabled === 'undefined') this.data.autoCheckEnabled = false;
         if (typeof this.data.autoCheckHours === 'undefined') this.data.autoCheckHours = 12;
+        // Optional 'HH:MM' (in `timezone`) to pin periodic checks to the clock: every
+        // autoCheckHours counting from this time of day. Empty = count from when the timer
+        // was last armed (startup, a settings save, or the previous check). Only used for
+        // intervals under 24 hours.
+        if (typeof this.data.autoCheckStartTime === 'undefined') this.data.autoCheckStartTime = '';
         // An auto-applied change whose magnitude (percentage points vs. the previous
         // applied %) meets or exceeds this is flagged prominently on the dashboard, since
         // no human reviewed it before it took effect.
@@ -2475,6 +2480,8 @@ export class AutoSwg extends EqItem {
     public set windowDays(val: number) { this.setDataVal('windowDays', val); }
     public get targetFc(): number { return this.data.targetFc; }
     public set targetFc(val: number) { this.setDataVal('targetFc', val); }
+    public get autoCheckStartTime(): string { return this.data.autoCheckStartTime; }
+    public set autoCheckStartTime(val: string) { this.setDataVal('autoCheckStartTime', val); }
     public get daytimeLossSharePct(): number { return this.data.daytimeLossSharePct; }
     public set daytimeLossSharePct(val: number) { this.setDataVal('daytimeLossSharePct', val); }
     public get targetDaysAbove(): number { return this.data.targetDaysAbove; }

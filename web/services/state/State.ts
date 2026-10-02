@@ -27,7 +27,7 @@ import { conn } from "../../../controller/comms/Comms";
 import { config } from "../../../config/Config";
 
 import { ServiceParameterError } from "../../../controller/Errors";
-import { buildCombinedHistory, computeRecommendation, computeSwgCapacity, formatLocalDateTime, minutesToHHMM } from "../../../controller/AutoSwgService";
+import { buildCombinedHistory, computeRecommendation, computeSwgCapacity, formatLocalDateTime, minutesToHHMM, nextScheduledCheck } from "../../../controller/AutoSwgService";
 import { appendAutoSwgHistory, readAutoSwgHistory, toLocalSwgEntries } from "../../../controller/AutoSwgHistory";
 
 // 'HH:MM' wall-clock time of `dt` in `timeZone`.
@@ -465,9 +465,24 @@ function clearAutoSwgAutoCheck() {
 export function armAutoSwgAutoCheck(minDelayMs: number = 0) {
     clearAutoSwgAutoCheck();
     let cfg = sys.autoSwg;
-    if (!cfg.enabled || !cfg.autoCheckEnabled || !cfg.autoApplyEnabled || !cfg.shareCode || cfg.chlorinatorId < 0) return;
+    let wasDue = state.autoSwg.nextAutoCheckAt;
+    state.autoSwg.nextAutoCheckAt = undefined;
+    if (!cfg.enabled || !cfg.autoCheckEnabled || !cfg.autoApplyEnabled || !cfg.shareCode || cfg.chlorinatorId < 0) {
+        if (wasDue) state.autoSwg.emitEquipmentChange();
+        return;
+    }
     let hours = typeof cfg.autoCheckHours === 'number' && cfg.autoCheckHours > 0 ? cfg.autoCheckHours : 12;
-    let delay = Math.max(hours * 3600000, minDelayMs, AUTO_SWG_AUTO_CHECK_MIN_DELAY_MS);
+    let floorMs = Math.max(minDelayMs, AUTO_SWG_AUTO_CHECK_MIN_DELAY_MS);
+    let delay = Math.max(hours * 3600000, floorMs);
+    // Pinned to the clock when a start time is set (and the interval is under a day):
+    // every `hours` from that time of day, so restarts and settings saves don't shift it.
+    if (cfg.autoCheckStartTime && hours < 24) {
+        try { delay = nextScheduledCheck(new Date(), cfg.autoCheckStartTime, hours, cfg.timezone, floorMs).getTime() - Date.now(); }
+        catch (err) { logger.warn(`AutoSwg: ignoring unusable automatic check start time '${cfg.autoCheckStartTime}' (${err.message}); counting ${hours}h from now instead.`); }
+    }
+    state.autoSwg.nextAutoCheckAt = new Date(Date.now() + delay).toISOString();
+    logger.info(`AutoSwg: next automatic check at ${formatLocalDateTime(new Date(state.autoSwg.nextAutoCheckAt), cfg.timezone)} ${cfg.timezone}.`);
+    state.autoSwg.emitEquipmentChange();
     autoSwgAutoCheckTimer = setTimeout(() => { runAutoSwgAutoCheck().catch(err => logger.error(`AutoSwg: automatic check failed: ${err.message}`)); }, delay);
 }
 
