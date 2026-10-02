@@ -53,7 +53,10 @@ You can also point it at a saved copy of the share JSON instead of a code:
 * **Projection accuracy:** for each reading, the algorithm re-run as of just before it with only the
   data logged by then, compared with what was measured. Error is `projected - measured` in ppm (positive
   means it projected too high). Shown as mean absolute error, RMSE, bias, the share within 1 and 2 ppm,
-  and split by how long it had been since the previous reading.
+  and split by how long it had been since the previous reading. It also prints a **baseline**, the
+  error of "FC is what it was at the last reading" with no model at all, so you can see whether the
+  algorithm adds anything, and the **projection weighting** that would have scored best on those
+  readings (with a suggestion shrunk toward 50% for small samples).
 * **What-if sweep:** the same scoring under other windows (7, 14, 21, 28, 42, 56 days), daylight
   weighting off, the chlorine credit toggled, and other anomaly tolerances. "Change" is the mean change
   in absolute error versus your current settings (negative is better) with a 90% range.
@@ -68,6 +71,7 @@ You can also point it at a saved copy of the share JSON instead of a code:
 | `--swg-start 08:00` | Local time the SWG's daily run window starts (default 08:00). The run length comes from each PoolMath SWG entry (usually 12 hours). It only affects the part of a day since the last reading, so a rough value is fine; for a sunrise-to-sunset schedule use roughly sunrise. |
 | `--window 21` | The averaging window the sweep treats as "current" (default 21 days). Leave it at the default for comparing pools; the sweep already shows the alternatives. |
 | `--tolerance 2` | The FC anomaly tolerance in ppm (default 2; 0 turns the check off). Lower flags more intervals but also more ordinary test noise. |
+| `--damping 1.0` | The projection weighting: how much of the modelled FC change since the last reading (SWG output minus consumption) to apply, from 0 to 1 (default 1 = all of it, 0 = start from the last reading unchanged). FC usually moves less between tests than the model expects, so a value below 1 often predicts better; the accuracy report suggests one and the what-if sweep scores 0, 25, 50, 75 and 100%. |
 | `--no-credit` | Don't credit liquid chlorine additions as FC added. Use it to see whether the credit helps for a given pool. |
 | `--no-daylight` | Count time by the clock instead of weighting daylight. |
 | `--daytime-share 0` | The daytime share of chlorine loss in percent. 0 (default) estimates it from the day length (about 56% in winter, 67% in spring/fall, 78% in summer). Only override it to test a theory. |

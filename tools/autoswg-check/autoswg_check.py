@@ -204,6 +204,7 @@ class Params:
         self.credit = True
         self.daylight = True
         self.daytime_share_pct = 0
+        self.damping = 1.0               # weight on the modelled FC change since the last reading (1 = all of it)
         self.swg_start = 8 * 60          # run window start, minutes after local midnight
         self.tz = timezone.utc
         self.today = datetime.now(timezone.utc)
@@ -418,8 +419,12 @@ class Calc:
         avg = wt / cov if cov > 0 else 0.0
         last_t, last_v = fc[-1]
         elapsed_eq = self.day_eq(last_t, as_of)
-        projected = last_v - avg * elapsed_eq + self.generated_since(swg, last_t, as_of) + added(last_t, as_of)
-        return {'projected': projected, 'avg': avg, 'last_ts': last_t, 'suspects': suspects}
+        gen_since = self.generated_since(swg, last_t, as_of)
+        add_since = added(last_t, as_of)
+        model_change = gen_since - avg * elapsed_eq
+        projected = last_v + max(0.0, min(1.0, p.damping)) * model_change + add_since
+        return {'projected': projected, 'avg': avg, 'last_ts': last_t, 'suspects': suspects,
+                'prev': last_v, 'model_change': model_change, 'added': add_since}
 
 
 # --------------------------------------------------------------------------- scoring
@@ -511,6 +516,17 @@ def report_accuracy(ds, p, args, csv_dir):
         e = [abs(x) for k, (x, _) in errs.items() if lo <= (ds.fc[k][0] - ds.fc[k - 1][0]).total_seconds() / DAY < hi]
         if e:
             print('  %-13s MAE %.2f ppm (%d)' % (label, mean(e), len(e)))
+    # the no-model baseline, and what each weighting of the modelled change would have scored
+    prevs = [(r['prev'], r['model_change'], r['added'], ds.fc[k][1]) for k, (e, r) in errs.items()]
+    unchanged = mean([abs(pv - m) for pv, mc, ad, m in prevs])
+    print('baseline "FC unchanged since the last reading": MAE %.2f ppm -> the algorithm is %.0f%% %s than that' % (
+        unchanged, abs(100 * (1 - s['mae'] / unchanged)), 'better' if s['mae'] < unchanged else 'worse'))
+    mae_at = lambda lam: mean([abs(pv + lam * mc + ad - m) for pv, mc, ad, m in prevs])
+    best_lam, best_mae = min(((i / 20.0, mae_at(i / 20.0)) for i in range(21)), key=lambda x: x[1])
+    wgt = len(prevs) / (len(prevs) + 30.0)
+    suggested = round((wgt * best_lam + (1 - wgt) * 0.5) * 20) / 20.0
+    print('projection weighting: current %.0f%% (MAE %.2f) | best on these readings %.0f%% (MAE %.2f) | suggested %.0f%% (MAE %.2f), shrunk toward 50%% for the small sample' % (
+        p.damping * 100, s['mae'], best_lam * 100, best_mae, suggested * 100, mae_at(suggested)))
     if csv_dir:
         with open(os.path.join(csv_dir, 'accuracy.csv'), 'w', newline='') as f:
             w = csv.writer(f)
@@ -529,6 +545,9 @@ def report_whatif(ds, p, args, csv_dir):
     if p.daylight and ds.lat is not None and ds.lon is not None:
         variants.append(('Daylight weighting off', p.copy(daylight=False)))
     variants.append(('Liquid chlorine credit %s' % ('off' if p.credit else 'on'), p.copy(credit=not p.credit)))
+    for dmp in (0.0, 0.25, 0.5, 0.75, 1.0):
+        if dmp != p.damping:
+            variants.append(('Projection weighting %d%%' % round(dmp * 100), p.copy(damping=dmp)))
     for t in (0, 1, 3):
         if t != p.tolerance:
             variants.append(('FC anomaly check off' if t == 0 else 'FC anomaly tolerance %d ppm' % t, p.copy(tolerance=float(t))))
@@ -676,6 +695,7 @@ def main():
     ap.add_argument('--utc-offset', type=float, help='fixed UTC offset in hours if --tz is unavailable')
     ap.add_argument('--window', type=int, default=21, help='averaging window in days (default 21)')
     ap.add_argument('--tolerance', type=float, default=2.0, help='FC anomaly tolerance in ppm, 0 = off (default 2)')
+    ap.add_argument('--damping', type=float, default=1.0, help='weight on the modelled FC change since the last reading, 0 to 1 (default 1 = all of it)')
     ap.add_argument('--no-credit', action='store_true', help='do not credit liquid chlorine additions')
     ap.add_argument('--no-daylight', action='store_true', help='count time by the clock')
     ap.add_argument('--daytime-share', type=float, default=0, help='daytime share of FC loss in %%, 0 = parabolic estimate from day length')
@@ -686,7 +706,7 @@ def main():
     ds = Dataset(pool, args)
     hh, mm = (int(x) for x in args.swg_start.split(':'))
     p = Params(window_days=args.window, tolerance=args.tolerance, credit=not args.no_credit, daylight=not args.no_daylight,
-               daytime_share_pct=args.daytime_share, swg_start=hh * 60 + mm, tz=get_tz(args.tz, args.utc_offset))
+               daytime_share_pct=args.daytime_share, swg_start=hh * 60 + mm, tz=get_tz(args.tz, args.utc_offset), damping=args.damping)
     if not args.keep_odd_swg:
         ds.excluded = odd_swg_spans(ds)
         if ds.excluded:
