@@ -87,6 +87,7 @@ export interface AutoSwgResult {
     targetDateUsed: string;          // ISO
     targetDaysUsed: number;          // days from calculation time until targetDateUsed
     refreshed: boolean;              // true if it stayed on course for params.inFlight rather than starting a new target
+    targetWarning?: string;          // set when even 100% can't reach targetFc within the window (the % above is capped at 100)
     mostRecentFc?: { value: number; ts: string };
     mostRecentCya?: { value: number; ts: string };
     mostRecentSwg?: { ppmPerDay: number; hrs: number; pct: number; ts: string; source: SwgSource };
@@ -659,10 +660,23 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     const neededPpm = (targetFc - projectedCurrentFc) + (avgPerDay * targetDays);
     const producibleAtFull = maxDailyPpmAtFull * targetDays;
     let recommendedPctForTarget = recommendedPct;
+    let targetWarning: string | undefined;
     if (producibleAtFull > 0) {
-        recommendedPctForTarget = Math.max(0, Math.min(100, (neededPpm / producibleAtFull) * 100));
+        const unclampedPct = (neededPpm / producibleAtFull) * 100;
+        recommendedPctForTarget = Math.max(0, Math.min(100, unclampedPct));
         if (neededPpm <= 0) rationale.push(`Already at/above ${targetFc} ppm target given ongoing consumption.`);
         else rationale.push(`Recommended SWG duty cycle to reach ${targetFc} ppm FC in ${Math.round(targetHours * 10) / 10}h: ${recommendedPctForTarget.toFixed(1)}%.`);
+        // The % above is capped at 100, so if even that isn't enough the target can't be hit
+        // in the window -- say so, and how long it would really take, rather than leaving a
+        // capped number that quietly reads like a plan that works.
+        if (unclampedPct > 100.5) {
+            const window = `${Math.round(targetDays * 10) / 10} day${Math.round(targetDays * 10) / 10 === 1 ? '' : 's'}`;
+            const netGainPerDay = maxDailyPpmAtFull - avgPerDay;
+            const gap = targetFc - projectedCurrentFc;
+            if (netGainPerDay > 0 && gap > 0) targetWarning = `Even at 100%, the SWG can't bring FC from a projected ${projectedCurrentFc.toFixed(2)} ppm up to the ${targetFc} ppm target within ${window} -- at 100% it would take about ${(gap / netGainPerDay).toFixed(1)} days. The recommendation is capped at 100%.`;
+            else targetWarning = `Even at 100%, the SWG (${maxDailyPpmAtFull.toFixed(2)} ppm/day) can't outpace the ${avgPerDay.toFixed(2)} ppm/day of consumption, so FC will not reach the ${targetFc} ppm target within ${window}, or at all, at this rate. The recommendation is capped at 100%.`;
+            rationale.push(`WARNING: ${targetWarning}`);
+        }
     }
 
     // What gets recorded as this result's inputs: the parameters, minus the in-flight
@@ -685,6 +699,7 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         targetDateUsed: targetDate.toISOString(),
         targetDaysUsed: targetDays,
         refreshed: refreshed,
+        targetWarning: targetWarning,
         mostRecentFc: { value: lastFc.value, ts: lastFc.ts.toISOString() },
         mostRecentCya: cyaEvents.length ? { value: cyaEvents[cyaEvents.length - 1].value, ts: cyaEvents[cyaEvents.length - 1].ts.toISOString() } : undefined,
         mostRecentSwg: { ppmPerDay: latestSwg.ppmPerDay, hrs: latestSwg.hrs, pct: latestSwg.pct, ts: latestSwg.ts.toISOString(), source: latestSwg.source },

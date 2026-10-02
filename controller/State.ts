@@ -3876,6 +3876,14 @@ export class AutoSwgState extends EqState {
     public set pendingTargetFc(val: number) { this.setDataVal('pendingTargetFc', val); }
     public get pendingTargetDate(): string { return this.data.pendingTargetDate; }
     public set pendingTargetDate(val: string) { this.setDataVal('pendingTargetDate', val); }
+    // Set when even 100% SWG can't reach the target within the window (the recommended %
+    // is capped at 100). targetWarning belongs to the current calculation preview and is
+    // cleared with it; lastAppliedTargetWarning is what was in force when it was last applied,
+    // so the dashboard can keep flagging it -- including after an unattended auto-apply.
+    public get targetWarning(): string { return this.data.targetWarning; }
+    public set targetWarning(val: string) { this.setDataVal('targetWarning', val); }
+    public get lastAppliedTargetWarning(): string { return this.data.lastAppliedTargetWarning; }
+    public set lastAppliedTargetWarning(val: string) { this.setDataVal('lastAppliedTargetWarning', val); }
     // True when the most recent AUTOMATIC apply (fully-automatic mode, no human review)
     // moved the setpoint by at least AutoSwg.autoApplyWarnThresholdPct percentage points,
     // so the dashboard can flag it prominently. Cleared by any manual apply/override --
