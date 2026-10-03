@@ -71,7 +71,17 @@ export async function stopPacketCaptureAsync() {
     // Pass REM logs to the logger for inclusion in the backup
     return logger.stopCaptureForReplayAsync(remLogs);
 }
-export async function stopAsync(): Promise<void> {
+let _stopPromise: Promise<void> = null;
+export function stopAsync(): Promise<void> {
+    // Signals can arrive more than once (SIGINT + SIGTERM, repeated Ctrl+C); only run shutdown once.
+    if (_stopPromise) {
+        console.log('Shutdown already in progress');
+        return _stopPromise;
+    }
+    _stopPromise = stopProcessesAsync();
+    return _stopPromise;
+}
+async function stopProcessesAsync(): Promise<void> {
     try {
         console.log('Shutting down open processes');
         await webApp.stopAutoBackup();
