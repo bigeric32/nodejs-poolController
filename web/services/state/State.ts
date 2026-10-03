@@ -265,17 +265,28 @@ function autoSwgSunTimes(timeZone: string): { sunrise?: string; sunset?: string 
     return {};
 }
 
+// Rounds an HH:MM time of day to the nearest 10 minutes, so a real change to the run window counts but the minute or two a
+// sunrise or sunset based window drifts each day does not. Anything else (for example '7am') is used as it is.
+function windowKeyTime(t: string): string {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(String(t || '').trim());
+    if (!m) return String(t || '');
+    const mins = Math.round((parseInt(m[1], 10) * 60 + parseInt(m[2], 10)) / 10) * 10;
+    return `${Math.floor(mins / 60) % 24}:${mins % 60}`;
+}
 // The settings that decide what a calculation aims at or how it computes (see
 // lastAppliedSettingsKey): changing any of them changes the number a Refresh would give,
-// so it shouldn't be skipped for want of a new FC reading. The manual run window only
-// counts while no SWG schedule is selected (otherwise it's ignored), and a schedule's
-// day-to-day sunrise/sunset drift isn't a settings change.
+// so it shouldn't be skipped for want of a new FC reading. That includes the run window the
+// calculation uses, whether typed in or taken from the selected SWG schedule, to the nearest 10
+// minutes: editing the schedule counts, the daily drift of a sunrise or sunset based window does not.
 function autoSwgSettingsKey(): string {
     let cfg = sys.autoSwg;
+    let start = cfg.swgStartTime, stop = cfg.swgStopTime;
+    try { const win = resolveAutoSwgRunWindow(cfg); start = win.swgStartTime; stop = win.swgStopTime; }
+    catch (err) { /* the typed-in window is the fallback */ }
     return [
         cfg.targetFc, cfg.targetDaysAbove, cfg.targetDaysBelow, cfg.newTargetDateThresholdPpm,
         cfg.windowDays, cfg.gallons, cfg.swgLbsPerDay, cfg.timezone, cfg.daytimeLossSharePct, cfg.creditChlorineAdditions, cfg.fcAnomalyTolerancePpm, cfg.projectionWeight, cfg.projectionTaperStartDays, cfg.projectionTaperEndDays,
-        cfg.shareCode, cfg.poolName, cfg.scheduleId, cfg.scheduleId >= 0 ? '' : cfg.swgStartTime, cfg.scheduleId >= 0 ? '' : cfg.swgStopTime
+        cfg.shareCode, cfg.poolName, cfg.scheduleId, windowKeyTime(start), windowKeyTime(stop)
     ].join('|');
 }
 
