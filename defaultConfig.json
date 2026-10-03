@@ -355,7 +355,8 @@
       "logToFile": false
     },
     "solar": {
-      "logToFile": false
+      "logToFile": false,
+      "alwaysShow": false
     }
   },
   "appVersion": "0.0.1"
