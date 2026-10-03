@@ -460,6 +460,16 @@ async function applyAutoSwgRecommendation(isAutoApply: boolean, pctOverride?: nu
     try {
         let details = state.autoSwg.details || {};
         let capacity: number = details.swgCapacityPpmPerDay;
+        // Note when the run window differs from the previous apply's (a schedule edit, or changed sunrise/sunset offsets), to the
+        // nearest 10 minutes, so schedule experiments can be lined up with the readings.
+        let runWindowChange: { from: string; to: string } | undefined;
+        try {
+            const cur: any = details.inputs || {};
+            const prevRec: any = readAutoSwgHistory().filter(r => r.source === 'auto' && r.inputs && r.inputs.swgStartTime && r.inputs.swgStopTime).pop();
+            if (prevRec && cur.swgStartTime && cur.swgStopTime
+                && (windowKeyTime(prevRec.inputs.swgStartTime) !== windowKeyTime(cur.swgStartTime) || windowKeyTime(prevRec.inputs.swgStopTime) !== windowKeyTime(cur.swgStopTime)))
+                runWindowChange = { from: `${prevRec.inputs.swgStartTime}-${prevRec.inputs.swgStopTime}`, to: `${cur.swgStartTime}-${cur.swgStopTime}` };
+        } catch (err) { /* only a note; never let it affect the apply */ }
         let stateSnapshot = Object.assign({}, state.autoSwg.get(true));
         delete stateSnapshot.details;
         let calcOutputs = Object.assign({}, details);
@@ -472,6 +482,7 @@ async function applyAutoSwgRecommendation(isAutoApply: boolean, pctOverride?: nu
             targetOutcome: details.targetRefreshed ? 'kept' : (details.targetDateExtended ? 'new-extended' : 'new'),
             targetStrayPpm: details.targetStrayPpm,
             targetThresholdPpm: details.targetThresholdPpm,
+            runWindowChange: runWindowChange,
             targetFc: state.autoSwg.lastAppliedTargetFc,
             targetDate: state.autoSwg.lastAppliedTargetDate ? new Date(state.autoSwg.lastAppliedTargetDate).toISOString() : undefined,
             previousTargetDate: previousTargetDate ? new Date(previousTargetDate).toISOString() : undefined,
