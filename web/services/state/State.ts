@@ -373,6 +373,8 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
         localSwgEntriesUsed: result.localSwgEntriesUsed,
         poolMathSwgEntriesReplaced: result.poolMathSwgEntriesReplaced,
         targetRefreshed: result.refreshed,
+        targetStrayPpm: result.targetStrayPpm,
+        targetThresholdPpm: result.targetThresholdPpm,
         targetDateExtended: result.targetDateExtended,
     };
     state.autoSwg.rationale = result.rationale;
@@ -457,6 +459,8 @@ async function applyAutoSwgRecommendation(isAutoApply: boolean, pctOverride?: nu
             trigger: trigger || (isAutoApply ? undefined : 'reviewed'),
             algorithm: AUTO_SWG_ALGORITHM_VERSION,
             targetOutcome: details.targetRefreshed ? 'kept' : (details.targetDateExtended ? 'new-extended' : 'new'),
+            targetStrayPpm: details.targetStrayPpm,
+            targetThresholdPpm: details.targetThresholdPpm,
             targetFc: state.autoSwg.lastAppliedTargetFc,
             targetDate: state.autoSwg.lastAppliedTargetDate ? new Date(state.autoSwg.lastAppliedTargetDate).toISOString() : undefined,
             previousTargetDate: previousTargetDate ? new Date(previousTargetDate).toISOString() : undefined,

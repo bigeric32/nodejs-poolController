@@ -74,6 +74,8 @@ export interface AutoSwgHistoryRecord {
     targetFc?: number;
     targetDate?: string;           // ISO: the deadline this apply is aiming for
     previousTargetDate?: string;   // ISO: the in-flight deadline before this apply, if there was one
+    targetStrayPpm?: number;       // how far the projected FC was from the target FC when this apply decided kept or new
+    targetThresholdPpm?: number;   // the new-target-date threshold in force then (unset for Check Now, which has no in-flight target)
     appliedAt: string;        // ISO time the setpoint was sent (auto) or the change was detected (manual)
     appliedPct?: number;      // the SWG % now in effect (not set on a settings record)
     recommendedPct?: number;  // auto only: what the calculation recommended (differs from appliedPct if overridden)
