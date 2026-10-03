@@ -29,6 +29,7 @@ import { state } from "../../../controller/State";
 import { stopPacketCaptureAsync, startPacketCapture } from '../../../app';
 import { armAutoSwgArchiveSync, armAutoSwgAutoCheck } from '../state/State';
 import { markLastTuneApplied } from '../../../controller/AutoSwgTuneHistory';
+import { snapshotAutoSwgSettings, logAutoSwgSettingChanges } from '../../../controller/AutoSwgHistory';
 import { conn } from "../../../controller/comms/Comms";
 import { webApp, BackupFile, RestoreFile } from "../../Server";
 import { release } from "os";
@@ -1027,7 +1028,13 @@ export class ConfigRoute {
                 // accuracy report can show how the new settings do on readings they weren't tuned on.
                 let tuningKeys = ['windowDays', 'daytimeLossSharePct', 'creditChlorineAdditions', 'fcAnomalyTolerancePpm', 'projectionWeight', 'projectionTaperStartDays', 'projectionTaperEndDays'];
                 let before = tuningKeys.map(k => (sys.autoSwg as any)[k]);
+                let settingsBefore = snapshotAutoSwgSettings(sys.autoSwg);
                 sys.autoSwg.set(req.body);
+                // Keep a record of what changed (target, days to target, tuning ...) in the AutoSwg history, so the
+                // calculation's results can be lined up against the settings in force at the time. A failure here
+                // must not fail the save.
+                try { logAutoSwgSettingChanges(settingsBefore, snapshotAutoSwgSettings(sys.autoSwg), req.body && req.body.tuneApplied === true ? 'tune' : undefined); }
+                catch (err) { logger.warn(`AutoSwg: could not log the settings change: ${err.message}`); }
                 if (tuningKeys.some((k, i) => (sys.autoSwg as any)[k] !== before[i])) sys.autoSwg.tuningChangedAt = new Date().toISOString();
                 // The Tune dialog marks its own Apply, so a later Tune can tell its changes from ones made by hand.
                 if (req.body && req.body.tuneApplied === true) {

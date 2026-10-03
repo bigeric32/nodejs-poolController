@@ -40,8 +40,32 @@ export const AUTO_SWG_HISTORY_MONTHS = 18;
 // Auto-Apply on, a person pressing Apply after reviewing the number, or the step to the maintenance % after a target.
 export type AutoSwgApplyTrigger = 'automatic-check' | 'refresh-and-apply' | 'check-now' | 'refine' | 'reviewed' | 'step';
 
+// One AutoSwg setting that was changed, with its old and new value.
+export interface AutoSwgSettingChange { setting: string; from: any; to: any; }
+
+// Bump this when the calculation itself changes in a way that can change its numbers (not for settings or display), so
+// the history shows which version of the algorithm produced each apply. 1 = before the projection weighting and taper,
+// 2 = weighting and taper, the PoolMath archive and the liquid chlorine credit as they are now.
+export const AUTO_SWG_ALGORITHM_VERSION = 2;
+
+// The settings whose changes are logged. A change to the target, the days to reach it or the tuning options is what to
+// line up against the FC history when judging how the calculation did.
+export const AUTO_SWG_LOGGED_SETTINGS = [
+    'enabled', 'chlorinatorId', 'gallons', 'swgLbsPerDay', 'swgStartTime', 'swgStopTime', 'scheduleId', 'timezone',
+    'targetFc', 'targetDaysAbove', 'targetDaysBelow', 'newTargetDateThresholdPpm', 'autoStepEnabled',
+    'autoApplyEnabled', 'autoCheckEnabled', 'autoCheckHours', 'autoCheckStartTime', 'autoApplyWarnThresholdPct',
+    'windowDays', 'daytimeLossSharePct', 'creditChlorineAdditions', 'fcAnomalyTolerancePpm',
+    'projectionWeight', 'projectionTaperStartDays', 'projectionTaperEndDays',
+    'shareCode', 'poolName'
+];
+// Logged as "changed" only: the values are private, but a different pool's data changes everything after it.
+const AUTO_SWG_MASKED_SETTINGS = ['shareCode', 'poolName'];
+
 export interface AutoSwgHistoryRecord {
-    source: 'auto' | 'manual'; // 'auto' = applied via AutoSwg; 'manual' = changed some other way
+    source: 'auto' | 'manual' | 'settings'; // 'auto' = applied via AutoSwg; 'manual' = changed some other way; 'settings' = AutoSwg settings were changed (see `changes`)
+    changes?: AutoSwgSettingChange[]; // settings only: what changed
+    via?: 'tune';             // settings only: the change was applied from the Tune dialog
+    algorithm?: number;       // AUTO_SWG_ALGORITHM_VERSION when this was written (absent on older records)
     trigger?: AutoSwgApplyTrigger; // auto only: what caused it (absent on records written before this was kept)
     // auto only: what this apply did with the target date. 'kept' = refreshed against the original deadline; 'new' = a new
     // target was started; 'new-extended' = a new target whose deadline was then moved out to when consumption alone reaches
@@ -51,7 +75,7 @@ export interface AutoSwgHistoryRecord {
     targetDate?: string;           // ISO: the deadline this apply is aiming for
     previousTargetDate?: string;   // ISO: the in-flight deadline before this apply, if there was one
     appliedAt: string;        // ISO time the setpoint was sent (auto) or the change was detected (manual)
-    appliedPct: number;       // the SWG % now in effect
+    appliedPct?: number;      // the SWG % now in effect (not set on a settings record)
     recommendedPct?: number;  // auto only: what the calculation recommended (differs from appliedPct if overridden)
     previousPct?: number;     // the SWG % before this change
     ppmPerDay?: number;       // appliedPct x window capacity; PoolMath-style "X ppm FC" equivalent
@@ -92,6 +116,28 @@ export function appendAutoSwgHistory(record: AutoSwgHistoryRecord): AutoSwgHisto
     fs.writeFileSync(tmp, JSON.stringify(records, null, 2), 'utf8');
     fs.renameSync(tmp, file);
     return records;
+}
+
+// Reads the logged settings off an AutoSwg config object (anything with those properties).
+export function snapshotAutoSwgSettings(cfg: any): { [setting: string]: any } {
+    const snap: { [setting: string]: any } = {};
+    for (const k of AUTO_SWG_LOGGED_SETTINGS) snap[k] = cfg ? cfg[k] : undefined;
+    return snap;
+}
+
+// Logs the settings that differ between two snapshots as one 'settings' record. Nothing is written when none differ
+// (saving the same values again is not a change).
+export function logAutoSwgSettingChanges(before: { [setting: string]: any }, after: { [setting: string]: any }, via?: 'tune'): void {
+    const changes: AutoSwgSettingChange[] = [];
+    for (const k of AUTO_SWG_LOGGED_SETTINGS) {
+        if (JSON.stringify(before[k]) === JSON.stringify(after[k])) continue;
+        const masked = AUTO_SWG_MASKED_SETTINGS.indexOf(k) >= 0;
+        changes.push({ setting: k, from: masked ? '(hidden)' : before[k], to: masked ? '(hidden)' : after[k] });
+    }
+    if (changes.length === 0) return;
+    const record: AutoSwgHistoryRecord = { source: 'settings', appliedAt: new Date().toISOString(), algorithm: AUTO_SWG_ALGORITHM_VERSION, changes: changes };
+    if (via) record.via = via;
+    appendAutoSwgHistory(record);
 }
 
 // The records that carry enough data to stand in for a PoolMath SWG log entry.

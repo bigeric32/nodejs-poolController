@@ -1092,7 +1092,7 @@ export interface CombinedHistoryEntry {
     ts: string;                  // ISO
     // 'CYA' rows are only the readings where the value changed (plus the first); 'CL' rows are liquid
     // chlorine additions.
-    type: 'SWG' | 'FC' | 'CYA' | 'CL';
+    type: 'SWG' | 'FC' | 'CYA' | 'CL' | 'SETTINGS';
     source: SwgSource;           // FC readings always come from PoolMath
     pct?: number;                // SWG %
     ppmPerDay?: number;          // SWG: PoolMath-style "X ppm FC" per day
@@ -1103,7 +1103,12 @@ export interface CombinedHistoryEntry {
     ml?: number;                 // CL rows: the volume added, in mL
     ppm?: number;                // CL rows: the ppm FC it adds to the configured pool volume
     record?: any;                // local SWG entries only: the full history record (inputs/outputs)
+    changes?: { setting: string; from: any; to: any }[];   // SETTINGS rows: the AutoSwg settings that changed
+    via?: string;                // SETTINGS rows: 'tune' when applied from the Tune dialog
 }
+
+// A change to the AutoSwg settings, as listed in the combined history.
+export interface SettingsChangeEntry { ts: string; changes: { setting: string; from: any; to: any }[]; via?: string; }
 
 export interface CombinedHistory {
     entries: CombinedHistoryEntry[];      // oldest first
@@ -1132,7 +1137,7 @@ export interface ArchivedHistory {
 // from PoolMath, and SWG entries from the local log plus PoolMath's, with a
 // PoolMath SWG entry dropped when a local one is within an hour of it. If
 // PoolMath can't be read, the local SWG entries are still returned.
-export async function buildCombinedHistory(params: { shareCode?: string; poolName?: string; gallons?: number }, html?: string, localSwgEntries: LocalSwgEntry[] = [], archive?: () => ArchivedHistory, onPageParsed?: (page: PageReadings) => void): Promise<CombinedHistory> {
+export async function buildCombinedHistory(params: { shareCode?: string; poolName?: string; gallons?: number }, html?: string, localSwgEntries: LocalSwgEntry[] = [], archive?: () => ArchivedHistory, onPageParsed?: (page: PageReadings) => void, settingsChanges: SettingsChangeEntry[] = []): Promise<CombinedHistory> {
     let fcEvents: FcEvent[] = [];
     let cyaEvents: FcEvent[] = [];
     let chlorine: ChlorineAddition[] = [];
@@ -1178,6 +1183,7 @@ export async function buildCombinedHistory(params: { shareCode?: string; poolNam
         ...swgEventsToEntries(swgMerge.events),
         ...cyaRows,
         ...chlorineAdditions.map(a => ({ ts: a.ts, type: 'CL' as const, source: 'poolmath' as SwgSource, percent: a.percent, ml: a.ml, ppm: a.ppm })),
+        ...settingsChanges.map(c => ({ ts: c.ts, type: 'SETTINGS' as const, source: 'local-manual' as SwgSource, changes: c.changes, via: c.via })),
     ].sort(byTime);
     return { entries, localSwgEntriesUsed: swgMerge.localUsed, poolMathSwgEntriesReplaced: swgMerge.replaced, poolMathError, cya, chlorineAdditions };
 }
