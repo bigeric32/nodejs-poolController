@@ -56,6 +56,8 @@ RELAY = re.compile(r'^NCP: Setting Pump .*Relay 2: (on|off)')
 def reason_key(why):
     """Reduce the text of a 'not heating' line to a short reason."""
     w = why.lower()
+    if 'restart hysteresis' in w:
+        return 'restart hysteresis (water must move back past the target)'
     if 'is not below the setpoint' in w:
         return 'at target (water not below setpoint)'
     if 'not warmer than the water' in w:
@@ -233,6 +235,10 @@ def analyze(events, timeline):
             run_time += (t1 - open_run['t']).total_seconds()
         P('%d completed run(s)%s; solar was on %s of %s (%.0f%%).' % (
             len(runs), ', one still running at the end' if open_run else '', fmt_dur(run_time), fmt_dur(span), 100.0 * run_time / span if span else 0))
+        brief = [r for r in runs if (r['end'] - r['start']).total_seconds() < 600]
+        if len(brief) >= 3:
+            P('  CYCLING: %d run(s) under 10 minutes (%.1f runs an hour). Solar is switching around the setpoint;' % (len(brief), len(runs) * 3600.0 / span if span else 0))
+            P('  controller.solar.restartHysteresis (default 1) makes it wait for the water to fall back past the target.')
         short = [r for r in runs if (r['end'] - r['start']).total_seconds() < 300]
         if short:
             P('  %d run(s) were shorter than 5 minutes: %s' % (len(short), ', '.join('%s (%s)' % (fmt_t(r['start']), fmt_dur((r['end'] - r['start']).total_seconds())) for r in short[:8])))
