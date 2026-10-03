@@ -3912,7 +3912,7 @@ export class AutoSwgState extends EqState {
     public set lastAppliedStaleFcNote(val: string) { this.setDataVal('lastAppliedStaleFcNote', val); }
     // Timestamp (ISO) of the newest PoolMath FC reading the last apply was based on. A
     // Refresh against the same reading has nothing new to work from, so it is skipped.
-    // The target settings (target FC, days above/below, new-target threshold) the last apply
+    // The target settings (target FC, days above/below, new-target-date threshold) the last apply
     // was calculated with. The no-new-FC-reading skip only holds while these still match the
     // current settings -- a changed target is a reason to recalculate even without new data.
     public get lastAppliedSettingsKey(): string { return this.data.lastAppliedSettingsKey; }

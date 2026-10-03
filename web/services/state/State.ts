@@ -245,7 +245,7 @@ async function runAutoSwgStep() {
 //  'refine' -- stay on course for the in-flight target no matter what (Refresh: re-works
 //              the % against the original FC and deadline with fresh PoolMath data)
 //  'auto'   -- either, decided by where the projected FC is: more than the configured
-//              new-target threshold from the target FC starts a new target, otherwise it
+//              new-target-date threshold from the target FC starts a new target date, otherwise it
 //              refreshes the in-flight one (Refresh and Apply, and the periodic check)
 type AutoSwgCheckMode = 'new' | 'refine' | 'auto';
 
@@ -272,7 +272,7 @@ function autoSwgSunTimes(timeZone: string): { sunrise?: string; sunset?: string 
 function autoSwgSettingsKey(): string {
     let cfg = sys.autoSwg;
     return [
-        cfg.targetFc, cfg.targetDaysAbove, cfg.targetDaysBelow, cfg.newTargetThresholdPpm,
+        cfg.targetFc, cfg.targetDaysAbove, cfg.targetDaysBelow, cfg.newTargetDateThresholdPpm,
         cfg.windowDays, cfg.gallons, cfg.swgLbsPerDay, cfg.timezone, cfg.daytimeLossSharePct, cfg.creditChlorineAdditions, cfg.fcAnomalyTolerancePpm, cfg.projectionWeight, cfg.projectionTaperStartDays, cfg.projectionTaperEndDays,
         cfg.shareCode, cfg.poolName, cfg.scheduleId, cfg.scheduleId >= 0 ? '' : cfg.swgStartTime, cfg.scheduleId >= 0 ? '' : cfg.swgStopTime
     ].join('|');
@@ -295,7 +295,7 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
             if (isNaN(at) || at <= Date.now()) throw new ServiceParameterError('The target date of the last AutoSwg apply has already passed, so there is nothing left to refine toward -- run Check Now to start a new target.', 'autoSwg', 'lastAppliedTargetDate', state.autoSwg.lastAppliedTargetDate);
         }
         if (!isNaN(at) && at > Date.now() && typeof state.autoSwg.lastAppliedTargetFc === 'number') {
-            inFlight = { targetFc: state.autoSwg.lastAppliedTargetFc, targetDate: new Date(at), strayPpm: mode === 'refine' ? Infinity : cfg.newTargetThresholdPpm };
+            inFlight = { targetFc: state.autoSwg.lastAppliedTargetFc, targetDate: new Date(at), strayPpm: mode === 'refine' ? Infinity : cfg.newTargetDateThresholdPpm };
         }
     }
     let { swgStartTime, swgStopTime, scheduleNote } = resolveAutoSwgRunWindow(cfg);
@@ -660,7 +660,7 @@ async function runAutoSwgAutoCheck() {
     if (!cfg.enabled || !cfg.autoApplyEnabled) return; // turned off since this cycle was armed
     try {
         // Same decision as the "Refresh and Apply" button: stay on course for an in-flight
-        // target unless the projected FC has strayed past the new-target threshold (or
+        // target unless the projected FC has strayed past the new-target-date threshold (or
         // there's no in-flight target left), in which case start a new one.
         let skipped = await runAutoSwgRecommendation('auto', 'Automatic check.');
         if (skipped) logger.info(`AutoSwg: automatic check skipped. ${skipped}`);
@@ -1335,7 +1335,7 @@ export class StateRoute {
         });
         // The single button shown while Auto-Apply is on: refreshes the % against the
         // in-flight target and deadline if the projected FC is within the configured
-        // new-target threshold of the target FC, otherwise starts a new target (new
+        // new-target-date threshold of the target FC, otherwise starts a new target (new
         // deadline) the way Check Now does -- and applies the result either way.
         app.post('/state/autoSwg/refreshAndApply', async (req, res, next) => {
             try {
