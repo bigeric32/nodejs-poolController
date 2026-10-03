@@ -3952,6 +3952,8 @@ export class ScheduleCommands extends BoardCommands {
     }
     public async updateSunriseSunsetAsync(): Promise<boolean> { return Promise.resolve(false); };
 }
+// The last solar decision logged for each heater id (see the 'warn-solar' log level), so only a change is logged.
+const solarLogged: Map<number, string> = new Map<number, string>();
 export class HeaterCommands extends BoardCommands {
     public async restore(rest: { poolConfig: any, poolState: any }, ctx: any, res: RestoreResults): Promise<boolean> {
         try {
@@ -4393,6 +4395,16 @@ export class HeaterCommands extends BoardCommands {
                                             if (hstate.isOn && !isOn) { 
                                                 hState.prevHeaterOffTemp = state.temps.solar; 
                                             } // 6  
+                                            // Note each change of the solar decision with the readings behind it (see the 'warn-solar' log level). Only a change
+                                            // is logged, so this does not repeat on every status pass.
+                                            {
+                                                const solarNow = isOn ? (isCooling ? 'cooling' : 'heating') : 'off';
+                                                if (solarLogged.get(heater.id) !== solarNow) {
+                                                    solarLogged.set(heater.id, solarNow);
+                                                    const prevOff = hState.prevHeaterOffTemp;
+                                                    logger.solar(`Solar ${heater.name} ${solarNow} (${body.name}, mode ${mode}): water ${body.temp} (compared as ${Math.trunc(body.temp)}), setpoint ${cfgBody.heatSetpoint}, cool setpoint ${cfgBody.coolSetpoint}, solar ${state.temps.solar}, start/run delta ${heater.startTempDelta}/${heater.stopTempDelta}, collector at last off ${typeof prevOff === 'undefined' ? 'n/a' : prevOff}, night ${state.heliotrope.isNight}`);
+                                                }
+                                            }
                                         }
                                         break;
                                     case 'ultratemp':
