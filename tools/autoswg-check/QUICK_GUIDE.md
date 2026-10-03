@@ -82,7 +82,7 @@ You do not need this section to use AutoSwg. It is for anyone who wants to know 
 2. **What your pool consumed.** Between two FC readings, consumption is the SWG output plus any liquid
    chlorine added, minus the change in FC. Averaged over the **Averaging Window**, that is your daily burn in
    ppm/day. Chlorine is lost mostly in daylight, so a partial day is weighted by the daylight share (about 56%
-   in winter to 78% in summer, from your day length).
+   in winter to 78% in summer, from your day length). See "Readings taken at different times of day" below.
 3. **Where FC is now.** FC is only measured now and then, so the current value is projected from your last
    reading: last reading + weight x (SWG output since then - burn x time) + any liquid chlorine added since.
 4. **The two numbers you see.** The **maintenance %** is the SWG % that just replaces the average burn, so FC
@@ -92,6 +92,31 @@ You do not need this section to use AutoSwg. It is for anyone who wants to know 
    If even 100% cannot reach it, the report says how long it would take.
 5. **Refresh: Adjust %** re-works the % with fresh PoolMath data against the same target date. It does not
    restart the countdown.
+
+## Readings taken at different times of day
+
+FC does not read the same all day. The SWG adds chlorine only while it runs, and sunlight uses it up mostly
+in daylight, so a morning test and an afternoon test read differently even when nothing has changed. That
+means two FC readings are rarely a whole number of "chlorine-use days" apart, and AutoSwg tries to allow for
+it by prorating the time instead of counting clock hours:
+
+* **Days of consumption, not clock days.** Every whole 24 hours counts as exactly one day, whatever time of day
+  it starts. Only the leftover part is prorated, by when it falls. Daylight hours carry the daytime share of a
+  day's chlorine loss (modelled as a curve that peaks at solar noon, about 56% in winter to 78% in summer,
+  worked out from your sunrise, sunset and Time Zone). Night hours carry the rest. For example, a reading at
+  8 am followed by one at 4 pm the next day is 32 hours: one whole day plus 8 daytime hours. On a spring day
+  those 8 hours count as roughly 0.45 of a day, not the 0.33 the clock would give.
+* **Used in three places.** Each interval between two readings converts the chlorine consumed into ppm per
+  day by dividing by its days of consumption. The edges of the Averaging Window count only the part of an
+  interval that lies inside the window, prorated the same way. The projection from your last reading to now
+  uses the days of consumption since then.
+* **SWG output follows the run window.** The SWG output since the last reading counts only the run-window hours
+  that have actually passed, so a check made at 10 am has not credited the afternoon yet.
+
+This is an approximation. The curve uses today's sunrise and sunset for every day in the window, and it knows
+nothing about clouds or shade. It also does not change what the pool reads at different times of day, so
+tests at similar times of day compare best. The share is automatic, and the Daytime Share setting overrides it.
+What-If Sweep includes a "Daylight weighting off" variant if you want to see what it adds on your pool.
 
 ## Why the tuning options are what they are
 
