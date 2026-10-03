@@ -30,7 +30,7 @@ import { ServiceParameterError } from "../../../controller/Errors";
 import { buildCombinedHistory, buildProjectionAccuracy, buildTune, buildWhatIfSweep, computeRecommendation, computeSwgCapacity, formatLocalDateTime, minutesToHHMM, nextScheduledCheck } from "../../../controller/AutoSwgService";
 import type { AutoSwgParams, PageReadings } from "../../../controller/AutoSwgService";
 import { appendTuneHistory, readTuneHistory } from "../../../controller/AutoSwgTuneHistory";
-import { appendAutoSwgHistory, readAutoSwgHistory, toLocalSwgEntries, AutoSwgApplyTrigger } from "../../../controller/AutoSwgHistory";
+import { appendAutoSwgHistory, readAutoSwgHistory, toLocalSwgEntries, AutoSwgApplyTrigger, AUTO_SWG_ALGORITHM_VERSION } from "../../../controller/AutoSwgHistory";
 import { archivedChlorineAdditions, archivedCyaReadings, archivedFcReadings, archivedSwgEvents, isPoolMathArchiveCurrent, poolMathArchiveSummary, refreshPoolMathArchiveFromPage, syncPoolMathArchive } from "../../../controller/AutoSwgPoolMathArchive";
 
 // 'HH:MM' wall-clock time of `dt` in `timeZone`.
@@ -382,6 +382,16 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
     return undefined;
 }
 
+// The calculation's inputs include the PoolMath share code and pool name. Keep them out of the history records so
+// an export of the history can be shared.
+function withoutPrivateInputs(inputs: any): any {
+    if (!inputs) return inputs;
+    const copy = Object.assign({}, inputs);
+    delete copy.shareCode;
+    delete copy.poolName;
+    return copy;
+}
+
 // Applies the currently pending AutoSwg recommendation to the chlorinator -- shared by
 // the manual /apply route (isAutoApply=false, a human just reviewed the number on screen)
 // and fully-automatic mode's unattended apply (isAutoApply=true, nobody reviewed it, so
@@ -445,6 +455,7 @@ async function applyAutoSwgRecommendation(isAutoApply: boolean, pctOverride?: nu
         appendAutoSwgHistory({
             source: 'auto',
             trigger: trigger || (isAutoApply ? undefined : 'reviewed'),
+            algorithm: AUTO_SWG_ALGORITHM_VERSION,
             targetOutcome: details.targetRefreshed ? 'kept' : (details.targetDateExtended ? 'new-extended' : 'new'),
             targetFc: state.autoSwg.lastAppliedTargetFc,
             targetDate: state.autoSwg.lastAppliedTargetDate ? new Date(state.autoSwg.lastAppliedTargetDate).toISOString() : undefined,
@@ -455,7 +466,7 @@ async function applyAutoSwgRecommendation(isAutoApply: boolean, pctOverride?: nu
             previousPct: state.autoSwg.currentPct,
             ppmPerDay: typeof capacity === 'number' ? Math.round(capacity * pct) / 100 : undefined,
             hrs: details.swgRunHours,
-            inputs: details.inputs,
+            inputs: withoutPrivateInputs(details.inputs),
             outputs: outputs,
         });
     }
@@ -1208,7 +1219,7 @@ export class StateRoute {
         // be read (see poolMathError in the response).
         app.get('/state/autoSwg/history/combined', async (req, res, next) => {
             try {
-                let combined = await buildCombinedHistory({ shareCode: sys.autoSwg.shareCode, poolName: sys.autoSwg.poolName || undefined, gallons: sys.autoSwg.gallons }, undefined, toLocalSwgEntries(readAutoSwgHistory()), () => ({ fc: archivedFcReadings(), swg: archivedSwgEvents(), cya: archivedCyaReadings(), chlorine: archivedChlorineAdditions() }), refreshAutoSwgArchiveFromPage);
+                let combined = await buildCombinedHistory({ shareCode: sys.autoSwg.shareCode, poolName: sys.autoSwg.poolName || undefined, gallons: sys.autoSwg.gallons }, undefined, toLocalSwgEntries(readAutoSwgHistory()), () => ({ fc: archivedFcReadings(), swg: archivedSwgEvents(), cya: archivedCyaReadings(), chlorine: archivedChlorineAdditions() }), refreshAutoSwgArchiveFromPage, readAutoSwgHistory().filter(r => r.source === 'settings' && Array.isArray(r.changes)).map(r => ({ ts: r.appliedAt, changes: r.changes, via: r.via })));
                 return res.status(200).send(combined);
             }
             catch (err) { next(err); }
