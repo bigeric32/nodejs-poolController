@@ -47,8 +47,8 @@ SWITCH = re.compile(r'^Solar (?P<heater>.+?) \(heater (?P<id>\d+)\): switching (
 CONFIRM = re.compile(r'^Solar (?P<heater>.+?): (?P<to>on|off) command confirmed by the relay manager')
 FAILED = re.compile(r'^Solar (?P<heater>.+?): (?P<to>on|off) command FAILED')
 OFFWHY = re.compile(r'^Solar (?P<heater>.+?) \((?P<body>[^)]+)\) turned off because (?P<why>.*?)\.$')
-SETTLE = re.compile(r'^Solar (?P<heater>.+?) \((?P<body>[^)]+)\) settle delay (?P<what>after .*?)(?P<ended> ended)?(?:, (?P<left>\d+) s left of (?P<of>\d+) s)?: '
-                    r'water ' + N('water') + r' \(compared as -?\d+\), solar ' + N('solar') + r', collector minus water ' + N('diff'))
+SETTLE = re.compile(r'^Solar (?P<heater>.+?) \((?P<body>[^)]+)\) settle delay (?P<what>(?:after|waiting) .*?)(?P<ended> ended)?(?:, (?P<left>\d+) s left of (?P<of>\d+) s)?: '
+                    r'water ' + N('water') + r'(?: \(compared as -?\d+\))?, solar ' + N('solar') + r', collector minus water ' + N('diff'))
 DEFERRED = re.compile(r'turn-on deferred: (.*)$')
 RELAY = re.compile(r'^NCP: Setting Pump .*Relay 2: (on|off)')
 
@@ -56,8 +56,8 @@ RELAY = re.compile(r'^NCP: Setting Pump .*Relay 2: (on|off)')
 def reason_key(why):
     """Reduce the text of a 'not heating' line to a short reason."""
     w = why.lower()
-    if 'restart hysteresis' in w:
-        return 'restart hysteresis (water must move back past the target)'
+    if 'degree hysteresis' in w:
+        return 'hysteresis (water must move back past the target)'
     if 'is not below the setpoint' in w:
         return 'at target (water not below setpoint)'
     if 'not warmer than the water' in w:
@@ -238,7 +238,7 @@ def analyze(events, timeline):
         brief = [r for r in runs if (r['end'] - r['start']).total_seconds() < 600]
         if len(brief) >= 3:
             P('  CYCLING: %d run(s) under 10 minutes (%.1f runs an hour). Solar is switching around the setpoint;' % (len(brief), len(runs) * 3600.0 / span if span else 0))
-            P('  controller.solar.restartHysteresis (default 1) makes it wait for the water to fall back past the target.')
+            P('  controller.solar.hysteresis (default 1) makes it stop a degree past the target and restart a degree back.')
         short = [r for r in runs if (r['end'] - r['start']).total_seconds() < 300]
         if short:
             P('  %d run(s) were shorter than 5 minutes: %s' % (len(short), ', '.join('%s (%s)' % (fmt_t(r['start']), fmt_dur((r['end'] - r['start']).total_seconds())) for r in short[:8])))
@@ -250,7 +250,7 @@ def analyze(events, timeline):
             if open_run:
                 P('  on %s -> still on at the end: water %.1f, collector %.1f' % (fmt_t(open_run['t']), open_run['water'], open_run['solar']))
     if offwhy:
-        c = Counter('water reached its target' if 'water reached' in w else 'collector lead fell to the run delta' for _, w in offwhy)
+        c = Counter('collector lead fell to the run delta' if 'collector lead' in w else 'water stayed past the stop level' for _, w in offwhy)
         P('Why runs stopped (log.solar.explain lines): ' + '; '.join('%s x%d' % (k, v) for k, v in c.items()))
 
     # ---- off periods
@@ -349,9 +349,9 @@ def analyze(events, timeline):
         flips = 0
         for s in held:
             on_now = 'solar would be on' in s['text']
-            if s['what'] == 'after solar turned on' and not on_now:
+            if s['what'].startswith('waiting to stop') and not on_now:
                 flips += 1       # without the delay solar would have stopped
-        starts = sum(1 for s in held if s['what'] != 'after solar turned on' and 'solar would be on' in s['text'])
+        starts = sum(1 for s in held if not s['what'].startswith('waiting to stop') and 'solar would be on' in s['text'])
         P('  held a start that the readings called for: %d line(s); held a stop that the readings called for: %d line(s).' % (starts, flips))
         if timeline:
             for s in settle:
