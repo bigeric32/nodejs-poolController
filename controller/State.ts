@@ -388,6 +388,11 @@ export class State implements IState {
                 ssched.manualPriorityActive = ssched.isOn = ssched.triggered = false;
                 if (typeof ssched.scheduleTime !== 'undefined') ssched.scheduleTime.calculated = false;
             }
+            // The virtual circuits (solar, heater, freeze ...) are worked out from the heaters and body states, so they start
+            // fresh too. A pump's circuit list can use one of them (for example the virtual solar circuit starting a pump speed),
+            // and a stale "solar: on" left over from before the restart would drive that pump speed for the few seconds before
+            // the first status pass recomputes it.
+            if (typeof sdata.virtualCircuits !== 'undefined') for (let i = 0; i < sdata.virtualCircuits.length; i++) sdata.virtualCircuits[i].isOn = false;
         }
         // Solar's "reheat above this temp before turning back on" guard (see SystemBoard.ts's
         // syncHeaterStates()/clearPrevHeaterOffTemp(), #925) is only ever cleared reactively --
