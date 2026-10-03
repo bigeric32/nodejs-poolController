@@ -2151,6 +2151,23 @@ export class CircuitStateCollection extends EqStateCollection<CircuitState> {
 
     }
 }
+// Why a circuit counts as related to a solar heater for the solar log (see logger.solar), or undefined when it does not:
+// it has a solar circuit function, its name says solar, it is the circuit of a body that has a solar heater, or it is a
+// cleaner circuit that the cleaner solar delay applies to.
+function solarCircuitRole(circuitId: number): string {
+    const circuit = sys.circuits.toArray().find(c => c.id === circuitId);
+    if (typeof circuit === 'undefined') return undefined;
+    const fname: string = sys.board.valueMaps.circuitFunctions.getName(circuit.type) || '';
+    if (fname.indexOf('solar') === 0) return `solar circuit function '${fname}'`;
+    if (/solar/i.test(circuit.name || '')) return 'circuit named for solar';
+    const bstate = state.temps.bodies.getBodyByCircuitId(circuitId);
+    if (typeof bstate !== 'undefined' && sys.heaters.getSolarHeaters(bstate.id).length > 0) return `circuit of ${bstate.name}, which has a solar heater`;
+    if (fname.indexOf('cleaner') !== -1 && sys.general.options.cleanerSolarDelay) {
+        const ctype = sys.board.valueMaps.circuitFunctions.get(circuit.type);
+        if (sys.heaters.getSolarHeaters(ctype && ctype.body ? ctype.body : 1).length > 0) return 'cleaner circuit that the cleaner solar delay applies to';
+    }
+    return undefined;
+}
 export class CircuitState extends EqState implements ICircuitState {
     public dataName = 'circuit';
     public initData() {
@@ -2177,9 +2194,17 @@ export class CircuitState extends EqState implements ICircuitState {
     public set showInFeatures(val: boolean) { this.setDataVal('showInFeatures', val); }
     public get isOn(): boolean { return this.data.isOn; }
     public set isOn(val: boolean) {
+        const changed = utils.makeBool(this.data.isOn) !== val;
         if (val && !this.data.isOn) this.startTime = new Timestamp();
         else if (!val) this.startTime = undefined;
         this.setDataVal('isOn', val);
+        // A circuit tied to a solar heater turning on or off goes in the solar log, with why it counts as solar related.
+        if (changed) {
+            try {
+                const role = solarCircuitRole(this.id);
+                if (typeof role !== 'undefined') logger.solar(`Solar-related circuit ${this.name} (#${this.id}) turned ${val ? 'on' : 'off'}: ${role}`);
+            } catch (err) { /* only logging; never let it affect a circuit change */ }
+        }
     }
     public get type() { return typeof (this.data.type) !== 'undefined' ? this.data.type.val : -1; }
     public set type(val: number) {

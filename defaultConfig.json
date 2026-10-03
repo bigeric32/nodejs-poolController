@@ -353,6 +353,9 @@
       "level": "info",
       "captureForReplay": false,
       "logToFile": false
+    },
+    "solar": {
+      "logToFile": false
     }
   },
   "appVersion": "0.0.1"
