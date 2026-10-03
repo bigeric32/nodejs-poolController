@@ -152,6 +152,8 @@ export interface AutoSwgResult {
     targetDateUsed: string;          // ISO
     targetDaysUsed: number;          // days from calculation time until targetDateUsed
     refreshed: boolean;              // true if it stayed on course for params.inFlight rather than starting a new target
+    targetStrayPpm: number;          // how far the projected FC was from the target FC (the distance compared with the threshold)
+    targetThresholdPpm?: number;     // the new-target-date threshold it was compared with; unset when there was no in-flight target to compare
     targetWarning?: string;          // set when even 100% can't reach targetFc within the window (the % above is capped at 100)
     targetDateExtended?: boolean;    // true when the deadline was moved out to when consumption alone reaches the target (see targetInfo)
     targetInfo?: string;             // set when FC is so far above targetFc that consumption alone (SWG at 0%) won't bring it down by targetDateUsed -- informational, not a problem
@@ -1065,6 +1067,8 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         targetDateUsed: targetDate.toISOString(),
         targetDaysUsed: targetDays,
         refreshed: refreshed,
+        targetStrayPpm: Math.round(strayedBy * 100) / 100,
+        targetThresholdPpm: inFlight && isFinite(inFlight.strayPpm) ? inFlight.strayPpm : undefined,
         targetWarning: targetWarning,
         targetInfo: targetInfo,
         targetDateExtended: targetDateExtended,
