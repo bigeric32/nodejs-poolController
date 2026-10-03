@@ -38,7 +38,8 @@
       }
     },
     "solar": {
-      "settleMinutes": 5
+      "settleMinutes": 5,
+      "restartHysteresis": 1
     },
     "txDelays": {
       "idleBeforeTxMs": 0,

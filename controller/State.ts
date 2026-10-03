@@ -428,7 +428,7 @@ export class State implements IState {
         // heater on every boot so solar gets a fresh start regardless of how the previous process
         // exited.
         if (typeof sdata.heaters !== 'undefined') {
-            for (let i = 0; i < sdata.heaters.length; i++) sdata.heaters[i].prevHeaterOffTemp = undefined;
+            for (let i = 0; i < sdata.heaters.length; i++) { sdata.heaters[i].prevHeaterOffTemp = undefined; sdata.heaters[i].targetStop = undefined; }
         }
         var self = this;
         let pnlTime = typeof sdata.time !== 'undefined' && sdata.time !== '' ? new Date(sdata.time) : new Date();
@@ -2029,6 +2029,15 @@ export class HeaterState extends EqState {
         if (this.prevHeaterOffTemp !== val) {
             this.data.prevHeaterOffTemp = val;
             if (typeof val === 'undefined') delete this.data.prevHeaterOffTemp;
+        }
+    }
+    // Set to 'heating' or 'cooling' when solar stopped because the water reached its target, so the restart waits for the water to move
+    // controller.solar.restartHysteresis degrees back past it. Cleared when solar starts and wherever prevHeaterOffTemp is cleared.
+    public get targetStop(): string { return this.data.targetStop; }
+    public set targetStop(val: string) {
+        if (this.targetStop !== val) {
+            this.data.targetStop = val;
+            if (typeof val === 'undefined') delete this.data.targetStop;
         }
     }
     public get startupDelay(): boolean { return this.data.startupDelay; }
