@@ -990,7 +990,7 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     }
     else {
         const above = projectedCurrentFc > params.targetFc;
-        if (inFlight) rationale.push(`Projected current FC is ${strayedBy.toFixed(2)} ppm ${above ? 'above' : 'below'} the ${params.targetFc} ppm target, more than the ${inFlight.strayPpm} ppm new-target threshold: starting a new target instead of refreshing the old one.`);
+        if (inFlight) rationale.push(`Projected current FC is ${strayedBy.toFixed(2)} ppm ${above ? 'above' : 'below'} the ${params.targetFc} ppm target, more than the ${inFlight.strayPpm} ppm new-target-date threshold: starting a new target date instead of refreshing the old one.`);
         targetDays = above ? params.targetDaysAbove : params.targetDaysBelow;
         targetDate = new Date(rightNow.getTime() + targetDays * 86400000);
         rationale.push(`Projected current FC is ${above ? 'above' : 'at or below'} the ${params.targetFc} ppm target: using the ${targetDays}-day window for FC ${above ? 'above' : 'below'} target.`);
