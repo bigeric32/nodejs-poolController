@@ -818,6 +818,7 @@ export class NixieCircuitCommands extends CircuitCommands {
                             }
                             // Lets see if we have a solar start delay.
                             delayTime = Math.max(Math.round(((sys.general.options.cleanerSolarDelayTime * 1000) - (dtNow - startTime))) / 1000, delayTime);
+                            if (delayTime > 0) logger.solar(`Cleaner circuit ${cstate.name}: start delayed ${delayTime} s while ${bstate.name} is heating with solar (cleaner solar delay ${sys.general.options.cleanerSolarDelayTime} s)`);
                         }
                     }
                     if (sys.general.options.cleanerStartDelay && sys.general.options.cleanerStartDelayTime) {

@@ -41,7 +41,7 @@ class Logger {
     private slMessages: any[];
     private pktPath: string;
     private consoleToFilePath: string;
-    private transports: { console: winston.transports.ConsoleTransportInstance, file?: winston.transports.FileTransportInstance, consoleFile?: winston.transports.FileTransportInstance } = {
+    private transports: { console: winston.transports.ConsoleTransportInstance, file?: winston.transports.FileTransportInstance, consoleFile?: winston.transports.FileTransportInstance, solarFile?: winston.transports.FileTransportInstance } = {
         console: new winston.transports.Console({ level: 'silly' })
     };
     private captureForReplayBaseDir: string;
@@ -77,6 +77,26 @@ class Logger {
         if (info.level === 'error' || info.level === 'warn' || info.solar === true) return info;
         return false;
     });
+    // The solar log file: every logger.solar() message, whatever the log level is set to, in logs/solarLog(<time>).log.
+    // Turn it on with log.solar.logToFile in config.json.
+    private getSolarLogPath(): string { return 'solarLog(' + this.getLogTimestamp() + ').log'; }
+    private solarMessagesOnly = winston.format((info) => info.solar === true ? info : false);
+    private updateSolarFile() {
+        const wanted = typeof this.cfg !== 'undefined' && typeof this.cfg.solar !== 'undefined' && utils.makeBool(this.cfg.solar.logToFile);
+        if (wanted && typeof this.transports.solarFile === 'undefined') {
+            this.transports.solarFile = new winston.transports.File({
+                filename: path.join(process.cwd(), '/logs', this.getSolarLogPath()),
+                level: 'info',
+                format: winston.format.combine(this.solarMessagesOnly(), winston.format.splat(), winston.format.uncolorize(), this.myFormat)
+            });
+            this._logger.add(this.transports.solarFile);
+        }
+        else if (!wanted && typeof this.transports.solarFile !== 'undefined') {
+            this._logger.remove(this.transports.solarFile);
+            this.transports.solarFile.close();
+            this.transports.solarFile = undefined;
+        }
+    }
     private myFormat = winston.format.printf(({ level, message, label }) => {
         return `[${new Date().toLocaleString()}] ${level}: ${message}`;
     });
@@ -102,10 +122,21 @@ class Logger {
             this.transports.consoleFile.level = this.transportLevel();
             this._logger.add(this.transports.consoleFile);
         }
+        // The winston logger was just created, so a solar file transport from an earlier init() is not attached to it.
+        if (typeof this.transports.solarFile !== 'undefined') {
+            try { this.transports.solarFile.close(); } catch (err) { /* already closed */ }
+            this.transports.solarFile = undefined;
+        }
+        this.updateSolarFile();
     }
     public async stopAsync() {
         try {
             this.info(`Stopping logger Process.`);
+            if (typeof this.transports.solarFile !== 'undefined') {
+                this._logger.remove(this.transports.solarFile);
+                this.transports.solarFile.close();
+                this.transports.solarFile = undefined;
+            }
             if (this.cfg.app.captureForReplay) {
                 return await this.stopCaptureForReplayAsync();
             }
@@ -286,8 +317,9 @@ class Logger {
                 this.transports.consoleFile = undefined;
             }
         }
+        this.updateSolarFile();
         for (let [key, transport] of Object.entries(this.transports)) {
-            if(typeof transport !== 'undefined') transport.level = this.transportLevel();
+            if(typeof transport !== 'undefined' && key !== 'solarFile') transport.level = this.transportLevel();
         }
     }
     public startCaptureForReplay(bResetLogs:boolean) {

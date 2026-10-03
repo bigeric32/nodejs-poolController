@@ -267,6 +267,14 @@ export class NixieGasHeater extends NixieHeaterBase {
 }
 export class NixieSolarHeater extends NixieHeaterBase {
     public pollingInterval: number = 10000;
+    // The last reason a turn-on was deferred, so a deferral is logged once and not on every status pass.
+    private _solarNote: string;
+    private solarNote(key: string, message: string) {
+        if (this._solarNote !== key) {
+            this._solarNote = key;
+            logger.solar(message);
+        }
+    }
     declare heater: Heater;
     constructor(ncp: INixieControlPanel, heater: Heater) {
         super(ncp, heater);
@@ -288,18 +296,23 @@ export class NixieSolarHeater extends NixieHeaterBase {
                 // not having issues this should be plenty of time.
                 if (new Date().getTime() - hstate.endTime.getTime() < 60000) {
                     logger.verbose(`${hstate.name} short cycle detected deferring turn on state`);
+                    this.solarNote('shortcycle', `Solar ${hstate.name} turn-on deferred: ${Math.round((new Date().getTime() - hstate.endTime.getTime()) / 1000)} s since it last turned off, short-cycle protection needs 60 s`);
                     target = false;
                 }
             }
+            if (isOn && hstate.startupDelay) this.solarNote('startup', `Solar ${hstate.name} turn-on deferred: a startup delay is in progress`);
+            else if (!isOn || target) this._solarNote = undefined;
 
             // Here we go we need to set the valve status that is attached to solar.
-            if (hstate.isOn !== target) {
-                logger.info(`Nixie: Set Heater ${hstate.id}-${hstate.name} to ${isOn}`);
+            const changing = hstate.isOn !== target;
+            if (changing) {
+                logger.solar(`Solar ${hstate.name} (heater ${hstate.id}): switching ${target ? (isCooling ? 'to cooling' : 'on') : 'off'}`);
             }
             if (typeof this._lastState === 'undefined' || target || this._lastState !== target) {
                 if (utils.isNullOrEmpty(this.heater.connectionId) || utils.isNullOrEmpty(this.heater.deviceBinding)) {
                     this._lastState = hstate.isOn = target;
                     hstate.isCooling = target && isCooling;
+                    if (changing) logger.solar(`Solar ${hstate.name}: state set to ${target ? 'on' : 'off'} (no relay is bound to this heater)`);
                 }
                 else {
                     let res = await NixieEquipment.putDeviceService(this.heater.connectionId, `/state/device/${this.heater.deviceBinding}`,
@@ -307,8 +320,12 @@ export class NixieSolarHeater extends NixieHeaterBase {
                     if (res.status.code === 200) {
                         this._lastState = hstate.isOn = target;
                         hstate.isCooling = target && isCooling;
+                        if (changing) logger.solar(`Solar ${hstate.name}: ${target ? 'on' : 'off'} command confirmed by the relay manager (status ${res.status.code})`);
                     }
-                    else logger.error(`Nixie Error setting heater state: ${res.status.code} -${res.status.message} ${res.error.message}`);
+                    else {
+                        logger.error(`Nixie Error setting heater state: ${res.status.code} -${res.status.message} ${res.error.message}`);
+                        if (changing) logger.solar(`Solar ${hstate.name}: ${target ? 'on' : 'off'} command FAILED (${res.status.code} ${res.status.message})`);
+                    }
                 }
                 if (target) {
                     if (isCooling) this.lastCoolCycle = new Date();
@@ -327,7 +344,7 @@ export class NixieSolarHeater extends NixieHeaterBase {
                         let cstate = state.circuits.getItemById(cleaner.id);
                         if (cstate.isOn && sys.general.options.cleanerSolarDelayTime > 0) {
                             // Turn off the circuit then set a delay.
-                            logger.info(`Setting cleaner solar delay for ${cleaner.name} to ${sys.general.options.cleanerSolarDelayTime}`);
+                            logger.solar(`Setting cleaner solar delay for ${cleaner.name} to ${sys.general.options.cleanerSolarDelayTime}`);
                             await sys.board.circuits.setCircuitStateAsync(cstate.id, false);
                             delayMgr.setCleanerStartDelay(cstate, hstate.bodyId, sys.general.options.cleanerSolarDelayTime);
                         }

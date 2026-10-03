@@ -4394,8 +4394,9 @@ export class HeaterCommands extends BoardCommands {
                                                 const solarNow = isOn ? (isCooling ? 'cooling' : 'heating') : 'off';
                                                 if (solarLogged.get(heater.id) !== solarNow) {
                                                     solarLogged.set(heater.id, solarNow);
+                                                    const r1 = (v: any) => typeof v === 'number' && isFinite(v) ? Math.round(v * 10) / 10 : v;
                                                     const prevOff = hState.prevHeaterOffTemp;
-                                                    logger.solar(`Solar ${heater.name} ${solarNow} (${body.name}, mode ${mode}): water ${body.temp} (compared as ${Math.trunc(body.temp)}), setpoint ${cfgBody.heatSetpoint}, cool setpoint ${cfgBody.coolSetpoint}, solar ${state.temps.solar}, start/run delta ${heater.startTempDelta}/${heater.stopTempDelta}, collector at last off ${typeof prevOff === 'undefined' ? 'n/a' : prevOff}, night ${state.heliotrope.isNight}`);
+                                                    logger.solar(`Solar ${heater.name} ${solarNow} (${body.name}, mode ${mode}): water ${r1(body.temp)} (compared as ${Math.trunc(body.temp)}), setpoint ${cfgBody.heatSetpoint}, cool setpoint ${cfgBody.coolSetpoint}, solar ${r1(state.temps.solar)}, collector minus water ${r1(state.temps.solar - body.temp)} (run delta ${heater.stopTempDelta}), collector at last off ${typeof prevOff === 'undefined' ? 'n/a' : r1(prevOff)}, collector minus last off ${typeof prevOff === 'undefined' ? 'n/a' : r1(state.temps.solar - prevOff)} (start delta ${heater.startTempDelta}), night ${state.heliotrope.isNight}`);
                                                 }
                                             }
                                         }
