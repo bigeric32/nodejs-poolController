@@ -357,6 +357,7 @@
     "solar": {
       "logToFile": false,
       "alwaysShow": false,
+      "explain": false,
       "circuits": []
     }
   },

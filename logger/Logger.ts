@@ -164,6 +164,8 @@ class Logger {
     // A solar heater message. It is written at info, so it shows at the info level and every more verbose one, and the
     // log.solar.alwaysShow shows it at the levels error and warn too.
     public solar(message: string) { logger._logger.log({ level: 'info', message: message, solar: true }); }
+    // log.solar.explain: also say why solar heating or nocturnal cooling is enabled but not running (off unless turned on).
+    public get solarExplain(): boolean { return typeof this.cfg !== 'undefined' && typeof this.cfg.solar !== 'undefined' && utils.makeBool(this.cfg.solar.explain); }
     public reject(sError: string): Promise<Error> {
         logger.error(sError);
         return Promise.reject(new Error(sError));

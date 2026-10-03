@@ -3954,6 +3954,9 @@ export class ScheduleCommands extends BoardCommands {
 }
 // The last solar decision logged for each heater id (see the 'warn-solar' log level), so only a change is logged.
 const solarLogged: Map<number, string> = new Map<number, string>();
+// What was last said about why solar is enabled but not running, per heater, so it is said when the reason changes and then
+// only every 15 minutes (see the 'warn-solar' log level).
+const solarWhyNot: Map<number, { key: string; at: number }> = new Map<number, { key: string; at: number }>();
 export class HeaterCommands extends BoardCommands {
     public async restore(rest: { poolConfig: any, poolState: any }, ctx: any, res: RestoreResults): Promise<boolean> {
         try {
@@ -4388,6 +4391,42 @@ export class HeaterCommands extends BoardCommands {
                                             if (hstate.isOn && !isOn) { 
                                                 hState.prevHeaterOffTemp = state.temps.solar; 
                                             } // 6  
+                                            // While solar heating or nocturnal cooling is enabled and wanted (the water is below the setpoint, or above the cool setpoint)
+                                            // but the decision is not to run, say why, so a long wait can be followed. It is logged when the reason changes and then every
+                                            // 15 minutes, not on every status pass. Off unless log.solar.explain is on in config.json.
+                                            if (logger.solarExplain) {
+                                                const r1 = (v: any) => typeof v === 'number' && isFinite(v) ? Math.round(v * 10) / 10 : v;
+                                                if (isOn) solarWhyNot.delete(heater.id);
+                                                else {
+                                                    const waterT = Math.trunc(body.temp);
+                                                    const solarT = state.temps.solar;
+                                                    const prevOff = hState.prevHeaterOffTemp;
+                                                    const night = state.heliotrope.isNight;
+                                                    let key = '', why = '', kind = 'heating', repeat = true;
+                                                    if (waterT < cfgBody.heatSetpoint) {
+                                                        if (!(solarT > waterT)) { key = 'collector-not-warmer'; why = `the collector (${r1(solarT)}) is not warmer than the water (compared as ${waterT})`; }
+                                                        else if (!((solarT - waterT) > heater.stopTempDelta)) { key = 'run-delta'; why = `the collector is only ${r1(solarT - waterT)} above the water and needs to be more than ${heater.stopTempDelta} (the run delta)`; }
+                                                        else if (typeof prevOff !== 'undefined' && !((solarT - prevOff) > heater.startTempDelta)) { key = 'reheat'; why = `the collector (${r1(solarT)}) has only risen ${r1(solarT - prevOff)} above where it was when solar last turned off (${r1(prevOff)}); it must rise more than ${heater.startTempDelta} (the start delta), to above ${r1(prevOff + heater.startTempDelta)}`; }
+                                                    }
+                                                    else if (heater.coolingEnabled && waterT > cfgBody.coolSetpoint) {
+                                                        kind = 'nocturnal cooling';
+                                                        if (!night) { key = 'cool-daytime'; why = 'it is daytime (nocturnal cooling runs only at night)'; }
+                                                        else if (!(solarT < waterT)) { key = 'cool-collector-not-cooler'; why = `the collector (${r1(solarT)}) is not cooler than the water (compared as ${waterT})`; }
+                                                        else if (!((waterT - solarT) > heater.stopTempDelta)) { key = 'cool-run-delta'; why = `the water is only ${r1(waterT - solarT)} warmer than the collector and needs to be more than ${heater.stopTempDelta} (the run delta)`; }
+                                                        else if (!(waterT > (cfgBody.coolSetpoint + heater.stopTempDelta))) { key = 'cool-margin'; why = `the water (compared as ${waterT}) must be more than ${heater.stopTempDelta} above the cool setpoint ${cfgBody.coolSetpoint}, that is above ${cfgBody.coolSetpoint + heater.stopTempDelta}, before cooling starts`; }
+                                                        else if (typeof prevOff !== 'undefined' && !((prevOff - solarT) > heater.startTempDelta)) { key = 'cool-reheat'; why = `the collector (${r1(solarT)}) has only dropped ${r1(prevOff - solarT)} below where it was when solar last turned off (${r1(prevOff)}); it must drop more than ${heater.startTempDelta} (the start delta), to below ${r1(prevOff - heater.startTempDelta)}`; }
+                                                    }
+                                                    else { key = 'at-target'; repeat = false; kind = 'heating'; why = `the water (compared as ${waterT}) is not below the setpoint ${cfgBody.heatSetpoint}${heater.coolingEnabled ? ' and not above the cool setpoint ' + cfgBody.coolSetpoint : ''}`; }
+                                                    if (key !== '') {
+                                                        const last = solarWhyNot.get(heater.id);
+                                                        const now = new Date().getTime();
+                                                        if (typeof last === 'undefined' || last.key !== key || (repeat && now - last.at >= 15 * 60 * 1000)) {
+                                                            solarWhyNot.set(heater.id, { key: key, at: now });
+                                                            logger.solar(`Solar ${heater.name} (${body.name}, mode ${mode}) is not ${kind}: ${why}. Water ${r1(body.temp)}, solar ${r1(solarT)}, setpoint ${cfgBody.heatSetpoint}, cool setpoint ${cfgBody.coolSetpoint}, start/run delta ${heater.startTempDelta}/${heater.stopTempDelta}, night ${night}.`);
+                                                        }
+                                                    }
+                                                }
+                                            }
                                             // Note each change of the solar decision with the readings behind it (see the 'warn-solar' log level). Only a change
                                             // is logged, so this does not repeat on every status pass.
                                             {
