@@ -65,13 +65,17 @@ class Logger {
         return this.currentTimestamp;
     } 
 
-    // The 'warn-solar' log level: warnings and errors, plus only the messages written with logger.solar().
-    // winston levels are a plain ladder with no category filter, so this level is handled here: the transports
-    // run at 'info' and this filter drops every other info, verbose, debug and silly message. While a replay
-    // capture is running everything is kept, because the capture needs the full log.
-    private static readonly SOLAR_LEVEL = 'warn-solar';
-    private get solarOnly(): boolean { return typeof this.cfg !== 'undefined' && typeof this.cfg.app !== 'undefined' && this.cfg.app.level === Logger.SOLAR_LEVEL; }
-    private transportLevel(): string { return this.solarOnly ? 'info' : this.cfg.app.level; }
+    // log.solar.alwaysShow: solar messages (logger.solar) are shown in the normal log whatever the log level is. They are
+    // written at info, so only the levels error and warn would hide them. winston levels are a plain ladder with no
+    // category filter, so for those two the transports run at 'info' and this filter drops every other info, verbose,
+    // debug and silly message. While a replay capture is running everything is kept, because the capture needs the
+    // full log. A level of 'warn-solar' is still understood, as an older spelling of level warn with alwaysShow on.
+    private get appLevel(): string { const level = this.cfg.app.level; return level === 'warn-solar' ? 'warn' : level; }
+    private get alwaysShowSolar(): boolean { return this.cfg.app.level === 'warn-solar' || (typeof this.cfg.solar !== 'undefined' && utils.makeBool(this.cfg.solar.alwaysShow)); }
+    private get solarOnly(): boolean {
+        return typeof this.cfg !== 'undefined' && typeof this.cfg.app !== 'undefined' && this.alwaysShowSolar && (this.appLevel === 'warn' || this.appLevel === 'error');
+    }
+    private transportLevel(): string { return this.solarOnly ? 'info' : this.appLevel; }
     private solarFilter = winston.format((info) => {
         if (!this.solarOnly || this._captureInProgress) return info;
         if (info.level === 'error' || info.level === 'warn' || info.solar === true) return info;
@@ -158,7 +162,7 @@ class Logger {
     public error(...args: any[]): Error { logger._logger.error.apply(logger._logger, arguments); return new Error(arguments[0]); }
     public silly(...args: any[]) { logger._logger.silly.apply(logger._logger, arguments); }
     // A solar heater message. It is written at info, so it shows at the info level and every more verbose one, and the
-    // 'warn-solar' level shows it along with warnings and errors and nothing else.
+    // log.solar.alwaysShow shows it at the levels error and warn too.
     public solar(message: string) { logger._logger.log({ level: 'info', message: message, solar: true }); }
     public reject(sError: string): Promise<Error> {
         logger.error(sError);
