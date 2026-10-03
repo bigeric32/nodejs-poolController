@@ -2106,6 +2106,9 @@ function solarCircuitRole(circuitId: number): string {
     const circuit = sys.circuits.toArray().find(c => c.id === circuitId);
     if (typeof circuit === 'undefined') return undefined;
     const fname: string = sys.board.valueMaps.circuitFunctions.getName(circuit.type) || '';
+    // Circuits the user listed in log.solar.circuits: a number is a circuit id, text matches part of the circuit's name.
+    const listed: any[] = logger.options && logger.options.solar && Array.isArray(logger.options.solar.circuits) ? logger.options.solar.circuits : [];
+    if (listed.some(x => typeof x === 'number' ? x === circuitId : (typeof x === 'string' && x.length > 0 && (circuit.name || '').toLowerCase().indexOf(x.toLowerCase()) !== -1))) return 'listed in log.solar.circuits';
     if (fname.indexOf('solar') === 0) return `solar circuit function '${fname}'`;
     if (/solar/i.test(circuit.name || '')) return 'circuit named for solar';
     const bstate = state.temps.bodies.getBodyByCircuitId(circuitId);

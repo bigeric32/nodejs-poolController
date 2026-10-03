@@ -356,7 +356,8 @@
     },
     "solar": {
       "logToFile": false,
-      "alwaysShow": false
+      "alwaysShow": false,
+      "circuits": []
     }
   },
   "appVersion": "0.0.1"
