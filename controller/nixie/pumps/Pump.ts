@@ -356,6 +356,20 @@ export class NixiePump extends NixieEquipment {
         return false;
     }
 }
+// A pump relay or speed message goes in the solar log (see logger.solar) when a solar heater is installed, because the
+// pump's speed is what a solar heater needs to run. The state of the solar heaters is added so the two read together.
+function pumpLog(message: string) {
+    try {
+        const solarType = sys.board.valueMaps.heaterTypes.getValue('solar');
+        const solars = sys.heaters.toArray().filter(h => h.isActive && h.type === solarType);
+        if (solars.length > 0) {
+            const states = solars.map(h => { const hs = state.heaters.getItemById(h.id); return `${h.name} ${hs && hs.isOn ? 'on' : 'off'}`; }).join(', ');
+            logger.solar(`${message} Solar heaters: ${states}.`);
+            return;
+        }
+    } catch (err) { /* fall back to a plain log line */ }
+    logger.info(message);
+}
 export class NixiePumpSS extends NixiePump {
     public setTargetSpeed(pState: PumpState) {
         // Turn on ss pumps.
@@ -376,7 +390,7 @@ export class NixiePumpSS extends NixiePump {
                 }
             }
         }
-        if (this._targetSpeed !== _newSpeed) logger.info(`NCP: Setting Pump ${this.pump.name} to ${_newSpeed > 0 ? 'on' : 'off'}. ${sys.board.bodies.isBodyOn(this.pump.body)}`);
+        if (this._targetSpeed !== _newSpeed) pumpLog(`NCP: Setting Pump ${this.pump.name} to ${_newSpeed > 0 ? 'on' : 'off'}. ${sys.board.bodies.isBodyOn(this.pump.body)}`);
         if (isNaN(_newSpeed)) _newSpeed = 0;
         this._targetSpeed = _newSpeed;
     }
@@ -445,7 +459,7 @@ export class NixiePumpDS extends NixiePumpSS {
         this._targetSpeed = _newSpeed;
     }
     public logSpeed(_newSpeed: number) {
-        if (this._targetSpeed !== _newSpeed) logger.info(`NCP: Setting Pump ${this.pump.name} relays to Relay 1: ${_newSpeed & 1 ? 'on' : 'off'}, Relay 2: ${_newSpeed & 2 ? 'on' : 'off'}.`);
+        if (this._targetSpeed !== _newSpeed) pumpLog(`NCP: Setting Pump ${this.pump.name} relays to Relay 1: ${_newSpeed & 1 ? 'on' : 'off'}, Relay 2: ${_newSpeed & 2 ? 'on' : 'off'}.`);
     }
 }
 export class NixiePumpSF extends NixiePumpDS {
