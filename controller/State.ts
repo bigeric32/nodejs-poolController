@@ -2162,6 +2162,14 @@ function solarCircuitRole(circuitId: number): string {
     if (/solar/i.test(circuit.name || '')) return 'circuit named for solar';
     const bstate = state.temps.bodies.getBodyByCircuitId(circuitId);
     if (typeof bstate !== 'undefined' && sys.heaters.getSolarHeaters(bstate.id).length > 0) return `circuit of ${bstate.name}, which has a solar heater`;
+    // A circuit that drives a higher speed (relay 2 or more) of a pump, on a system that has a solar heater.
+    const solarType = sys.board.valueMaps.heaterTypes.getValue('solar');
+    if (sys.heaters.toArray().some(h => h.isActive && h.type === solarType)) {
+        for (const pump of sys.pumps.toArray()) {
+            const pc = pump.circuits.get().find((c: any) => c.circuit === circuitId && c.relay >= 2);
+            if (typeof pc !== 'undefined') return `circuit that drives relay ${pc.relay} (a higher speed) of pump ${pump.name}, and a solar heater is installed`;
+        }
+    }
     if (fname.indexOf('cleaner') !== -1 && sys.general.options.cleanerSolarDelay) {
         const ctype = sys.board.valueMaps.circuitFunctions.get(circuit.type);
         if (sys.heaters.getSolarHeaters(ctype && ctype.body ? ctype.body : 1).length > 0) return 'cleaner circuit that the cleaner solar delay applies to';
