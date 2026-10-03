@@ -9,14 +9,20 @@ PoolMath log up to date, and apply the recommendation.
 
 ## What it needs from you
 
-In the PoolMath app, log:
+**FC tests must be logged in PoolMath, accurately.** AutoSwg has no other source for FC, so every test goes in
+the PoolMath app, and a mistyped reading should be corrected there. The tool only works as designed when the FC
+log is right. Also log any **liquid chlorine** you add, as "Liquid Chlorine".
 
-* your **FC tests**,
-* **every change to the SWG %**, and
-* any **liquid chlorine** you add (as "Liquid Chlorine").
+**SWG % changes can be logged in either place.** When you apply a recommendation in AutoSwg, or the SWG % is
+changed some other way while njsPC is running, AutoSwg records it in its own local log and uses that entry.
+You can also log SWG changes in PoolMath, which covers anything the local log does not have, such as a change
+made while njsPC was off. If both exist for the same change within an hour, the local one is used.
 
-Turn on sharing for the pool and enter its share code in the AutoSwg settings. A few FC tests a week is
-workable and daily is ideal. Without FC and SWG entries there is nothing to calculate from.
+Turn on sharing for the pool in PoolMath and enter its share code in the AutoSwg settings.
+
+**The minimum to start:** about three FC readings, with SWG entries covering them, within a 21-day period (the
+Averaging Window). With less than that it tells you it cannot estimate your consumption yet. A few FC tests a
+week is workable and daily is ideal, and more readings make the recommendation steadier.
 
 ## Day to day
 
@@ -27,9 +33,10 @@ workable and daily is ideal. Without FC and SWG entries there is nothing to calc
 
 ## Start with the defaults
 
-Run the defaults for about **three weeks**, testing FC regularly and logging every SWG change, before you
-tune anything. If you have not been logging FC and SWG in PoolMath yet, start now: there is no history to
-tune against until you have it. Tune (below) will tell you if there are too few readings.
+Run the defaults for about **three weeks**, testing FC regularly and keeping every SWG change logged (in
+PoolMath, or locally by applying through AutoSwg), before you tune anything. If you have not been logging FC in
+PoolMath yet, start now: there is no history to tune against until you have it. Tune (below) will tell you if
+there are too few readings.
 
 ## The settings, in three groups
 
