@@ -17,6 +17,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 import * as extend from 'extend';
 import { logger } from '../../logger/Logger';
+import { config } from '../../config/Config';
 import { Message, Outbound } from '../comms/messages/Messages';
 import { Timestamp, utils } from '../Constants';
 import { Body, ChemController, ChemDoser, Chlorinator, Circuit, CircuitGroup, CircuitGroupCircuit, ConfigVersion, ControllerType, Cover, CustomName, CustomNameCollection, EggTimer, Equipment, Feature, Filter, General, Heater, ICircuit, ICircuitGroup, ICircuitGroupCircuit, LightGroup, LightGroupCircuit, Location, Options, Owner, PoolSystem, Pump, Remote, Schedule, sys, TempSensorCollection, Valve } from '../Equipment';
@@ -3957,6 +3958,19 @@ const solarLogged: Map<number, string> = new Map<number, string>();
 // What was last said about why solar is enabled but not running, per heater, so it is said when the reason changes and then
 // only every 15 minutes (see the 'warn-solar' log level).
 const solarWhyNot: Map<number, { key: string; at: number }> = new Map<number, { key: string; at: number }>();
+// When each body's pump was first seen running by this process, and what was last logged about a solar settle delay, per heater.
+const solarBodyOnAt: Map<number, number> = new Map<number, number>();
+const solarSettleLog: Map<number, { key: string; at: number }> = new Map<number, { key: string; at: number }>();
+// controller.solar.settleMinutes in config.json (default 5; 0 turns the delay off): how long after the pump starts, or solar turns
+// on or off, the solar decision waits for the water and collector readings to settle.
+function solarSettleMs(): number {
+    let mins = 5;
+    try {
+        const c = config.getSection('controller.solar');
+        if (typeof c.settleMinutes !== 'undefined') { const v = parseFloat(c.settleMinutes); if (isFinite(v) && v >= 0) mins = v; }
+    } catch (err) { /* the default applies */ }
+    return mins * 60000;
+}
 export class HeaterCommands extends BoardCommands {
     public async restore(rest: { poolConfig: any, poolState: any }, ctx: any, res: RestoreResults): Promise<boolean> {
         try {
@@ -4284,6 +4298,8 @@ export class HeaterCommands extends BoardCommands {
                 let isCooling = false;
                 let hstatus = sys.board.valueMaps.heatStatus.getName(body.heatStatus);
                 let mode = sys.board.valueMaps.heatModes.getName(body.heatMode);
+                if (!body.isOn) solarBodyOnAt.delete(body.id);
+                else if (!solarBodyOnAt.has(body.id)) solarBodyOnAt.set(body.id, new Date().getTime());
                 if (body.isOn) {
                     if (typeof body.temp === 'undefined' && heaters.length > 0) {
                         if (!HeaterCommands._warnedNoTemp.has(body.id)) {
@@ -4371,33 +4387,85 @@ export class HeaterCommands extends BoardCommands {
                                             // is local to the solar on/off check; body.temp itself is untouched everywhere
                                             // else (display, other heater types, AutoSwg, etc).
                                             let waterTemp = Math.trunc(body.temp);
-                                            if (state.temps.solar > waterTemp // 1
+                                            // Settle delay (controller.solar.settleMinutes, default 5, 0 turns it off). Readings are not trustworthy just after the pump starts or the
+                                            // valve moves: warm water standing in the pipes reaches the water sensor and can look like the pool reaching the setpoint. So solar is not
+                                            // started for the delay after the body's pump starts or after solar turns off, and after solar turns on it is not stopped for the water
+                                            // reaching the setpoint (the collector falling to the run delta still stops it). The panels do the same: "The pump must be ON for a few minutes for operation."
+                                            const settleMs = solarSettleMs();
+                                            const nowMs = new Date().getTime();
+                                            let blockStart = false, holdOn = false, holdWhy = '', holdLeftMs = 0;
+                                            if (settleMs > 0) {
+                                                const pumpAt = solarBodyOnAt.get(body.id);
+                                                const pumpLeft = typeof pumpAt === 'undefined' ? 0 : settleMs - (nowMs - pumpAt);
+                                                const offLeft = typeof hState.endTime === 'undefined' ? 0 : settleMs - (nowMs - hState.endTime.getTime());
+                                                const onLeft = typeof hState.startTime === 'undefined' ? 0 : settleMs - (nowMs - hState.startTime.getTime());
+                                                if (!hState.isOn) {
+                                                    if (pumpLeft > 0 && pumpLeft >= offLeft) { blockStart = true; holdWhy = 'after the pump started'; holdLeftMs = pumpLeft; }
+                                                    else if (offLeft > 0) { blockStart = true; holdWhy = 'after solar turned off'; holdLeftMs = offLeft; }
+                                                }
+                                                else if (onLeft > 0) { holdOn = true; holdWhy = 'after solar turned on'; holdLeftMs = onLeft; }
+                                            }
+                                            const heatOk = state.temps.solar > waterTemp // 1
                                                 && waterTemp < cfgBody.heatSetpoint // 2
                                                 && (typeof hState.prevHeaterOffTemp === 'undefined' || ((state.temps.solar - hState.prevHeaterOffTemp) > heater.startTempDelta)) // 3
                                                 && (state.temps.solar - waterTemp) > heater.stopTempDelta // 4
-                                                && waterTemp < cfgBody.heatSetpoint // 5
-                                            ) {
-                                                isOn = true;
-                                                body.heatStatus = sys.board.valueMaps.heatStatus.getValue('solar');
-                                                isHeating = true;
-                                            }
+                                                && waterTemp < cfgBody.heatSetpoint; // 5
                                             // reverse logic from heating states
-                                            else if (heater.coolingEnabled
+                                            const coolOk = heater.coolingEnabled
                                                 && state.heliotrope.isNight
                                                 && state.temps.solar < waterTemp // 1
                                                 && waterTemp > cfgBody.coolSetpoint // 2
                                                 && (typeof hState.prevHeaterOffTemp === 'undefined' || ((hState.prevHeaterOffTemp - state.temps.solar) > heater.startTempDelta)) // 3
                                                 && (waterTemp - state.temps.solar) > heater.stopTempDelta // 4
-                                                && waterTemp > (cfgBody.coolSetpoint + heater.stopTempDelta) // 5
-                                            ) {
+                                                && waterTemp > (cfgBody.coolSetpoint + heater.stopTempDelta); // 5
+                                            if (heatOk && !blockStart) {
+                                                isOn = true;
+                                                body.heatStatus = sys.board.valueMaps.heatStatus.getValue('solar');
+                                                isHeating = true;
+                                            }
+                                            else if (!heatOk && coolOk && !blockStart) {
                                                 isOn = true;
                                                 body.heatStatus = sys.board.valueMaps.heatStatus.getValue('cooling');
                                                 isHeating = true;
                                                 isCooling = true;
                                             }
-                                            if (hstate.isOn && !isOn) { 
-                                                hState.prevHeaterOffTemp = state.temps.solar; 
+                                            // Just turned on: keep running through the delay unless the collector itself no longer has enough lead over the water.
+                                            else if (holdOn && (hState.isCooling
+                                                ? (state.heliotrope.isNight && state.temps.solar < waterTemp && (waterTemp - state.temps.solar) > heater.stopTempDelta)
+                                                : (state.temps.solar > waterTemp && (state.temps.solar - waterTemp) > heater.stopTempDelta))) {
+                                                isOn = true;
+                                                isHeating = true;
+                                                isCooling = hState.isCooling === true;
+                                                body.heatStatus = sys.board.valueMaps.heatStatus.getValue(isCooling ? 'cooling' : 'solar');
+                                            }
+                                            if (hstate.isOn && !isOn) {
+                                                // The reheat guard is for a stop the collector caused (flow cooled it, a cloud, the evening): it must climb again before the next start.
+                                                // When the water reached its target the collector was fine, so there is nothing to wait for and no guard is set.
+                                                const solarT = state.temps.solar;
+                                                const collectorStop = hState.isCooling
+                                                    ? (state.heliotrope.isNight && (!(solarT < waterTemp) || !((waterTemp - solarT) > heater.stopTempDelta)))
+                                                    : (!(solarT > waterTemp) || !((solarT - waterTemp) > heater.stopTempDelta));
+                                                hState.prevHeaterOffTemp = collectorStop ? solarT : undefined;
+                                                if (logger.solarExplain) logger.solar(`Solar ${heater.name} (${body.name}) turned off because ${collectorStop ? 'the collector lead over the water fell to the run delta ' + heater.stopTempDelta + ' (reheat guard set: the collector must rise ' + heater.startTempDelta + ' above ' + (Math.round(solarT * 10) / 10) + ')' : 'the water reached its target (no reheat guard set)'}.`);
                                             } // 6  
+                                            // With log.solar.explain on, the readings while a settle delay is holding the decision, once a minute, and when it ends.
+                                            {
+                                                const r1 = (v: any) => typeof v === 'number' && isFinite(v) ? Math.round(v * 10) / 10 : v;
+                                                const r2 = (v: any) => typeof v === 'number' && isFinite(v) ? Math.round(v * 100) / 100 : v;
+                                                const held = blockStart || holdOn;
+                                                const prevNote = solarSettleLog.get(heater.id);
+                                                const readings = `water ${r2(body.temp)} (compared as ${waterTemp}), solar ${r1(state.temps.solar)}, collector minus water ${r1(state.temps.solar - body.temp)} (run delta ${heater.stopTempDelta}, start delta ${heater.startTempDelta}), setpoint ${cfgBody.heatSetpoint}, cool setpoint ${cfgBody.coolSetpoint}, night ${state.heliotrope.isNight}`;
+                                                if (held) {
+                                                    if (logger.solarExplain && (typeof prevNote === 'undefined' || prevNote.key !== holdWhy || nowMs - prevNote.at >= 60000)) {
+                                                        solarSettleLog.set(heater.id, { key: holdWhy, at: nowMs });
+                                                        logger.solar(`Solar ${heater.name} (${body.name}) settle delay ${holdWhy}, ${Math.ceil(holdLeftMs / 1000)} s left of ${Math.round(settleMs / 1000)} s: ${readings}; without the delay solar would be ${(heatOk || coolOk) ? 'on' : 'off'}.`);
+                                                    }
+                                                }
+                                                else if (typeof prevNote !== 'undefined') {
+                                                    solarSettleLog.delete(heater.id);
+                                                    if (logger.solarExplain) logger.solar(`Solar ${heater.name} (${body.name}) settle delay ${prevNote.key} ended: ${readings}; solar is ${isOn ? 'on' : 'off'}.`);
+                                                }
+                                            }
                                             // While solar heating or nocturnal cooling is enabled and wanted (the water is below the setpoint, or above the cool setpoint)
                                             // but the decision is not to run, say why, so a long wait can be followed. It is logged when the reason changes and then every
                                             // 15 minutes, not on every status pass. Off unless log.solar.explain is on in config.json.
