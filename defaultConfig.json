@@ -37,6 +37,9 @@
         "messageTimeoutMs": 10000
       }
     },
+    "solar": {
+      "settleMinutes": 5
+    },
     "txDelays": {
       "idleBeforeTxMs": 0,
       "interFrameDelayMs": 100,
