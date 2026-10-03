@@ -2041,7 +2041,20 @@ export class VirtualCircuitState extends EqState implements ICircuitState {
     public get nameId(): number { return this.data.nameId; }
     public set nameId(val: number) { this.setDataVal('nameId', val); }
     public get isOn(): boolean { return this.data.isOn; }
-    public set isOn(val: boolean) { this.setDataVal('isOn', val); }
+    public set isOn(val: boolean) {
+        const changed = utils.makeBool(this.data.isOn) !== val;
+        this.setDataVal('isOn', val);
+        // The solar and heater virtual circuits go in the solar log: a pump's circuit list can use them to start a pump speed
+        // when solar runs. So does any virtual circuit the user listed in log.solar.circuits.
+        if (changed) {
+            try {
+                const vname = sys.board.valueMaps.virtualCircuits.getName(this.id);
+                const listed = solarListed(this.id, this.name);
+                if (listed || ((vname === 'solar' || vname === 'heater') && solarInstalled()))
+                    logger.solar(`Solar-related virtual circuit ${this.name} (#${this.id}) turned ${val ? 'on' : 'off'}${listed ? ': listed in log.solar.circuits' : ''}`);
+            } catch (err) { /* only logging; never let it affect a circuit change */ }
+        }
+    }
     public get priority(): string { return 'manual' } // These are always manual priority
     public set priority(val: string) { ; }
     public get type() { return typeof this.data.type !== 'undefined' ? this.data.type.val : -1; }
@@ -2099,32 +2112,35 @@ export class CircuitStateCollection extends EqStateCollection<CircuitState> {
 
     }
 }
+// Whether a solar heater is installed.
+function solarInstalled(): boolean {
+    const solarType = sys.board.valueMaps.heaterTypes.getValue('solar');
+    return sys.heaters.toArray().some(h => h.isActive && h.type === solarType);
+}
+// Whether the user listed a circuit in log.solar.circuits: a number is a circuit id, text matches part of the circuit's name.
+function solarListed(circuitId: number, name: string): boolean {
+    const listed: any[] = logger.options && logger.options.solar && Array.isArray(logger.options.solar.circuits) ? logger.options.solar.circuits : [];
+    return listed.some(x => typeof x === 'number' ? x === circuitId : (typeof x === 'string' && x.length > 0 && (name || '').toLowerCase().indexOf(x.toLowerCase()) !== -1));
+}
 // Why a circuit counts as related to a solar heater for the solar log (see logger.solar), or undefined when it does not:
-// it has a solar circuit function, its name says solar, it is the circuit of a body that has a solar heater, or it is a
-// cleaner circuit that the cleaner solar delay applies to.
+// the user listed it, it has a solar circuit function, its name says solar, it is the circuit of a body on a system that has a
+// solar heater, it drives a higher speed of a pump on such a system, or it is a cleaner circuit that the cleaner solar delay
+// applies to.
 function solarCircuitRole(circuitId: number): string {
     const circuit = sys.circuits.toArray().find(c => c.id === circuitId);
     if (typeof circuit === 'undefined') return undefined;
     const fname: string = sys.board.valueMaps.circuitFunctions.getName(circuit.type) || '';
-    // Circuits the user listed in log.solar.circuits: a number is a circuit id, text matches part of the circuit's name.
-    const listed: any[] = logger.options && logger.options.solar && Array.isArray(logger.options.solar.circuits) ? logger.options.solar.circuits : [];
-    if (listed.some(x => typeof x === 'number' ? x === circuitId : (typeof x === 'string' && x.length > 0 && (circuit.name || '').toLowerCase().indexOf(x.toLowerCase()) !== -1))) return 'listed in log.solar.circuits';
+    if (solarListed(circuitId, circuit.name)) return 'listed in log.solar.circuits';
     if (fname.indexOf('solar') === 0) return `solar circuit function '${fname}'`;
     if (/solar/i.test(circuit.name || '')) return 'circuit named for solar';
+    if (!solarInstalled()) return undefined;
     const bstate = state.temps.bodies.getBodyByCircuitId(circuitId);
-    if (typeof bstate !== 'undefined' && sys.heaters.getSolarHeaters(bstate.id).length > 0) return `circuit of ${bstate.name}, which has a solar heater`;
-    // A circuit that drives a higher speed (relay 2 or more) of a pump, on a system that has a solar heater.
-    const solarType = sys.board.valueMaps.heaterTypes.getValue('solar');
-    if (sys.heaters.toArray().some(h => h.isActive && h.type === solarType)) {
-        for (const pump of sys.pumps.toArray()) {
-            const pc = pump.circuits.get().find((c: any) => c.circuit === circuitId && c.relay >= 2);
-            if (typeof pc !== 'undefined') return `circuit that drives relay ${pc.relay} (a higher speed) of pump ${pump.name}, and a solar heater is installed`;
-        }
+    if (typeof bstate !== 'undefined') return `circuit of ${bstate.name}, and a solar heater is installed`;
+    for (const pump of sys.pumps.toArray()) {
+        const pc = pump.circuits.get().find((c: any) => c.circuit === circuitId && c.relay >= 2);
+        if (typeof pc !== 'undefined') return `circuit that drives relay ${pc.relay} (a higher speed) of pump ${pump.name}, and a solar heater is installed`;
     }
-    if (fname.indexOf('cleaner') !== -1 && sys.general.options.cleanerSolarDelay) {
-        const ctype = sys.board.valueMaps.circuitFunctions.get(circuit.type);
-        if (sys.heaters.getSolarHeaters(ctype && ctype.body ? ctype.body : 1).length > 0) return 'cleaner circuit that the cleaner solar delay applies to';
-    }
+    if (fname.indexOf('cleaner') !== -1 && sys.general.options.cleanerSolarDelay) return 'cleaner circuit that the cleaner solar delay applies to';
     return undefined;
 }
 export class CircuitState extends EqState implements ICircuitState {
