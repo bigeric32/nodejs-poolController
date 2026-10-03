@@ -65,6 +65,18 @@ class Logger {
         return this.currentTimestamp;
     } 
 
+    // The 'warn-solar' log level: warnings and errors, plus only the messages written with logger.solar().
+    // winston levels are a plain ladder with no category filter, so this level is handled here: the transports
+    // run at 'info' and this filter drops every other info, verbose, debug and silly message. While a replay
+    // capture is running everything is kept, because the capture needs the full log.
+    private static readonly SOLAR_LEVEL = 'warn-solar';
+    private get solarOnly(): boolean { return typeof this.cfg !== 'undefined' && typeof this.cfg.app !== 'undefined' && this.cfg.app.level === Logger.SOLAR_LEVEL; }
+    private transportLevel(): string { return this.solarOnly ? 'info' : this.cfg.app.level; }
+    private solarFilter = winston.format((info) => {
+        if (!this.solarOnly || this._captureInProgress) return info;
+        if (info.level === 'error' || info.level === 'warn' || info.solar === true) return info;
+        return false;
+    });
     private myFormat = winston.format.printf(({ level, message, label }) => {
         return `[${new Date().toLocaleString()}] ${level}: ${message}`;
     });
@@ -73,10 +85,10 @@ class Logger {
     public init() {
         this.cfg = config.getSection('log');
         logger._logger = winston.createLogger({
-            format: winston.format.combine(winston.format.timestamp({format: 'MMMM DD YYYY'}), winston.format.colorize(), winston.format.splat(), this.myFormat),
+            format: winston.format.combine(this.solarFilter(), winston.format.timestamp({format: 'MMMM DD YYYY'}), winston.format.colorize(), winston.format.splat(), this.myFormat),
             transports: [this.transports.console]
         });
-        this.transports.console.level = this.cfg.app.level;
+        this.transports.console.level = this.transportLevel();
         // Only start capture if not already capturing (prevents duplicate transports when config watcher triggers init())
         if (this.cfg.app.captureForReplay && !this._captureInProgress) {
             this.startCaptureForReplay(false);
@@ -87,7 +99,7 @@ class Logger {
                 level: 'silly',
                 format: winston.format.combine(winston.format.splat(), winston.format.uncolorize(), this.myFormat)
             });
-            this.transports.consoleFile.level = this.cfg.app.level;
+            this.transports.consoleFile.level = this.transportLevel();
             this._logger.add(this.transports.consoleFile);
         }
     }
@@ -114,6 +126,9 @@ class Logger {
     public verbose(...args: any[]) { logger._logger.verbose.apply(logger._logger, arguments); }
     public error(...args: any[]): Error { logger._logger.error.apply(logger._logger, arguments); return new Error(arguments[0]); }
     public silly(...args: any[]) { logger._logger.silly.apply(logger._logger, arguments); }
+    // A solar heater message. It is written at info, so it shows at the info level and every more verbose one, and the
+    // 'warn-solar' level shows it along with warnings and errors and nothing else.
+    public solar(message: string) { logger._logger.log({ level: 'info', message: message, solar: true }); }
     public reject(sError: string): Promise<Error> {
         logger.error(sError);
         return Promise.reject(new Error(sError));
@@ -272,7 +287,7 @@ class Logger {
             }
         }
         for (let [key, transport] of Object.entries(this.transports)) {
-            if(typeof transport !== 'undefined') transport.level = this.cfg.app.level;
+            if(typeof transport !== 'undefined') transport.level = this.transportLevel();
         }
     }
     public startCaptureForReplay(bResetLogs:boolean) {
@@ -446,7 +461,7 @@ class Logger {
                 this.transports.file.close();
                 this.transports.file = undefined;
             }
-            this.transports.console.level = this.cfg.app.level;
+            this.transports.console.level = this.transportLevel();
             this._captureInProgress = false;
             return backupFile.filePath;
         }
