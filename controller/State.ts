@@ -1786,23 +1786,39 @@ export class BodyTempState extends EqState {
     public get heatMode(): number { return typeof (this.data.heatMode) !== 'undefined' ? this.data.heatMode.val : -1; }
     public set heatMode(val: number) {
         if (this.heatMode !== val) {
+            const was = this.heatMode;
             this.data.heatMode = sys.board.valueMaps.heatModes.transform(val);
             this.hasChanged = true;
+            solarBodyNote(`${this.name}: heat mode ${sys.board.valueMaps.heatModes.getName(was) || 'not set'} -> ${sys.board.valueMaps.heatModes.getName(val) || val}`);
         }
     }
     public get heatStatus(): number { return typeof (this.data.heatStatus) !== 'undefined' ? this.data.heatStatus.val : -1; }
     public set heatStatus(val: number) {
         if (this.heatStatus !== val) {
+            const was = this.heatStatus;
             this.data.heatStatus = sys.board.valueMaps.heatStatus.transform(val);
             this.hasChanged = true;
+            solarBodyNote(`${this.name}: heat status ${sys.board.valueMaps.heatStatus.getName(was) || 'not set'} -> ${sys.board.valueMaps.heatStatus.getName(val) || val}`);
         }
     }
     public get setPoint(): number { return this.data.setPoint; }
-    public set setPoint(val: number) { this.setDataVal('setPoint', val); }
+    public set setPoint(val: number) {
+        const was = this.data.setPoint;
+        this.setDataVal('setPoint', val);
+        if (typeof was !== 'undefined' && was !== val) solarBodyNote(`${this.name}: heat setpoint ${was} -> ${val}`);
+    }
     public get heatSetpoint(): number { return this.data.setPoint; }
-    public set heatSetpoint(val: number) { this.setDataVal('setPoint', val); }
+    public set heatSetpoint(val: number) {
+        const was = this.data.setPoint;
+        this.setDataVal('setPoint', val);
+        if (typeof was !== 'undefined' && was !== val) solarBodyNote(`${this.name}: heat setpoint ${was} -> ${val}`);
+    }
     public get coolSetpoint(): number { return this.data.coolSetpoint; }
-    public set coolSetpoint(val: number) { this.setDataVal('coolSetpoint', val); }
+    public set coolSetpoint(val: number) {
+        const was = this.data.coolSetpoint;
+        this.setDataVal('coolSetpoint', val);
+        if (typeof was !== 'undefined' && was !== val) solarBodyNote(`${this.name}: cool setpoint ${was} -> ${val}`);
+    }
     public get isOn(): boolean { return this.data.isOn; }
     public set isOn(val: boolean) { this.setDataVal('isOn', val); }
     public get startDelay(): boolean { return this.data.startDelay; }
@@ -2111,6 +2127,11 @@ export class CircuitStateCollection extends EqStateCollection<CircuitState> {
         }
 
     }
+}
+// A body's heat mode, heat status or setpoint changing goes in the solar log (see logger.solar) when a solar heater is
+// installed: together they are what enables or disables solar heating and decides when it runs.
+function solarBodyNote(message: string) {
+    try { if (solarInstalled()) logger.solar(message); } catch (err) { /* only logging; never let it affect a body change */ }
 }
 // Whether a solar heater is installed.
 function solarInstalled(): boolean {
