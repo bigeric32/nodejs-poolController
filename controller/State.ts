@@ -29,6 +29,7 @@ import { DataLogger, DataLoggerEntry } from '../logger/DataLogger';
 import { delayMgr } from './Lockouts';
 import { time } from 'console';
 import { getCoordinatesForZip } from './zipCoords';
+import { tempHistory } from './TempHistory';
 
 export class State implements IState {
     statePath: string;
@@ -1775,7 +1776,19 @@ export class BodyTempState extends EqState {
     public get name(): string { return this.data.name; }
     public set name(val: string) { this.setDataVal('name', val); }
     public get temp(): number { return this.data.temp; }
-    public set temp(val: number) { this.setDataVal('temp', val); }
+    public set temp(val: number) {
+        this.setDataVal('temp', val);
+        // Keep the rolling 24 hour record and publish its average (see TempHistory.ts). Only a display value, so it never affects the temperature update.
+        try {
+            if (typeof val === 'number' && isFinite(val)) {
+                tempHistory.record(this.id, val);
+                this.setDataVal('avgTemp24h', tempHistory.average(this.id));
+                this.setDataVal('avgTempHours', tempHistory.hours(this.id));
+            }
+        } catch (err) { /* the average is only for display */ }
+    }
+    public get avgTemp24h(): number { return this.data.avgTemp24h; }
+    public get avgTempHours(): number { return this.data.avgTempHours; }
     public get type(): number { return typeof (this.data.type) !== 'undefined' ? this.data.type.val : -1; }
     public set type(val: number) {
         if (this.type !== val) {
