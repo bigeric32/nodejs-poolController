@@ -1004,7 +1004,16 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     // just stays off until then). Never moves a deadline earlier.
     let targetInfo: string | undefined;
     let targetDateExtended = false;
-    if (projectedCurrentFc - (avgPerDay * targetDays) > targetFc + 0.005) {
+    const burnShortOfTarget = projectedCurrentFc - (avgPerDay * targetDays) > targetFc + 0.005;
+    // A target that is being kept (the projected FC is within the new-target-date threshold of it) is kept as it is: close enough counts. Only
+    // a target that was abandoned for a new one, because the FC strayed further than the threshold, has its date moved out; otherwise the date of
+    // a kept target would slide out at every check while no one tests, and the step to the maintenance % would never arrive.
+    if (burnShortOfTarget && refreshed) {
+        const gapDays = avgPerDay > 0 ? (projectedCurrentFc - targetFc) / avgPerDay : undefined;
+        targetInfo = `FC is projected at ${projectedCurrentFc.toFixed(2)} ppm, above the ${targetFc} ppm target but within the ${inFlight && isFinite(inFlight.strayPpm) ? inFlight.strayPpm + ' ppm ' : ''}new-target-date threshold, so the deadline (${formatLocalDateTime(targetDate, params.timezone)} ${params.timezone}) holds${typeof gapDays !== 'undefined' ? `, although consumption alone (${avgPerDay.toFixed(2)} ppm/day) would take about ${gapDays.toFixed(1)} days to reach it` : ''}. The SWG isn't needed and is held at 0% until then, then steps to the maintenance %.`;
+        rationale.push(`NOTE: ${targetInfo}`);
+    }
+    else if (burnShortOfTarget) {
         const origWindow = `${Math.round(targetDays * 10) / 10} day${Math.round(targetDays * 10) / 10 === 1 ? '' : 's'}`;
         const origDate = targetDate;
         const head = `FC is projected at ${projectedCurrentFc.toFixed(2)} ppm, above the ${targetFc} ppm target.`;
