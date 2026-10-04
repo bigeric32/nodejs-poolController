@@ -68,6 +68,10 @@ read-only.
 * Only the pool SWG % is managed, not the spa's.
 * Only SWG output and liquid chlorine are credited. Other chlorine products (cal-hypo, dichlor, trichlor) are
   not, so projections run low after a dose of those.
+* **Before a trip:** log an FC test the day you leave. With no new reading for 3 days or more, AutoSwg never
+  runs the SWG below the maintenance % (it would otherwise hold it at 0% waiting for FC to glide down, and keep
+  moving that date out), so a long absence runs at about the level that matches consumption. Running a little
+  high is the safer miss. The card says when this applies.
 
 ---
 
