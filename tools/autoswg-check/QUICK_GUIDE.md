@@ -62,6 +62,15 @@ the defaults look good. Apply it, then leave it alone for about 10 new FC readin
 Tuning in a loop only makes the numbers look better. **How to Tune** has the details. The reports are
 read-only.
 
+**When the tuning options and the automation appear.** They are hidden until there is enough history to judge the
+calculation: at least 15 FC readings the reports can score, over at least 42 days with SWG history behind them (about two
+months at two tests a week, sooner if you test more often). A note on the page shows how far along it is. The automation
+(**Auto-Apply Recommendations** and the automatic check) appears only after that and after you run **Tune** and accept its result:
+apply its recommendation, or press **Accept** on "Your settings look good". Both stay off until you turn them on.
+
+*Advanced:* the three minimums are `gateMinFcReadings` (15), `gateMinSwgEntries` (1) and `gateMinDays` (42) in the `autoSwg`
+section of `poolConfig.json` (stop njsPC before editing it), and `gateOff: true` makes everything always available.
+
 ## Good habits and limits
 
 * Test FC at about the same time of day, and correct a mistyped reading in PoolMath.
