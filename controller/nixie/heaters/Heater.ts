@@ -24,7 +24,30 @@ export class NixieHeaterCollection extends NixieEquipmentCollection<NixieHeaterB
             }
         } catch (err) { return Promise.reject(`Nixie Control Panel deleteHeaterAsync ${err.message}`); }
     }
+    // The status pass asks for a heater's state every time a temperature or circuit changes, and several of those can arrive while the first
+    // command for the heater is still being sent to the relay manager. Each used to send its own copy (up to twenty at once on one change), and
+    // their answers could come back in any order. Now a request for a heater that has one in flight waits for it (only the newest is kept), and
+    // is sent afterwards unless it asks for the same thing that was just sent.
+    private _heaterSending: { [id: number]: boolean } = {};
+    private _heaterQueued: { [id: number]: { hstate: HeaterState, val: boolean, isCooling: boolean } } = {};
     public async setHeaterStateAsync(hstate: HeaterState, val: boolean, isCooling: boolean) {
+        if (this._heaterSending[hstate.id]) {
+            this._heaterQueued[hstate.id] = { hstate: hstate, val: val, isCooling: isCooling };
+            return;
+        }
+        this._heaterSending[hstate.id] = true;
+        try {
+            let req: { hstate: HeaterState, val: boolean, isCooling: boolean } | undefined = { hstate: hstate, val: val, isCooling: isCooling };
+            while (typeof req !== 'undefined') {
+                await this.sendHeaterStateAsync(req.hstate, req.val, req.isCooling);
+                const next = this._heaterQueued[hstate.id];
+                delete this._heaterQueued[hstate.id];
+                req = (typeof next !== 'undefined' && (next.val !== req.val || next.isCooling !== req.isCooling)) ? next : undefined;
+            }
+        }
+        finally { this._heaterSending[hstate.id] = false; delete this._heaterQueued[hstate.id]; }
+    }
+    private async sendHeaterStateAsync(hstate: HeaterState, val: boolean, isCooling: boolean) {
         try {
             let h: NixieHeaterBase = this.find(elem => elem.id === hstate.id) as NixieHeaterBase;
             if (typeof h === 'undefined') {
