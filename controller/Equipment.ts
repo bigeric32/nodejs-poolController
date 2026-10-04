@@ -2384,10 +2384,11 @@ export class Alerts extends EqItem {
         this.hasChanged = true;
     }
 }
-// Auto-Apply Recommendations and the automatic PoolMath check change the chlorinator with nobody reviewing the number.
-// They are held back in the interim 0.1.x release (the automation branch has this on). Everything else, including
-// Check Now, Apply, the step to the maintenance %, Tune and the reports, is unaffected.
-export const AUTOSWG_AUTOMATION_AVAILABLE: boolean = false;
+// Auto-Apply Recommendations and the automatic PoolMath check change the chlorinator with nobody reviewing the number, and the tuning
+// tools only say something once there is enough history to judge. Both stay hidden until there is: see AutoSwgReadiness.ts, which
+// registers the function that decides here. Everything else, including Check Now, Apply and the step to the maintenance %, is unaffected.
+let autoSwgReadinessProvider: ((cfg: AutoSwg) => { ready: boolean }) | undefined;
+export function setAutoSwgReadinessProvider(fn: (cfg: AutoSwg) => { ready: boolean }) { autoSwgReadinessProvider = fn; }
 export class AutoSwg extends EqItem {
     // Singleton settings for the PoolMath-driven SWG% recommendation feature.
     // Persisted config only -- the computed recommendation itself lives in
@@ -2436,7 +2437,15 @@ export class AutoSwg extends EqItem {
         // nobody reviewing it would otherwise just overwrite whatever unapplied preview the
         // user is looking at on the calculation screen.
         if (typeof this.data.autoCheckEnabled === 'undefined') this.data.autoCheckEnabled = false;
-        if (!AUTOSWG_AUTOMATION_AVAILABLE) { this.data.autoApplyEnabled = false; this.data.autoCheckEnabled = false; }
+        // The thresholds for unlocking tuning and automation (see AutoSwgReadiness.ts). They are not on the settings screen; change them here
+        // (poolConfig.json) or through the config API. gateOff true makes both always available.
+        if (typeof this.data.gateMinFcReadings === 'undefined') this.data.gateMinFcReadings = 15;   // what Tune itself needs (see buildTune)
+        if (typeof this.data.gateMinSwgEntries === 'undefined') this.data.gateMinSwgEntries = 1;
+        if (typeof this.data.gateMinDays === 'undefined') this.data.gateMinDays = 42;
+        if (typeof this.data.gateOff === 'undefined') this.data.gateOff = false;
+        // Automation also needs a Tune that was run and accepted (applied, or accepted as "your settings look good"). A Tune that was
+        // applied before this existed counts.
+        if (typeof this.data.tuneAcceptedAt === 'undefined' && typeof this.data.lastTuneAppliedAt !== 'undefined') this.data.tuneAcceptedAt = this.data.lastTuneAppliedAt;
         if (typeof this.data.autoCheckHours === 'undefined') this.data.autoCheckHours = 12;
         // Optional 'HH:MM' (in `timezone`) to pin periodic checks to the clock: every
         // autoCheckHours counting from this time of day. Empty = count from when the timer
@@ -2543,11 +2552,31 @@ export class AutoSwg extends EqItem {
     // pushing FC past targetFc indefinitely.
     public get autoStepEnabled(): boolean { return this.data.autoStepEnabled; }
     public set autoStepEnabled(val: boolean) { this.setDataVal('autoStepEnabled', val); }
-    public get automationAvailable(): boolean { return AUTOSWG_AUTOMATION_AVAILABLE; }
-    public get autoApplyEnabled(): boolean { return AUTOSWG_AUTOMATION_AVAILABLE ? this.data.autoApplyEnabled : false; }
-    public set autoApplyEnabled(val: boolean) { this.setDataVal('autoApplyEnabled', AUTOSWG_AUTOMATION_AVAILABLE ? val : false); }
-    public get autoCheckEnabled(): boolean { return AUTOSWG_AUTOMATION_AVAILABLE ? this.data.autoCheckEnabled : false; }
-    public set autoCheckEnabled(val: boolean) { this.setDataVal('autoCheckEnabled', AUTOSWG_AUTOMATION_AVAILABLE ? val : false); }
+    public get gateMinFcReadings(): number { return this.data.gateMinFcReadings; }
+    public set gateMinFcReadings(val: number) { this.setDataVal('gateMinFcReadings', val); }
+    public get gateMinSwgEntries(): number { return this.data.gateMinSwgEntries; }
+    public set gateMinSwgEntries(val: number) { this.setDataVal('gateMinSwgEntries', val); }
+    public get gateMinDays(): number { return this.data.gateMinDays; }
+    public set gateMinDays(val: number) { this.setDataVal('gateMinDays', val); }
+    public get tuneAcceptedAt(): string { return this.data.tuneAcceptedAt; }
+    public set tuneAcceptedAt(val: string) { this.setDataVal('tuneAcceptedAt', val); }
+    public get gateOff(): boolean { return utils.makeBool(this.data.gateOff); }
+    public set gateOff(val: boolean) { this.setDataVal('gateOff', utils.makeBool(val)); }
+    // True once there is enough FC and SWG history to judge the calculation (or the gate is off): the tuning tools are then shown.
+    public get tuningAvailable(): boolean {
+        if (this.gateOff) return true;
+        try { return typeof autoSwgReadinessProvider === 'function' && autoSwgReadinessProvider(this).ready === true; }
+        catch (err) { return false; }
+    }
+    // Automation (Auto-Apply and the automatic check) needs the same history and, on top of it, a Tune that was run and accepted.
+    public get automationAvailable(): boolean {
+        if (this.gateOff) return true;
+        return this.tuningAvailable && typeof this.tuneAcceptedAt === 'string' && this.tuneAcceptedAt.length > 0;
+    }
+    public get autoApplyEnabled(): boolean { return this.automationAvailable ? this.data.autoApplyEnabled : false; }
+    public set autoApplyEnabled(val: boolean) { this.setDataVal('autoApplyEnabled', this.automationAvailable ? val : false); }
+    public get autoCheckEnabled(): boolean { return this.automationAvailable ? this.data.autoCheckEnabled : false; }
+    public set autoCheckEnabled(val: boolean) { this.setDataVal('autoCheckEnabled', this.automationAvailable ? val : false); }
     public get autoCheckHours(): number { return this.data.autoCheckHours; }
     public set autoCheckHours(val: number) { this.setDataVal('autoCheckHours', val); }
     public get autoApplyWarnThresholdPct(): number { return this.data.autoApplyWarnThresholdPct; }
