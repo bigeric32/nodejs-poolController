@@ -1043,6 +1043,18 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         }
     }
 
+    // With the last reading STALE_FC_DAYS or more old, never hold the SWG below the maintenance % (what matches the average consumption).
+    // The projection is mostly an average by now, and its taper (projectionTaperStartDays to projectionTaperEndDays) stops crediting any
+    // consumption at all, so a glide to a target above the current FC would keep the SWG at 0% -- and push the target date out at every
+    // check -- for as long as no one tests, while the pool really keeps using chlorine (a trip of a week or two, for example). Running
+    // too high for a while is the safer miss than running out.
+    if (staleFcNote && recommendedPctForTarget < recommendedPct) {
+        const floorNote = `The last FC reading is ${elapsedDays.toFixed(1)} days old, so the SWG runs at no less than the maintenance ${recommendedPct.toFixed(1)}% (instead of ${recommendedPctForTarget.toFixed(1)}%): holding it lower on an old reading risks FC running out while no one is testing. Log a fresh FC test to go back to gliding toward the target.`;
+        rationale.push(`NOTE: ${floorNote}`);
+        if (typeof targetInfo !== 'undefined') targetInfo += ` ${floorNote}`;
+        recommendedPctForTarget = recommendedPct;
+    }
+
     // What gets recorded as this result's inputs: the parameters, minus the in-flight
     // object (a Date and possibly Infinity -- neither survives being logged as JSON), with
     // the target actually aimed at in place of the configured one.
