@@ -405,6 +405,8 @@ export class State implements IState {
         if (typeof sdata.heaters !== 'undefined') {
             for (let i = 0; i < sdata.heaters.length; i++) { sdata.heaters[i].prevHeaterOffTemp = undefined; sdata.heaters[i].targetStop = undefined; }
         }
+        // The note on why solar is waiting belongs to the process that wrote it.
+        if (typeof sdata.temps !== 'undefined' && typeof sdata.temps.bodies !== 'undefined') for (let i = 0; i < sdata.temps.bodies.length; i++) sdata.temps.bodies[i].heatNote = undefined;
         var self = this;
         let pnlTime = typeof sdata.time !== 'undefined' && sdata.time !== '' ? new Date(sdata.time) : new Date();
         if (isNaN(pnlTime.getTime())) pnlTime = new Date();
@@ -1808,6 +1810,9 @@ export class BodyTempState extends EqState {
             solarBodyNote(`${this.name}: heat mode ${sys.board.valueMaps.heatModes.getName(was) || 'not set'} -> ${sys.board.valueMaps.heatModes.getName(val) || val}`);
         }
     }
+    // A short note on why solar heating is waiting (a delay, a guard, a hysteresis), shown on the dashboard. Set by HeaterCommands.syncHeaterStates().
+    public get heatNote(): string { return this.data.heatNote; }
+    public set heatNote(val: string) { this.setDataVal('heatNote', val === '' ? undefined : val); }
     public get heatStatus(): number { return typeof (this.data.heatStatus) !== 'undefined' ? this.data.heatStatus.val : -1; }
     public set heatStatus(val: number) {
         if (this.heatStatus !== val) {

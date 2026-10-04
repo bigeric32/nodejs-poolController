@@ -585,6 +585,23 @@ export class ConfigSocket {
         app.get('/app/messages/broadcast/actions', (req, res) => {
             return res.status(200).send(sys.board.valueMaps.msgBroadcastActions.toArray());
         });
+        // The solar decision's settings (config.json controller.solar), shown on the dashPanel heater page. They apply at once.
+        app.get('/config/solar/settings', (req, res) => {
+            const c = config.getSection('controller.solar');
+            return res.status(200).send({ settleMinutes: c.settleMinutes, hysteresis: c.hysteresis });
+        });
+        app.put('/config/solar/settings', (req, res) => {
+            const out: any = config.getSection('controller.solar');
+            const limits = { settleMinutes: 60, hysteresis: 10 };
+            for (const name of Object.keys(limits)) {
+                if (typeof req.body[name] === 'undefined') continue;
+                const v = parseFloat(req.body[name]);
+                if (!isFinite(v) || v < 0 || v > limits[name]) return res.status(400).send({ message: `${name} must be a number from 0 to ${limits[name]}` });
+                out[name] = v;
+            }
+            config.setSection('controller.solar', out);
+            return res.status(200).send({ settleMinutes: out.settleMinutes, hysteresis: out.hysteresis });
+        });
         app.put('/app/config/reload', (req, res) => {
             sys.board.reloadConfig();
             return res.status(200).send('OK');
