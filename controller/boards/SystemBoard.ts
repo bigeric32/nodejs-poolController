@@ -3963,6 +3963,8 @@ const solarBodyOnAt: Map<number, number> = new Map<number, number>();
 const solarSettleLog: Map<number, { key: string; at: number }> = new Map<number, { key: string; at: number }>();
 // When the water first reached the level that stops solar, per heater, and has stayed there since (see solarSettleMs).
 const solarStopSince: Map<number, number> = new Map<number, number>();
+// Heaters whose stop has been explained in the log, so repeated status passes while the relay manager answers do not log it again.
+const solarOffNoted: Set<number> = new Set<number>();
 // controller.solar.settleMinutes in config.json (default 5; 0 turns the delay off): how long the solar decision waits for the water and collector
 // readings to settle. Solar is not started that long after the body's pump starts or after solar turns off, and the water must stay past the
 // stop level that long before solar stops for it.
@@ -4406,7 +4408,7 @@ export class HeaterCommands extends BoardCommands {
                                             const settleMs = solarSettleMs();
                                             const hysteresis = solarHysteresis();
                                             const nowMs = new Date().getTime();
-                                            let blockStart = false, waitStop = false, stopNow = false, holdWhy = '', holdLeftMs = 0, stopAt = 0;
+                                            let blockStart = false, waitStop = false, stopNow = false, stopFar = false, holdWhy = '', holdLeftMs = 0, stopAt = 0;
                                             if (settleMs > 0) {
                                                 const pumpAt = solarBodyOnAt.get(body.id);
                                                 const pumpLeft = typeof pumpAt === 'undefined' ? 0 : settleMs - (nowMs - pumpAt);
@@ -4417,7 +4419,8 @@ export class HeaterCommands extends BoardCommands {
                                                 }
                                             }
                                             // While solar runs it stops for the water at the setpoint plus the hysteresis (heating), or at the cool setpoint plus the run delta minus the
-                                            // hysteresis (cooling), once the water has stayed there for the whole delay. A dip back resets the count.
+                                            // hysteresis (cooling), once the water has stayed there for the whole delay. A dip back resets the count. Far past the level (more than the
+                                            // hysteresis, and at least a degree) is not the flow bias the delay is for, for example after the setpoint was changed, so it stops at once.
                                             if (hState.isOn) {
                                                 const wasCooling = hState.isCooling === true;
                                                 stopAt = wasCooling ? (cfgBody.coolSetpoint + heater.stopTempDelta - hysteresis) : (cfgBody.heatSetpoint + hysteresis);
@@ -4425,7 +4428,8 @@ export class HeaterCommands extends BoardCommands {
                                                 else {
                                                     if (!solarStopSince.has(heater.id)) solarStopSince.set(heater.id, nowMs);
                                                     const waited = nowMs - (solarStopSince.get(heater.id) as number);
-                                                    if (waited >= settleMs) stopNow = true;
+                                                    stopFar = (wasCooling ? stopAt - waterTemp : waterTemp - stopAt) >= Math.max(hysteresis, 1);
+                                                    if (waited >= settleMs || stopFar) stopNow = true;
                                                     else { waitStop = true; holdWhy = `waiting to stop (the water must stay ${wasCooling ? 'at or below' : 'at or above'} ${stopAt})`; holdLeftMs = settleMs - waited; }
                                                 }
                                             }
@@ -4461,6 +4465,7 @@ export class HeaterCommands extends BoardCommands {
                                                 isHeating = true;
                                                 isCooling = true;
                                             }
+                                            if (isOn) solarOffNoted.delete(heater.id);
                                             if (isOn && !hState.isOn) hState.targetStop = undefined;
                                             if (hstate.isOn && !isOn) {
                                                 // The reheat guard is for a stop the collector caused (flow cooled it, a cloud, the evening): it must climb again before the next start.
@@ -4473,7 +4478,9 @@ export class HeaterCommands extends BoardCommands {
                                                 // A stop because the water stayed past the stop level waits for the hysteresis on the other side before the next start.
                                                 hState.targetStop = (!collectorStop && stopNow) ? (hState.isCooling ? 'cooling' : 'heating') : undefined;
                                                 const restartAt = hState.isCooling ? (cfgBody.coolSetpoint + heater.stopTempDelta + hysteresis) : (cfgBody.heatSetpoint - hysteresis);
-                                                if (logger.solarExplain) logger.solar(`Solar ${heater.name} (${body.name}) turned off because ${collectorStop ? 'the collector lead over the water fell to the run delta ' + heater.stopTempDelta + ' (reheat guard set: the collector must rise ' + heater.startTempDelta + ' above ' + (Math.round(solarT * 10) / 10) + ')' : 'the water stayed ' + (hState.isCooling ? 'at or below ' : 'at or above ') + stopAt + ' for ' + Math.round(settleMs / 1000) + ' s (no reheat guard set; solar restarts when the water is ' + (hState.isCooling ? 'above ' : 'below ') + restartAt + ')'}.`);
+                                                const firstOffPass = !solarOffNoted.has(heater.id);
+                                                solarOffNoted.add(heater.id);
+                                                if (logger.solarExplain && firstOffPass) logger.solar(`Solar ${heater.name} (${body.name}) turned off because ${collectorStop ? 'the collector lead over the water fell to the run delta ' + heater.stopTempDelta + ' (reheat guard set: the collector must rise ' + heater.startTempDelta + ' above ' + (Math.round(solarT * 10) / 10) + ')' : 'the water was ' + (hState.isCooling ? 'at or below ' : 'at or above ') + stopAt + (stopFar ? ' by ' + Math.max(hysteresis, 1) + ' or more, so there was no wait' : ' for ' + Math.round(settleMs / 1000) + ' s') + ' (no reheat guard set; solar restarts when the water is ' + (hState.isCooling ? 'above ' : 'below ') + restartAt + ')'}.`);
                                             } // 6  
                                             // With log.solar.explain on, the readings while a settle delay is holding the decision, once a minute, and when it ends.
                                             {
