@@ -17,7 +17,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 // A rolling record of each body's water temperature for the last 24 hours, kept so the average can be shown on the
-// dashboard (BodyTempState.avgTemp24h). One sample is kept per body per minute, and the record is saved to
+// dashboard (BodyTempState.avgTemp24h). State samples each body that is on once a minute (see start), because a feed
+// from the relay manager sends a reading only when it changes, and the average has to count the time a temperature
+// stayed the same. One sample is kept per body per minute, and the record is saved to
 // data/tempHistory.json (next to poolConfig.json) at most every five minutes and when the process exits, so a restart
 // does not start the average over. Readings in the file are in the units they were taken in, so the average is off
 // for up to a day after the temperature units are changed.
@@ -65,12 +67,22 @@ class TempHistory {
             this.lastSave = now;
         } catch (err) { logger.warn(`Could not save the temperature history: ${err.message}`); this.lastSave = now; }
     }
+    private timer: NodeJS.Timeout;
+    // Calls the sampler shortly after start-up and then once a minute, without keeping the process alive.
+    public start(sampler: () => void) {
+        if (typeof this.timer !== 'undefined') return;
+        const first = setTimeout(sampler, 10 * 1000);
+        first.unref();
+        this.timer = setInterval(sampler, SAMPLE_MS);
+        this.timer.unref();
+    }
     // Adds a reading for a body (at most one a minute is kept) and drops anything older than 24 hours.
     public record(bodyId: number, temp: number, now: number = Date.now()) {
         if (!this.loaded) this.load();
         const arr = this.samples[bodyId] || (this.samples[bodyId] = []);
         const last = arr[arr.length - 1];
-        if (typeof last === 'undefined' || now - last.t >= SAMPLE_MS) {
+        if (typeof last === 'undefined') logger.info(`Temperature history: first reading for body ${bodyId} since the last 24 hours of data; saving to ${this.file()}`);
+        if (typeof last === 'undefined' || now - last.t >= SAMPLE_MS - 5000) {
             arr.push({ t: now, v: temp });
             const cutoff = now - WINDOW_MS;
             while (arr.length > 0 && arr[0].t < cutoff) arr.shift();

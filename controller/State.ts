@@ -504,6 +504,19 @@ export class State implements IState {
         this.autoSwg = new AutoSwgState(this.data, 'autoSwg');
         this.data.startTime = Timestamp.toISOLocal(new Date());
         versionCheck.checkGitLocal();
+        tempHistory.start(() => this.sampleTemps());
+    }
+    // Once a minute: note the temperature of each body that is on (a body that is off keeps a stale temperature), then publish
+    // each body's 24 hour average.
+    private sampleTemps() {
+        try {
+            for (let i = 0; i < this.temps.bodies.length; i++) {
+                const body = this.temps.bodies.getItemByIndex(i);
+                if (body.isOn && typeof body.temp === 'number' && isFinite(body.temp)) tempHistory.record(body.id, body.temp);
+                body.avgTemp24h = tempHistory.average(body.id);
+                body.avgTempHours = tempHistory.hours(body.id);
+            }
+        } catch (err) { logger.warn(`Could not update the temperature averages: ${err.message}`); }
     }
     private sanitizeTransientLightGroupState(sdata: any) {
         if (!sdata || !Array.isArray(sdata.lightGroups)) return;
@@ -1835,19 +1848,12 @@ export class BodyTempState extends EqState {
     public get name(): string { return this.data.name; }
     public set name(val: string) { this.setDataVal('name', val); }
     public get temp(): number { return this.data.temp; }
-    public set temp(val: number) {
-        this.setDataVal('temp', val);
-        // Keep the rolling 24 hour record and publish its average (see TempHistory.ts). Only a display value, so it never affects the temperature update.
-        try {
-            if (typeof val === 'number' && isFinite(val)) {
-                tempHistory.record(this.id, val);
-                this.setDataVal('avgTemp24h', tempHistory.average(this.id));
-                this.setDataVal('avgTempHours', tempHistory.hours(this.id));
-            }
-        } catch (err) { /* the average is only for display */ }
-    }
+    public set temp(val: number) { this.setDataVal('temp', val); }
+    // The average of the last 24 hours of readings while the body was on, and how many hours it covers (see TempHistory.ts and State.sampleTemps).
     public get avgTemp24h(): number { return this.data.avgTemp24h; }
+    public set avgTemp24h(val: number) { this.setDataVal('avgTemp24h', val); }
     public get avgTempHours(): number { return this.data.avgTempHours; }
+    public set avgTempHours(val: number) { this.setDataVal('avgTempHours', val); }
     public get type(): number { return typeof (this.data.type) !== 'undefined' ? this.data.type.val : -1; }
     public set type(val: number) {
         if (this.type !== val) {
