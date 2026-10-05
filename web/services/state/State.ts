@@ -29,8 +29,11 @@ import { config } from "../../../config/Config";
 import { ServiceParameterError } from "../../../controller/Errors";
 import { buildCombinedHistory, buildProjectionAccuracy, buildTune, buildWhatIfSweep, computeRecommendation, computeSwgCapacity, formatLocalDateTime, minutesToHHMM, nextScheduledCheck } from "../../../controller/AutoSwgService";
 import type { AutoSwgParams, PageReadings } from "../../../controller/AutoSwgService";
-import { appendTuneHistory, readTuneHistory } from "../../../controller/AutoSwgTuneHistory";
-import { appendAutoSwgHistory, readAutoSwgHistory, toLocalSwgEntries, AutoSwgApplyTrigger, AUTO_SWG_ALGORITHM_VERSION } from "../../../controller/AutoSwgHistory";
+import { appendTuneHistory, markLastTuneApplied, markLastTuneHeld, readTuneHistory } from "../../../controller/AutoSwgTuneHistory";
+import type { TuneResult } from "../../../controller/AutoSwgService";
+import { evaluateAutoTuneApply } from "../../../controller/AutoSwgAutoTune";
+import { getAutoSwgReadiness } from "../../../controller/AutoSwgReadiness";
+import { appendAutoSwgHistory, logAutoSwgSettingChanges, readAutoSwgHistory, snapshotAutoSwgSettings, toLocalSwgEntries, AutoSwgApplyTrigger, AUTO_SWG_ALGORITHM_VERSION } from "../../../controller/AutoSwgHistory";
 import { archivedChlorineAdditions, archivedCyaReadings, archivedFcReadings, archivedSwgEvents, archivedWaterTemps, isPoolMathArchiveCurrent, poolMathArchiveSummary, refreshPoolMathArchiveFromPage, syncPoolMathArchive } from "../../../controller/AutoSwgPoolMathArchive";
 
 // 'HH:MM' wall-clock time of `dt` in `timeZone`.
@@ -570,6 +573,8 @@ export function armAutoSwgAutoCheck(minDelayMs: number = 0) {
 // periodic autoCheckEnabled timer is running at all.
 async function applyIfAutoApplyEnabled(skipped?: string, trigger?: AutoSwgApplyTrigger): Promise<void> {
     if (!skipped && sys.autoSwg.autoApplyEnabled) await applyAutoSwgRecommendation(true, undefined, trigger);
+    // A PoolMath read is also when auto tune looks at whether enough new FC readings have arrived (not waited for).
+    runAutoSwgAutoTune().catch(err => logger.error(`AutoSwg: auto tune failed: ${err.message}`));
 }
 
 // The calculation state plus, when a Refresh was skipped for want of a new FC reading,
@@ -637,7 +642,74 @@ function autoSwgTuneStatus(cfg: typeof sys.autoSwg) {
     let manual = isFinite(ref) && !isNaN(ms(cfg.tuningChangedAt)) && ms(cfg.tuningChangedAt) > ref + 60000;
     let since: number | undefined;
     if (isFinite(ref) && cfg.shareCode && isPoolMathArchiveCurrent(cfg.shareCode, cfg.poolName || undefined)) since = archivedFcReadings().filter(r => r.ts.getTime() > ref).length;
-    return { lastTuneAt: cfg.lastTuneAt, lastTuneAppliedAt: cfg.lastTuneAppliedAt, tuningChangedAt: cfg.tuningChangedAt, manualChangeSinceTune: manual, readingsSinceTune: since, needed: 10 };
+    return { lastTuneAt: cfg.lastTuneAt, lastTuneAppliedAt: cfg.lastTuneAppliedAt, tuningChangedAt: cfg.tuningChangedAt, manualChangeSinceTune: manual, readingsSinceTune: since, needed: cfg.autoTuneAfterFcReadings > 0 ? cfg.autoTuneAfterFcReadings : 10 };
+}
+
+// Writes one Tune run to the Tune history and stamps when it ran. `by` is who ran it: the Tune button, or auto tune.
+function recordAutoSwgTuneRun(cfg: typeof sys.autoSwg, tune: TuneResult, status: ReturnType<typeof autoSwgTuneStatus>, by: 'manual' | 'auto') {
+    cfg.lastTuneAt = new Date().toISOString();
+    try {
+        appendTuneHistory({
+            ts: cfg.lastTuneAt,
+            by: by,
+            settings: { windowDays: cfg.windowDays, daytimeLossSharePct: cfg.daytimeLossSharePct, creditChlorineAdditions: cfg.creditChlorineAdditions, fcAnomalyTolerancePpm: cfg.fcAnomalyTolerancePpm, projectionWeight: cfg.projectionWeight, projectionTaperStartDays: cfg.projectionTaperStartDays, projectionTaperEndDays: cfg.projectionTaperEndDays, burnTempAdjust: cfg.burnTempAdjust },
+            readings: tune.readings, history: tune.history, meanAbsError: tune.meanAbsError, unchangedMae: tune.unchangedMae, skill: tune.skill,
+            status: tune.status,
+            recommendation: tune.recommendation ? { kind: tune.recommendation.kind, label: tune.recommendation.label, settings: tune.recommendation.settings, expectedMae: tune.recommendation.expectedMae, change: tune.recommendation.change, low: tune.recommendation.low, high: tune.recommendation.high } : undefined,
+            manualChangeSinceLastTune: status.manualChangeSinceTune, readingsSinceLastTune: status.readingsSinceTune,
+        });
+    }
+    catch (err) { logger.warn(`AutoSwg: could not record the Tune run: ${err.message}`); }
+}
+
+// Auto tune (the automatic mode): after a PoolMath read (an automatic check, or a Check Now), if enough new FC readings have arrived since the
+// last Tune, run Tune. What it recommends is applied only when Auto tune apply is on and every guard passes (see AutoSwgAutoTune.ts);
+// otherwise the recommendation is kept in the Tune history, with the reasons it was held, and a note is shown on the AutoSwg page.
+let autoSwgAutoTuneRunning = false;
+async function runAutoSwgAutoTune(): Promise<void> {
+    let cfg = sys.autoSwg;
+    if (autoSwgAutoTuneRunning || !cfg.enabled || !cfg.autoTuneEnabled || !cfg.shareCode) return;
+    let status = autoSwgTuneStatus(cfg);
+    if (typeof status.readingsSinceTune !== 'number' || status.readingsSinceTune < status.needed) return;
+    autoSwgAutoTuneRunning = true;
+    let note = '';
+    try {
+        let tune = await buildTune(autoSwgReportParams(cfg), { lookbackDays: 365, localSwgEntries: toLocalSwgEntries(readAutoSwgHistory()), historyRecords: readAutoSwgHistory(), tuningChangedAt: cfg.tuningChangedAt, archive: autoSwgArchiveForReports() });
+        recordAutoSwgTuneRun(cfg, tune, status, 'auto');
+        let at = cfg.lastTuneAt;
+        let rec = tune.recommendation;
+        if (tune.status === 'insufficient') note = `Auto tune: too few FC readings could be scored yet (${tune.readings}).`;
+        else if (tune.status !== 'recommend' || !rec) note = `Auto tune: your settings look good (${tune.readings} readings scored).`;
+        else {
+            let what = `${rec.label} (expected change ${rec.change.toFixed(2)} ppm in mean error, range ${rec.low.toFixed(2)} to ${rec.high.toFixed(2)})`;
+            if (!cfg.autoTuneApplyEnabled) note = `Auto tune recommends: ${what}. Not applied: Auto tune apply is off.`;
+            else {
+                let fcs = archivedFcReadings();
+                let guard = evaluateAutoTuneApply(cfg, tune, { manualChangeSinceTune: status.manualChangeSinceTune, readiness: getAutoSwgReadiness(cfg, true), newestFcAt: fcs.length ? fcs[fcs.length - 1].ts : undefined });
+                if (!guard.ok) {
+                    note = `Auto tune recommends: ${what}. Not applied: ${guard.reasons.join('; ')}.`;
+                    try { markLastTuneHeld(guard.reasons); } catch (err) { logger.warn(`AutoSwg: could not note why the Tune recommendation was held: ${err.message}`); }
+                }
+                else {
+                    let before = snapshotAutoSwgSettings(cfg);
+                    let previous: { [setting: string]: number | boolean } = {};
+                    for (const k of Object.keys(rec.settings)) previous[k] = (cfg as any)[k];
+                    cfg.set(rec.settings);
+                    // Stamped together so the change does not read as one made by hand since the Tune.
+                    cfg.tuningChangedAt = cfg.lastTuneAppliedAt = cfg.lastTuneAt = at;
+                    try { logAutoSwgSettingChanges(before, snapshotAutoSwgSettings(cfg), 'auto-tune'); } catch (err) { logger.warn(`AutoSwg: could not log the auto tune change: ${err.message}`); }
+                    try { markLastTuneApplied(at, 'auto', previous); } catch (err) { logger.warn(`AutoSwg: could not mark the Tune as applied: ${err.message}`); }
+                    note = `Auto tune applied: ${what}. The settings it replaced: ${Object.keys(previous).map(k => `${k} = ${previous[k]}`).join(', ')}.`;
+                }
+            }
+        }
+        state.autoSwg.autoTuneAt = at;
+    }
+    catch (err) { note = `Auto tune could not run: ${err.message}`; logger.error(`AutoSwg: ${note}`); }
+    finally { autoSwgAutoTuneRunning = false; }
+    state.autoSwg.autoTuneNote = note;
+    logger.info(`AutoSwg: ${note}`);
+    state.autoSwg.emitEquipmentChange();
 }
 
 // Background PoolMath history sync: pulls up to 18 months of logs from the share link's JSON
@@ -711,7 +783,10 @@ async function runAutoSwgAutoCheck() {
         else await applyAutoSwgRecommendation(true, undefined, 'automatic-check');
     }
     catch (err) { logger.error(`AutoSwg: automatic check/apply failed: ${err.message}`); }
-    finally { armAutoSwgAutoCheck(); }
+    finally {
+        armAutoSwgAutoCheck();
+        runAutoSwgAutoTune().catch(err => logger.error(`AutoSwg: auto tune failed: ${err.message}`));
+    }
 }
 
 export class StateRoute {
@@ -1317,18 +1392,7 @@ export class StateRoute {
                 if (!cfg.shareCode) throw new ServiceParameterError('AutoSwg is not configured: shareCode is required.', 'autoSwg', 'shareCode', cfg.shareCode);
                 let tune = await buildTune(autoSwgReportParams(cfg), { lookbackDays: 365, localSwgEntries: toLocalSwgEntries(readAutoSwgHistory()), historyRecords: readAutoSwgHistory(), tuningChangedAt: cfg.tuningChangedAt, archive: autoSwgArchiveForReports() });
                 let status = autoSwgTuneStatus(cfg);   // as it stood before this run
-                cfg.lastTuneAt = new Date().toISOString();
-                try {
-                    appendTuneHistory({
-                        ts: cfg.lastTuneAt,
-                        settings: { windowDays: cfg.windowDays, daytimeLossSharePct: cfg.daytimeLossSharePct, creditChlorineAdditions: cfg.creditChlorineAdditions, fcAnomalyTolerancePpm: cfg.fcAnomalyTolerancePpm, projectionWeight: cfg.projectionWeight, projectionTaperStartDays: cfg.projectionTaperStartDays, projectionTaperEndDays: cfg.projectionTaperEndDays, burnTempAdjust: cfg.burnTempAdjust },
-                        readings: tune.readings, history: tune.history, meanAbsError: tune.meanAbsError, unchangedMae: tune.unchangedMae, skill: tune.skill,
-                        status: tune.status,
-                        recommendation: tune.recommendation ? { kind: tune.recommendation.kind, label: tune.recommendation.label, settings: tune.recommendation.settings, expectedMae: tune.recommendation.expectedMae, change: tune.recommendation.change, low: tune.recommendation.low, high: tune.recommendation.high } : undefined,
-                        manualChangeSinceLastTune: status.manualChangeSinceTune, readingsSinceLastTune: status.readingsSinceTune,
-                    });
-                }
-                catch (err) { logger.warn(`AutoSwg: could not record the Tune run: ${err.message}`); }
+                recordAutoSwgTuneRun(cfg, tune, status, 'manual');
                 return res.status(200).send(tune);
             }
             catch (err) { next(err); }

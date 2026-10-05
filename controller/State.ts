@@ -3894,6 +3894,11 @@ export class AutoSwgState extends EqState {
     public set lastAppliedTargetInfo(val: string) { this.setDataVal('lastAppliedTargetInfo', val); }
     // When the periodic automatic check is next due (ISO); cleared while it isn't armed.
     // Recomputed whenever the timer is armed (startup, a settings save, after each check).
+    // What the last auto tune did (see AutoSwgAutoTune.ts): shown on the AutoSwg page, and kept across restarts.
+    public get autoTuneNote(): string { return this.data.autoTuneNote; }
+    public set autoTuneNote(val: string) { this.setDataVal('autoTuneNote', val); }
+    public get autoTuneAt(): string { return this.data.autoTuneAt; }
+    public set autoTuneAt(val: string) { this.setDataVal('autoTuneAt', val); }
     public get nextAutoCheckAt(): string { return this.data.nextAutoCheckAt; }
     public set nextAutoCheckAt(val: string) { this.setDataVal('nextAutoCheckAt', val); }
     // Background PoolMath history sync (see AutoSwgPoolMathArchive): when it last succeeded, how
