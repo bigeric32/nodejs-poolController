@@ -2473,6 +2473,13 @@ export class AutoSwg extends EqItem {
         if (typeof this.data.autoTuneGuardMaxFcAgeDays === 'undefined') this.data.autoTuneGuardMaxFcAgeDays = 14;  // newest FC reading
         if (typeof this.data.autoTuneGuardMinSkill === 'undefined') this.data.autoTuneGuardMinSkill = 0;         // the calculation must beat "FC unchanged"
         if (typeof this.data.tuneManualApplies === 'undefined') this.data.tuneManualApplies = 0;                 // Tune recommendations applied from the Tune dialog
+        // The storm response (the automatic and developer modes; off until turned on): when the last FC reading is 3 or more days old and the chlorinator's
+        // salt reading has fallen, the projected FC is lowered by the dilution that implies, so the SWG runs a little higher until FC is back at the target.
+        // It needs the return to the maintenance % (autoStepEnabled) so the extra ends by itself. stormMaxExtraPct is how many points above the maintenance %
+        // the SWG may be asked to run, and stormMaxDays how long one event may keep it going. It only reports the estimate when it is off.
+        if (typeof this.data.stormResponseEnabled === 'undefined') this.data.stormResponseEnabled = false;
+        if (typeof this.data.stormMaxExtraPct === 'undefined') this.data.stormMaxExtraPct = 20;
+        if (typeof this.data.stormMaxDays === 'undefined') this.data.stormMaxDays = 3;
         // Automation also needs a Tune that was run and accepted (applied, or accepted as "your settings look good"). A Tune that was
         // applied before this existed counts.
         if (typeof this.data.tuneAcceptedAt === 'undefined' && typeof this.data.lastTuneAppliedAt !== 'undefined') this.data.tuneAcceptedAt = this.data.lastTuneAppliedAt;
@@ -2645,6 +2652,12 @@ export class AutoSwg extends EqItem {
     public set autoTuneGuardMaxFcAgeDays(val: number) { this.setDataVal('autoTuneGuardMaxFcAgeDays', val); }
     public get autoTuneGuardMinSkill(): number { return this.data.autoTuneGuardMinSkill; }
     public set autoTuneGuardMinSkill(val: number) { this.setDataVal('autoTuneGuardMinSkill', val); }
+    public get stormResponseEnabled(): boolean { return this.autoTuneAvailable ? utils.makeBool(this.data.stormResponseEnabled) : false; }
+    public set stormResponseEnabled(val: boolean) { this.setDataVal('stormResponseEnabled', this.autoTuneAvailable ? utils.makeBool(val) : false); }
+    public get stormMaxExtraPct(): number { return this.data.stormMaxExtraPct; }
+    public set stormMaxExtraPct(val: number) { this.setDataVal('stormMaxExtraPct', val); }
+    public get stormMaxDays(): number { return this.data.stormMaxDays; }
+    public set stormMaxDays(val: number) { this.setDataVal('stormMaxDays', val); }
     public get tuneManualApplies(): number { return this.data.tuneManualApplies; }
     public set tuneManualApplies(val: number) { this.setDataVal('tuneManualApplies', val); }
     public get autoApplyEnabled(): boolean { return this.automationAvailable ? this.data.autoApplyEnabled : false; }

@@ -3945,6 +3945,23 @@ export class AutoSwgState extends EqState {
     // Recomputed whenever the timer is armed (startup, a settings save, after each check).
     // What the last auto tune did (see AutoSwgAutoTune.ts): shown on the AutoSwg page, and kept across restarts.
     // The note on a recent fall in the chlorinator's salt reading (see AutoSwgSaltHistory); same lifecycle as staleFcNote.
+    // The storm response's current event (see AutoSwgParams.storm): the baseline day of the salt drop it acted on, and when it started, so one event
+    // cannot keep the SWG raised for longer than stormMaxDays.
+    // What the AutoSwg watch (AutoSwgWatch.ts) found: the alerts shown in the AutoSwg area of the dashboard. Recomputed every ten minutes.
+    // When njsPC last knew it was running (every ten minutes), and the times it was not: a gap of 25 minutes or more found at start-up is an outage
+    // (the pool equipment, which njsPC keeps on, was off), kept as { from, to, minutes, rebooted } for the last ten.
+    public get heartbeatAt(): string { return this.data.heartbeatAt; }
+    public set heartbeatAt(val: string) { this.setDataVal('heartbeatAt', val); }
+    public get outages(): any[] { return this.data.outages; }
+    public set outages(val: any[]) { this.setDataVal('outages', val); }
+    public get alerts(): any[] { return this.data.alerts; }
+    public set alerts(val: any[]) { this.setDataVal('alerts', val); }
+    public get stormStartPct(): number { return this.data.stormStartPct; }
+    public set stormStartPct(val: number) { this.setDataVal('stormStartPct', val); }
+    public get stormEventKey(): string { return this.data.stormEventKey; }
+    public set stormEventKey(val: string) { this.setDataVal('stormEventKey', val); }
+    public get stormStartedAt(): string { return this.data.stormStartedAt; }
+    public set stormStartedAt(val: string) { this.setDataVal('stormStartedAt', val); }
     public get saltNote(): string { return this.data.saltNote; }
     public set saltNote(val: string) { this.setDataVal('saltNote', val); }
     public get autoTuneNote(): string { return this.data.autoTuneNote; }
