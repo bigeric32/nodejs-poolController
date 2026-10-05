@@ -75,8 +75,8 @@ const FC_RANGE_Z = 1.97;
 // The most the target is ever raised by (see AutoSwgParams.overshootPpmPerDay and AutoSwgResult.targetMarginPpm).
 const OVERSHOOT_MARGIN_CAP_PPM = 1;
 
-// The storm response (params.storm): the share of a salt drop that is taken as noise in the chlorinator's reading (it reports in 50 ppm steps,
-// about 1.7% at 3000 ppm) and so is not counted as dilution, and the smallest FC loss worth acting on.
+// The storm response (params.storm): the share of a salt drop that is taken as noise in the chlorinator's reading (it reports in steps of 50 to 100 ppm,
+// about 1.7% to 3.3% at 3000 ppm) and so is not counted as dilution, and the smallest FC loss worth acting on.
 const STORM_SALT_NOISE_PCT = 0.02;
 const STORM_MIN_LOSS_PPM = 0.2;
 // An outage (njsPC not running, so the pool equipment was off) only counts once the chlorine the SWG would have made in its run window during it is

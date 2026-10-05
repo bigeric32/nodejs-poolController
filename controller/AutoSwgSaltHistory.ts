@@ -22,7 +22,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 //   * recentDrop(): a drop of about 7% or more within the averaging window is noted in the recommendation, because some of the FC lost over
 //     that time may be dilution and not consumption (see AutoSwgResult.saltNote);
 //   * the record itself, so a cautious dilution credit can be tested against real events later (GET /state/autoSwg/salt).
-// The chlorinator reports salt in steps of 50 ppm, so day medians are used, and a single odd reading cannot make a drop.
+// The chlorinator's reading is coarse (the protocol carries steps of 50 ppm, and on the author's pool it only ever shows hundreds), so day medians
+// are used, and a single odd reading cannot make a drop.
 
 import * as fs from 'fs';
 import * as path from 'path';
@@ -34,7 +35,7 @@ const SAVE_MS = 30 * 60 * 1000;
 const DAY_MS = 86400000;
 const MIN_SAMPLES_PER_DAY = 6;              // a day median needs this many samples (so an outage does not leave one reading standing for a day)
 export const SALT_DROP_PCT = 0.07;          // a fall of this fraction ...
-export const SALT_DROP_MIN_PPM = 150;       // ... and at least this many ppm (the chlorinator reads in steps of 50)
+export const SALT_DROP_MIN_PPM = 150;       // ... and at least this many ppm (the reading moves in steps of 50 to 100)
 export const SALT_DROP_LOOKBACK_DAYS = 21;  // the averaging window the drop would bias
 
 interface SaltSample { t: number; v: number; }
