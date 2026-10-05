@@ -2475,17 +2475,17 @@ export class AutoSwg extends EqItem {
         if (typeof this.data.tuneManualApplies === 'undefined') this.data.tuneManualApplies = 0;                 // Tune recommendations applied from the Tune dialog
         // The storm response (the automatic and developer modes; off until turned on): when the last FC reading is 3 or more days old and the chlorinator's
         // salt reading has fallen, the projected FC is lowered by the dilution that implies, so the SWG runs a little higher until FC is back at the target.
-        // It needs the return to the maintenance % (autoStepEnabled) so the extra ends by itself. stormMaxExtraPct is how many points above the maintenance %
-        // the SWG may be asked to run, and stormMaxDays how long one event may keep it going. It only reports the estimate when it is off.
+        // It needs the return to the maintenance % (autoStepEnabled) so the extra ends by itself. stormMaxExtraPct is how many points the storm or outage may
+        // add to the % the plan would have used without it, and stormMaxDays how long one event may keep it going. It only reports the estimate when it is off.
         if (typeof this.data.stormResponseEnabled === 'undefined') this.data.stormResponseEnabled = false;
         if (typeof this.data.stormMaxExtraPct === 'undefined') this.data.stormMaxExtraPct = 20;
         if (typeof this.data.stormMaxDays === 'undefined') this.data.stormMaxDays = 3;
-        // Away protection (every mode; off until turned on for a trip). While it is on, AutoSwg checks PoolMath every autoCheckHours hours and may raise
-        // the SWG % to make up for dilution or an outage (the storm and outage response), but only between the maintenance % and the maintenance % plus
-        // stormMaxExtraPct points, never below it. It overrides Auto-Apply, the automatic check and auto tune while it is on (their saved settings are
-        // kept; they just do not act). It needs autoStepEnabled, so each boost ends by itself. It ends when it is unchecked, or by itself when a new FC reading
-        // is logged in PoolMath after it was turned on (see runAutoSwgRecommendation). awayStartedAt is when it was turned on; awayEndedNote says why it
-        // ended by itself.
+        // Away protection (every mode; off until turned on for a trip). While it is on, AutoSwg checks PoolMath every autoCheckHours hours, applies
+        // the glide to the target you set (never below the maintenance %), and may raise the SWG % further to make up for dilution or an outage (the storm
+        // and outage response), by at most stormMaxExtraPct points. It overrides Auto-Apply, the automatic check and auto tune while it is on (their saved
+        // settings are kept; they just do not act). It needs autoStepEnabled, so each boost ends by itself. It ends when it is unchecked, or by itself when a
+        // new FC reading is logged in PoolMath after it was turned on (see endAwayOnNewReading). awayStartedAt is when it was turned on; awayEndedNote says
+        // why it ended by itself.
         if (typeof this.data.awayEnabled === 'undefined') this.data.awayEnabled = false;
         if (typeof this.data.awayStartedAt === 'undefined') this.data.awayStartedAt = '';
         if (typeof this.data.awayEndedNote === 'undefined') this.data.awayEndedNote = '';

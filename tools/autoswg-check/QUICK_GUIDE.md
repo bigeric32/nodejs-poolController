@@ -80,18 +80,23 @@ week is workable and daily is ideal, and more readings make the recommendation s
 * A sharp fall in the chlorinator's salt reading is noted in the recommendation: the pool was probably diluted by rain or a
   water change, and some of the FC lost may not be consumption. On its own, nothing is adjusted for it.
 * **Away protection (optional, off until you turn it on for a trip).** In the settings, under "Vacation: Away protection",
-  set your vacation **Target FC**, check the box and **save the settings**: saving starts it. Log your last FC test before
-  you save, because a test logged afterward ends it (see below). While it is on, AutoSwg checks PoolMath every 12 hours by
-  itself and may raise the SWG % to make up for FC lost to a sharp fall in the salt reading (dilution) or to an outage (njsPC
-  was not running, so the equipment was off). It can only add chlorine, and only within limits: the % stays between the
-  maintenance % and the maintenance % plus the "At most" points you set (20 by default), it never goes below the
-  maintenance %, it acts only when your last test is 3 days old or more, one event acts for at most 3 days, and it needs
-  "Return to the maintenance %" so each boost ends by itself. Away protection takes over from Auto-Apply, the automatic check
-  and auto tune while it is on: their settings are kept and shown grayed out, but they do not act. **It ends when you uncheck
-  it and save, or by itself when a new FC reading is logged in PoolMath after you turned it on**, so if you forget to turn it
-  off, your first test when you are back does it, and your other settings then apply again. A note on the card says when it is
-  on. This is the one case, besides the return to the maintenance %, where AutoSwg changes the SWG % without you pressing
-  Apply, and it only does so while you have turned it on.
+  set your vacation **Target FC** (a normal 7 might become 10), check the box and **save the settings**: saving starts it. Log
+  your last FC test before you save, because a test logged afterward ends it (see below). While it is on, AutoSwg checks
+  PoolMath every 12 hours by itself and applies the SWG % that glides the projected FC up to your vacation target, after which
+  the return to the maintenance % lets it coast. The glide is not limited. On top of that it may add chlorine to make up for FC
+  lost to a sharp fall in the salt reading (dilution) or to an outage (njsPC was not running, so the equipment was off). That
+  extra is limited: it adds at most the "Storm or outage adds at most" points you set (20 by default) to the % the plan
+  would have used anyway, only when your last test is 3 days old or more, and one event acts for at most 3 days. The SWG % never
+  goes below the maintenance %, and Away protection needs "Return to the maintenance %" so each boost ends by itself. Away
+  protection takes over from Auto-Apply, the automatic check and auto tune while it is on: their settings are kept and shown
+  grayed out, but they do not act. **It ends when you uncheck it and save, or by itself when a new FC reading is logged in
+  PoolMath after you turned it on**, so if you forget to turn it off, your first test when you are back does it, and your other
+  settings then apply again. A note on the card says when it is on. This is the one case, besides the return to the maintenance %,
+  where AutoSwg changes the SWG % without you pressing Apply, and it only does so while you have turned it on.
+* **What is recorded for looking back.** Every check while you are away is in Show History (what it recommended, what it
+  applied, and the numbers behind them, including the projected FC with and without the storm and outage correction). When Away
+  protection ends, one more record summarizes the period: the checks, the lowest and highest % applied, the outages, the alerts
+  seen, the last check's projection and the reading that ended it. Alerts raised and cleared are also written to the njsPC log.
 * None of this tests FC for you. Heavy rain, debris or an equipment failure can still lower it; the raised target is your margin.
 
 **When you are back: recovery to steady state**
