@@ -40,7 +40,9 @@ export interface TuneHistoryRecord {
     skill?: number;
     status: 'good' | 'recommend' | 'insufficient';
     recommendation?: { kind: string; label: string; settings: { [setting: string]: number | boolean }; expectedMae: number; change: number; low: number; high: number };
-    applied?: { at: string };                          // set when the recommendation was applied from the Tune dialog
+    by?: 'manual' | 'auto';                            // who ran it: the Tune button (the default for older records) or auto tune
+    applied?: { at: string; by?: 'manual' | 'auto'; previous?: { [setting: string]: number | boolean } };   // set when the recommendation was applied, from the Tune dialog or by auto tune (with the settings it replaced)
+    held?: string[];                                   // auto tune only: why a recommendation was not applied
     manualChangeSinceLastTune?: boolean;               // the settings had been changed by hand since the previous Tune
     readingsSinceLastTune?: number;                    // FC readings that had arrived since the previous Tune (when known)
 }
@@ -73,11 +75,39 @@ export function appendTuneHistory(record: TuneHistoryRecord): TuneHistoryRecord[
     return records;
 }
 
-// Marks the most recent run as applied (the user pressed Apply on its recommendation).
-export function markLastTuneApplied(at: string) {
+// Marks the most recent run as applied (the user pressed Apply on its recommendation, or auto tune applied it, in which case
+// `previous` holds the settings it replaced).
+export function markLastTuneApplied(at: string, by: 'manual' | 'auto' = 'manual', previous?: { [setting: string]: number | boolean }) {
     const records = readTuneHistory();
     const last = records[records.length - 1];
     if (!last || last.applied || !last.recommendation) return;
-    last.applied = { at };
+    last.applied = { at, by, previous };
     writeTuneHistory(records);
+}
+
+// Notes on the most recent run why auto tune did not apply its recommendation.
+export function markLastTuneHeld(reasons: string[]) {
+    const records = readTuneHistory();
+    const last = records[records.length - 1];
+    if (!last) return;
+    last.held = reasons;
+    writeTuneHistory(records);
+}
+
+// How many Tune recommendations were applied by hand (from the Tune dialog) in the records still kept.
+export function countManualTuneApplies(): number {
+    return readTuneHistory().filter(r => r.applied && r.applied.by !== 'auto').length;
+}
+
+// Whether the last `runs` auto tunes (the most recent one included) all recommended the same change and none was applied: what
+// auto tune waits for before it applies a recommendation, so a one-off result is not acted on.
+export function autoTuneRecommendationConfirmed(runs: number): boolean {
+    if (!(runs > 1)) return true;
+    const autos = readTuneHistory().filter(r => r.by === 'auto').slice(-runs);
+    if (autos.length < runs) return false;
+    const key = (r: TuneHistoryRecord) => r.status === 'recommend' && r.recommendation ? JSON.stringify(r.recommendation.settings) : undefined;
+    const first = key(autos[0]);
+    if (typeof first === 'undefined') return false;
+    // earlier runs in the sequence must not have been applied; the last may be (the caller checks before applying)
+    return autos.every((r, i) => key(r) === first && (i === autos.length - 1 || !r.applied));
 }
