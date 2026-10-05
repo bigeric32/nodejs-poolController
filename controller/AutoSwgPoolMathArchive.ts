@@ -70,6 +70,7 @@ export interface PoolMathArchive {
     shareCode?: string;         // what the entries were pulled for; a change discards them
     poolName?: string;
     syncedAt?: string;          // ISO time of the last successful sync
+    toppedUpAt?: string;        // ISO time of the last top-up (see topUpPoolMathArchive)
     entries: PoolMathArchiveEntry[];
 }
 
@@ -266,8 +267,91 @@ function isSwgEntry(e: PoolMathArchiveEntry): boolean {
 
 // Liquid chlorine is PoolMath chemical id 0: `percent` strength and `normalizedAmount` in mL.
 const POOLMATH_LIQUID_CHLORINE = 0;
+
+// Salt added to the pool is chemical id 26: `unit` 6 (pounds) and `normalizedAmount` in grams. On the pool this was checked on, each 40 lb entry
+// was followed by a rise of 400 to 600 ppm in the salt tests, and 40 lb of salt in 12,000 gallons is about 400 ppm. The share page's HTML is not
+// read for these (what a salt card says there has not been checked); the JSON feed is, by topUpPoolMathArchive.
+const POOLMATH_SALT_CHEMICAL = 26;
+const GRAMS_PER_POUND = 453.59237;
+function isSaltEntry(e: PoolMathArchiveEntry): boolean {
+    return e.type === 'chemlog' && e.chemical === POOLMATH_SALT_CHEMICAL && typeof e.normalizedAmount === 'number' && e.normalizedAmount > 0;
+}
+
+// The archived salt additions in pounds, oldest first.
+export function archivedSaltAdditions(): { ts: Date; pounds: number }[] {
+    return readPoolMathArchive().entries
+        .filter(isSaltEntry)
+        .map(e => ({ ts: new Date(e.ts), pounds: e.normalizedAmount / GRAMS_PER_POUND }))
+        .sort((a, b) => a.ts.getTime() - b.ts.getTime());
+}
+
+// ppm of salt that `pounds` adds to a pool of `gallons` (milligrams per liter).
+export function saltAdditionPpm(pounds: number, gallons: number): number {
+    return gallons > 0 ? pounds * GRAMS_PER_POUND * 1000 / (gallons * 3.785411784) : 0;
+}
 function isChlorineEntry(e: PoolMathArchiveEntry): boolean {
     return e.type === 'chemlog' && e.chemical === POOLMATH_LIQUID_CHLORINE && typeof e.percent === 'number' && typeof e.normalizedAmount === 'number';
+}
+
+// What a top-up adds to the archive without touching what the share page keeps current (FC, CC, CYA, SWG runs and liquid chlorine, which the
+// page refresh matches by time): salt additions it has not got, the extra numbers a new test carried (pH, TA, CH, salt, water temperature,
+// weather) that the page refresh could not copy, and tests the page does not list at all (a salt-only test, say). Matching is by time, within
+// two minutes, never by id, because entries the page refresh created have ids of their own.
+export interface PoolMathTopUpResult { fetched: number; saltAdded: number; testsEnriched: number; testsAdded: number; removed: number; }
+const TOP_UP_FIELDS: (keyof PoolMathArchiveEntry)[] = ['ph', 'ta', 'ch', 'salt', 'waterTemp', 'waterTempUnits', 'uvIndex', 'weatherTemp', 'cloudCover'];
+export function mergeTopUp(entries: PoolMathArchiveEntry[], fetched: PoolMathArchiveEntry[], deletedIds: Set<string>, cutoff: number): { entries: PoolMathArchiveEntry[] } & PoolMathTopUpResult {
+    const MATCH_MS = 2 * 60 * 1000;
+    let saltAdded = 0, testsEnriched = 0, testsAdded = 0, removed = 0;
+    const out = entries.filter(e => { if (deletedIds.has(e.id) && isSaltEntry(e)) { removed++; return false; } return true; });
+    const have = new Set(out.map(e => e.id));
+    for (const e of fetched) {
+        const t = new Date(e.ts).getTime();
+        if (isNaN(t) || t < cutoff) continue;
+        if (isSaltEntry(e)) {
+            if (!have.has(e.id)) { out.push(e); have.add(e.id); saltAdded++; }
+            continue;
+        }
+        if (e.type !== 'testlog') continue;
+        let match: PoolMathArchiveEntry | undefined;
+        let bestGap = Infinity;
+        for (const c of out) {
+            if (c.type !== 'testlog') continue;
+            const gap = Math.abs(new Date(c.ts).getTime() - t);
+            if (gap <= MATCH_MS && gap < bestGap) { match = c; bestGap = gap; }
+        }
+        if (match) {
+            let changed = false;
+            for (const k of TOP_UP_FIELDS) if (typeof (match as any)[k] !== 'number' && typeof (e as any)[k] === 'number') { (match as any)[k] = (e as any)[k]; changed = true; }
+            if (changed) testsEnriched++;
+        }
+        else if (!have.has(e.id) && (['fc', 'cc', 'cya', ...TOP_UP_FIELDS] as (keyof PoolMathArchiveEntry)[]).some(k => typeof (e as any)[k] === 'number')) {
+            out.push(e); have.add(e.id); testsAdded++;
+        }
+    }
+    out.sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime());
+    return { entries: out, fetched: fetched.length, saltAdded, testsEnriched, testsAdded, removed };
+}
+
+// One request for the newest entries, merged into the archive as above. Does nothing (returns undefined) until the full pull has been done for this
+// share code and pool. PoolMath's share endpoint is rate limited, so this is meant to run about once a day.
+export async function topUpPoolMathArchive(shareCode: string, poolName?: string): Promise<PoolMathTopUpResult | undefined> {
+    if (!shareCode) throw new Error('No PoolMath share code is configured.');
+    const archive = readPoolMathArchive();
+    if (!archive.syncedAt || archive.shareCode !== shareCode || (archive.poolName || '') !== (poolName || '')) return undefined;
+    const got = await fetchRecentLogs(shareCode, RECENT_LOGS_SIZES[0]);
+    if (typeof got === 'undefined') throw new Error('PoolMath did not accept the JSON history request.');
+    const pool = pickPool(got, poolName);
+    const logs: any[] = Array.isArray(pool.recentLogs) ? pool.recentLogs : [];
+    const deletedIds = new Set<string>();
+    const fetched: PoolMathArchiveEntry[] = [];
+    for (const log of logs) {
+        if (log && log.deleted === true) { if (typeof log.id === 'string') deletedIds.add(log.id); continue; }
+        const e = toEntry(log);
+        if (e) fetched.push(e);
+    }
+    const merged = mergeTopUp(archive.entries, fetched, deletedIds, retentionCutoff(new Date()));
+    if (merged.saltAdded || merged.testsEnriched || merged.testsAdded || merged.removed) writePoolMathArchive({ ...archive, entries: merged.entries, toppedUpAt: new Date().toISOString() });
+    return { fetched: merged.fetched, saltAdded: merged.saltAdded, testsEnriched: merged.testsEnriched, testsAdded: merged.testsAdded, removed: merged.removed };
 }
 
 // The archived liquid chlorine additions, oldest first.
