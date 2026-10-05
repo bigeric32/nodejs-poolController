@@ -1,8 +1,9 @@
 # autoswg-check
 
 AutoSwg was built to make it easier to move the target FC up and down as you prepare for and return from a vacation,
-and to see what was possible with a pool's own data, while embracing the Trouble Free Pool methods and not diverging
-from them. This folder is the quick guide, the method and evidence page, and a way to check the calculation on
+and to see what was possible with a pool's own data run locally on a Raspberry Pi, without depending on external tools
+such as AI, as a starting point as those capabilities mature, while embracing the Trouble Free Pool methods and not
+diverging from them. This folder is the quick guide, the method and evidence page, and a way to check the calculation on
 any pool.
 
 A standalone, standard-library-only Python script (3.8+) that checks the AutoSwg algorithm against a
@@ -141,8 +142,8 @@ history is scored under the new setting. You don't have to wait for new readings
 
 1. **Open Projection Accuracy for a baseline.** Read these first:
    * *Readings scored*: aim for 30 or more. With fewer, everything below is rough.
-   * *Mean absolute error*: how far off the projection typically is. Around 1.2 to 1.6 ppm is normal,
-     because an FC test is only good to about a ppm.
+   * *Mean absolute error*: how far off the projection typically is. Around 1.2 to 1.6 ppm is normal:
+     the test itself varies by about a ppm, and real consumption varies day to day with sun, rain and temperature.
    * *Baseline "FC unchanged since the last reading"*: the error of predicting no change at all. The
      algorithm should beat it; if it is *worse*, the projection between tests is adding noise, and the
      weighting and taper below are the fix.
@@ -181,7 +182,7 @@ changes, the accuracy dialog adds a line such as:
 
 * After the **first few weeks** of readings, and again when conditions change: a new season, a cell swap, a
   change in how often you test, or a CYA change.
-* **Not after every reading.** Each reading adds noise, and re-tuning on noise makes the projections worse.
+* **Not after every reading.** Each reading carries its own ordinary variation, and re-tuning on it makes the projections worse.
   The defaults are reasonable for most pools.
 * Keep the data healthy first. The reports are only as good as the PoolMath log: log SWG % changes
   promptly, log liquid chlorine as "Liquid Chlorine", and correct a mistyped reading. The anomaly note
@@ -204,7 +205,7 @@ changes, the accuracy dialog adds a line such as:
 | `--lat 40.7 --lon -74.0` | The pool's rough location, used to work out today's sunrise and sunset for the daylight weighting. 0.1 degrees is plenty. If the owner gave PoolMath a location the script uses it (rounded to 0.1 degrees); otherwise **without lat/lon the weighting is simply off**. In my test, turning it off made accuracy slightly worse, so it is worth giving. |
 | `--swg-start 08:00` | Local time the SWG's daily run window starts (default 08:00). The run length comes from each PoolMath SWG entry (usually 12 hours). It only affects the part of a day since the last reading, so a rough value is fine; for a sunrise-to-sunset schedule use roughly sunrise. |
 | `--window 21` | The averaging window the sweep treats as "current" (default 21 days). Leave it at the default for comparing pools; the sweep already shows the alternatives. |
-| `--tolerance 2` | The FC anomaly tolerance in ppm (default 2; 0 turns the check off). Lower flags more intervals but also more ordinary test noise. |
+| `--tolerance 2` | The FC anomaly tolerance in ppm (default 2; 0 turns the check off). Lower flags more intervals but also more ordinary variation. |
 | `--weight 0.5` (alias `--damping`) | The projection weighting: how much of the modelled FC change since the last reading (SWG output minus consumption) to apply, from 0 to 1 (default 0.5, matching the app; 1 = all of it, 0 = start from the last reading unchanged). FC usually moves less between tests than the model expects, so a value below 1 usually predicts better; the accuracy report suggests one and the what-if sweep scores 0, 25, 50, 75 and 100%. |
 | `--taper-start 3 --taper-end 8` | A gap-aware taper on the projection weighting: full weight until the last reading is `--taper-start` days old, then falling in a straight line to zero at `--taper-end` days (defaults 3 and 8, matching the app; `--taper-end 0` turns it off). The model helps for gaps under about 5 days and hurts beyond, which is why the taper is on by default. The accuracy report suggests values; the what-if sweep scores a few combinations. |
 | `--no-credit` | Don't credit liquid chlorine additions as FC added. Use it to see whether the credit helps for a given pool. |
@@ -245,8 +246,9 @@ script read). Without both kinds of entry there is nothing to calculate or check
 * **Small differences.** Differences under about 0.1 ppm are too small to separate with a few dozen
   readings. Look for settings that are "better" with a range that clearly excludes zero, and ideally
   that repeat across pools.
-* **Context.** A mean absolute error around 1.5 ppm is typical because FC test kits are only good to
-  about a ppm; the algorithm can't beat that noise.
+* **Context.** A mean absolute error around 1.5 ppm is typical. The test itself varies by about a ppm, and
+  real consumption varies day to day with sun, rain and temperature, which the algorithm cannot see without local
+  weather data. That expected variation sets a floor on how well any projection can do.
 * **Odd rows.** If one reading's error is huge, check the anomalies report: it is often a mistyped
   reading or an unlogged addition.
 
