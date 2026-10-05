@@ -292,7 +292,7 @@ function autoSwgSettingsKey(): string {
     catch (err) { /* the typed-in window is the fallback */ }
     return [
         cfg.targetFc, cfg.targetDaysAbove, cfg.targetDaysBelow, cfg.newTargetDateThresholdPpm,
-        cfg.windowDays, cfg.gallons, cfg.swgLbsPerDay, cfg.timezone, cfg.daytimeLossSharePct, cfg.creditChlorineAdditions, cfg.fcAnomalyTolerancePpm, cfg.projectionWeight, cfg.projectionTaperStartDays, cfg.projectionTaperEndDays, cfg.overshootPpmPerDay, cfg.burnTempAdjust, cfg.stormResponseEnabled, cfg.stormMaxExtraPct,
+        cfg.windowDays, cfg.gallons, cfg.swgLbsPerDay, cfg.timezone, cfg.daytimeLossSharePct, cfg.creditChlorineAdditions, cfg.fcAnomalyTolerancePpm, cfg.projectionWeight, cfg.projectionTaperStartDays, cfg.projectionTaperEndDays, cfg.overshootPpmPerDay, cfg.burnTempAdjust, cfg.stormResponseEnabled, cfg.stormMaxExtraPct, cfg.awayStatus,
         cfg.shareCode, cfg.poolName, cfg.scheduleId, windowKeyTime(start), windowKeyTime(stop)
     ].join('|');
 }
@@ -327,7 +327,7 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
     let storm: { apply: boolean; maxExtraPct: number } | undefined;
     let stormNewEvent = false;
     let stormOutages: { from: string; to: string }[] | undefined;
-    if (cfg.stormResponseEnabled && cfg.autoStepEnabled) {
+    if ((cfg.stormResponseEnabled || cfg.awayActive) && cfg.autoStepEnabled) {
         storm = { apply: true, maxExtraPct: cfg.stormMaxExtraPct };
         if (saltDrop) {
             let ev = stormEventStatus(state.autoSwg.stormStartedAt, state.autoSwg.stormStartPct, saltDrop.pct, cfg.stormMaxDays);
@@ -581,7 +581,10 @@ export function armAutoSwgAutoCheck(minDelayMs: number = 0) {
     let cfg = sys.autoSwg;
     let wasDue = state.autoSwg.nextAutoCheckAt;
     state.autoSwg.nextAutoCheckAt = undefined;
-    if (!cfg.enabled || !cfg.autoCheckEnabled || !cfg.autoApplyEnabled || !cfg.shareCode || cfg.chlorinatorId < 0) {
+    state.autoSwg.awayStatus = cfg.awayStatus;
+    state.autoSwg.awayUntil = cfg.awayUntil;
+    // The periodic check runs for the automatic mode's Auto-Apply and automatic check, or while Away protection is on.
+    if (!cfg.enabled || !((cfg.autoCheckEnabled && cfg.autoApplyEnabled) || cfg.awayActive) || !cfg.shareCode || cfg.chlorinatorId < 0) {
         if (wasDue) state.autoSwg.emitEquipmentChange();
         return;
     }
@@ -781,6 +784,7 @@ function detectAutoSwgOutage() {
 function watchAutoSwg() {
     try {
         let cfg = sys.autoSwg;
+        if (state.autoSwg.awayStatus !== cfg.awayStatus || state.autoSwg.awayUntil !== cfg.awayUntil) { state.autoSwg.awayStatus = cfg.awayStatus; state.autoSwg.awayUntil = cfg.awayUntil; state.autoSwg.emitEquipmentChange(); }
         let put = (alerts: any[]) => {
             if (JSON.stringify(alerts) !== JSON.stringify(state.autoSwg.alerts || [])) { state.autoSwg.alerts = alerts; state.autoSwg.emitEquipmentChange(); }
         };
@@ -795,7 +799,7 @@ function watchAutoSwg() {
             now: now,
             inRunWindow: inRunWindow(win.swgStartTime, win.swgStopTime, cfg.timezone, now),
             chlorinator: schlor ? { status: schlor.status, statusDesc: statusDesc, currentOutput: schlor.currentOutput, setpoint: schlor.poolSetpoint } : undefined,
-            autoCheckEnabled: cfg.autoCheckEnabled && cfg.autoApplyEnabled,
+            autoCheckEnabled: (cfg.autoCheckEnabled && cfg.autoApplyEnabled) || cfg.awayActive,
             autoCheckHours: cfg.autoCheckHours,
             lastCheckedAt: state.autoSwg.lastCheckedAt,
             checkError: state.autoSwg.error,
@@ -917,17 +921,34 @@ async function runAutoSwgArchiveSync(): Promise<void> {
     }
 }
 
+// The SWG % Away protection may apply: the recommendation, held between the maintenance % (never lower) and the maintenance % plus
+// stormMaxExtraPct points. Away protection can only add chlorine, within that limit.
+function awayBoundedPct(): number | undefined {
+    let maintenance = state.autoSwg.maintenancePct, recommended = state.autoSwg.recommendedPct;
+    if (typeof maintenance !== 'number' || isNaN(maintenance) || typeof recommended !== 'number' || isNaN(recommended)) return undefined;   // no usable check: nothing to apply
+    let ceiling = Math.min(100, maintenance + sys.autoSwg.stormMaxExtraPct);
+    return Math.round(Math.max(maintenance, Math.min(ceiling, recommended)));
+}
+
 async function runAutoSwgAutoCheck() {
     autoSwgAutoCheckTimer = undefined;
     let cfg = sys.autoSwg;
-    if (!cfg.enabled || !cfg.autoApplyEnabled) return; // turned off since this cycle was armed
+    // Turned off, or the return date passed, since this cycle was armed.
+    if (!cfg.enabled || !(cfg.autoApplyEnabled || cfg.awayActive)) return;
     try {
         // Same decision as the "Refresh and Apply" button: stay on course for an in-flight
         // target unless the projected FC has strayed past the new-target-date threshold (or
         // there's no in-flight target left), in which case start a new one.
-        let skipped = await runAutoSwgRecommendation('auto', 'Automatic check.');
+        let skipped = await runAutoSwgRecommendation('auto', cfg.autoApplyEnabled ? 'Automatic check.' : 'Automatic check (Away protection).');
         if (skipped) logger.info(`AutoSwg: automatic check skipped. ${skipped}`);
-        else await applyAutoSwgRecommendation(true, undefined, 'automatic-check');
+        else if (cfg.autoApplyEnabled) await applyAutoSwgRecommendation(true, undefined, 'automatic-check');
+        else {
+            // Away protection only: the % is held within its limits.
+            let bounded = awayBoundedPct();
+            if (typeof bounded === 'undefined') { logger.info('AutoSwg: Away protection had no usable recommendation to apply.'); return; }
+            if (bounded !== state.autoSwg.recommendedPct) logger.info(`AutoSwg: Away protection held the recommended ${state.autoSwg.recommendedPct}% to ${bounded}% (the maintenance % is ${state.autoSwg.maintenancePct}%, and it may add at most ${cfg.stormMaxExtraPct} points).`);
+            await applyAutoSwgRecommendation(true, bounded, 'automatic-check');
+        }
     }
     catch (err) { logger.error(`AutoSwg: automatic check/apply failed: ${err.message}`); }
     finally {
