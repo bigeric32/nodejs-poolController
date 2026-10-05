@@ -37,6 +37,7 @@ import { evaluateAutoTuneApply } from "../../../controller/AutoSwgAutoTune";
 import { getAutoSwgReadiness } from "../../../controller/AutoSwgReadiness";
 import { saltHistory, stormEventStatus } from "../../../controller/AutoSwgSaltHistory";
 import { AutoSwgWatch, inRunWindow } from "../../../controller/AutoSwgWatch";
+import { outputLog } from "../../../controller/AutoSwgOutputLog";
 import type { SaltAddition } from "../../../controller/AutoSwgSaltHistory";
 import { appendAutoSwgHistory, logAutoSwgSettingChanges, readAutoSwgHistory, snapshotAutoSwgSettings, toLocalSwgEntries, AutoSwgApplyTrigger, AUTO_SWG_ALGORITHM_VERSION } from "../../../controller/AutoSwgHistory";
 import { archivedChlorineAdditions, archivedCyaReadings, archivedFcReadings, archivedSaltAdditions, archivedSwgEvents, archivedWaterTemps, saltAdditionPpm, topUpPoolMathArchive, isPoolMathArchiveCurrent, poolMathArchiveSummary, refreshPoolMathArchiveFromPage, syncPoolMathArchive } from "../../../controller/AutoSwgPoolMathArchive";
@@ -792,6 +793,7 @@ export function awaySummary(startedAt: string, reading?: { value: number; ts: st
         lastCheck: last ? { at: last.appliedAt, appliedPct: last.appliedPct, recommendedPct: last.recommendedPct, maintenancePct: o.maintenancePct, projectedFc: o.projectedCurrentFc, projectedFcBeforeStorm: o.projectedFcBeforeStorm, stormLossPpm: o.stormLossPpm, projectedFcRange: o.projectedFcRange } : undefined,
         outages: (state.autoSwg.outages || []).filter(x => x && new Date(x.to).getTime() >= from).map(x => ({ from: x.from, to: x.to, minutes: x.minutes, rebooted: x.rebooted })),
         alertsSeen: alertIds,
+        swgOutput: outputLog.summary(from, Date.now()),
     };
 }
 
@@ -870,8 +872,26 @@ function watchAutoSwg() {
 }
 
 let autoSwgSaltTimer: NodeJS.Timeout | undefined;
+// What the chlorinator actually did, logged at all times (every mode, inside the run window or not) as one line an hour; see AutoSwgOutputLog.ts.
+// It uses the AutoSwg chlorinator when one is chosen, otherwise the first chlorinator there is.
+function sampleAutoSwgOutput() {
+    try {
+        let chlorinators = sys.chlorinators.toArray();
+        let rec = chlorinators.find(c => c.id === sys.autoSwg.chlorinatorId) || chlorinators[0];
+        if (!rec) return;
+        let s = state.chlorinators.getItemById(rec.id, false);
+        if (!s) return;
+        let now = Date.now();
+        outputLog.record({
+            output: s.currentOutput, set: s.poolSetpoint, target: s.targetOutput, status: s.status, salt: s.saltLevel,
+            commAgeSec: typeof s.lastComm === 'number' && s.lastComm > 0 ? Math.max(0, Math.round((now - s.lastComm) / 1000)) : undefined
+        }, now);
+    }
+    catch (err) { logger.warn(`AutoSwg: could not log the chlorinator output: ${err.message}`); }
+}
 function sampleAutoSwgSalt() {
     try { state.autoSwg.heartbeatAt = new Date().toISOString(); } catch (err) { /* the heartbeat is best effort */ }
+    sampleAutoSwgOutput();
     watchAutoSwg();
     try {
         let cfg = sys.autoSwg;
@@ -1055,6 +1075,15 @@ export class StateRoute {
         armAutoSwgArchiveSync();
         armAutoSwgSaltLog();
         armAutoSwgArchiveTopUp();
+        // What the chlorinator actually did, hour by hour (see AutoSwgOutputLog.ts): GET /state/autoSwg/output?days=30
+        app.get('/state/autoSwg/output', (req, res, next) => {
+            try {
+                let days = parseInt(req.query.days as string, 10);
+                if (isNaN(days) || days < 1 || days > 548) days = 30;
+                return res.status(200).send({ days: days, hours: outputLog.read(days) });
+            }
+            catch (err) { next(err); }
+        });
         // The chlorinator's salt reading, day by day (median, lowest, highest), and any recent fall in it.
         app.get('/state/autoSwg/salt', (req, res, next) => {
             try {
