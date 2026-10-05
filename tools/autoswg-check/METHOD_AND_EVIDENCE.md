@@ -7,8 +7,10 @@ is the one to read to use it.
 ## Goal and status
 
 The goal was to make it easier to move the target FC up and down as you prepare for and return from a vacation,
-and to see what was possible with a pool's own data, while embracing the Trouble Free Pool methods and not diverging
-from them. It embraces those methods: FC is tested and logged in PoolMath, the target FC is the one you choose
+and to see what was possible with a pool's own data run locally on a Raspberry Pi, without depending on external tools
+such as AI, as a starting point as those capabilities mature, while embracing the Trouble Free Pool methods and not
+diverging from them. Everything here is plain arithmetic on your own controller; the only outside input is your PoolMath
+log. It embraces those methods: FC is tested and logged in PoolMath, the target FC is the one you choose
 the way those methods do, and nothing here proposes a different target or replaces testing. It only helps get the SWG to
 the target and hold it. It is a helper that runs on your own controller: you set the target, you review each
 recommendation, and you apply it. The only thing it does by itself is the optional return to the maintenance % when a
@@ -67,18 +69,17 @@ it can. With the last reading 3 days old or more, the SWG is never held below th
 
 **Where the next test is likely to read.** The projection plus or minus `1.97 * sqrt(s^2 + (0.1 * Delta)^2)`, where `s` is
 the root-mean-square miss of the same weighted projection over every interval between two readings in the last 90 days
-(1.8 ppm if there are fewer than 6). The `s` term includes the noise of the test.
+(1.8 ppm if there are fewer than 6). The `s` term includes the variation of the test itself and of real day-to-day consumption.
 
 ## How it reads in control terms
 
 The pool is an integrator with a leak. FC rises with SWG output (limited to 0 to 100% of the run window, so the input
 saturates) and falls with a burn that follows weather, bather load and sunlight, which is a slowly varying disturbance. The
-sensor is a manual test: sparse (every few days), noisy and delayed. There is no continuous feedback: the calculation
+sensor is a manual test: sparse (every few days) and delayed, and each reading is a snapshot of a pool whose consumption varies from day to day. There is no continuous feedback: the calculation
 runs when someone asks, and the only thing that acts by itself is the optional return to the maintenance %.
 
 * **Feedforward plus a glide.** The maintenance % is feedforward on the estimated disturbance. The recommended % is a
-  finite-time move to the setpoint: "Days to Target" is its gain, and a short window is a hard push. With sparse noisy
-  measurements a hard push amplifies noise, so a longer window is the gentler choice.
+  finite-time move to the setpoint: "Days to Target" is its gain, and a short window is a hard push. With sparse measurements that vary from reading to reading, a hard push amplifies that variation, so a longer window is the gentler choice.
 * **A deadband.** The new-target-date threshold is hysteresis: inside it the old plan is held instead of chasing each reading.
 * **A safe fallback.** When the last reading is stale the output is floored at the maintenance %. A long absence runs a little
   high, the safer miss, and not at 0% waiting for FC to glide down.
@@ -120,11 +121,13 @@ daylight weighting off in these runs (no sunrise and sunset in the saved data).
 The standalone script gives the same numbers to within rounding (59 readings, because it sets aside one SWG entry that
 does not fit the pool's rating).
 
-**What this says.** The miss is about 1.8 ppm RMS at every gap, and barely grows with the time since the last reading. If it is
-mostly the noise of the two tests involved, each FC test is good to about 1.2 to 1.3 ppm. That sets a floor: the
-algorithm is only a little better than "FC unchanged" because most of what either one misses is test noise, which no
-projection can remove. It is why the next-test range is wide, and why one reading a little off the projection is not a
-reason to change anything.
+**What this says.** The miss is about 1.8 ppm RMS at every gap, and barely grows with the time since the last reading.
+That is expected variation, and these data cannot separate its two sources. One is the test itself: each reading varies a
+little, and a projection compared with the next reading carries the variation of both. The other is real day-to-day change
+in how much chlorine the pool uses, from sun, rain, temperature and bather load, which is hard to project without local
+weather data such as a personal weather station. Together they set a floor: the algorithm is only a little better than "FC
+unchanged" because much of what either one misses is this variation, which no projection from the log alone can remove. It
+is why the next-test range is wide, and why one reading a little off the projection is not a reason to change anything.
 
 **What-If Sweep on the same readings.** Most alternatives are indistinguishable from the defaults (averaging windows of 14 to
 56 days, other tapers, anomaly tolerances 0 to 3 ppm, a 75% weighting). Clearly worse: a 7 day window (+0.07 ppm), a
@@ -137,12 +140,12 @@ borderline better (-0.06, range -0.19 to 0.00), on a history with only three log
   was 1.29 either way. In the latest window the slope was +0.07 ppm/day per degree, 0.3 standard errors from zero, and the
   temperature barely moved (80 to 85 F). It is in the app as an option, off by default; the What-If Sweep scores it for your
   pool. It may matter on a pool whose water temperature swings more within 21 days.
-* **A Kalman-style estimator.** Smoothing the noisy readings before projecting, with the test noise and a process noise per
+* **A Kalman-style estimator.** Smoothing the readings before projecting, with the reading variation and a process variation per
   day as parameters, over a grid of settings. The best setting improved mean absolute error by about 0.04 ppm, with a 90% range
   from -0.09 to +0.005 ppm, which includes zero. By the tool's own rule that is no clear difference, so the simpler
   weighting and taper stay.
 * **An uncertainty estimate from the burn's own scatter.** A first version of the next-test range estimated the spread from
-  the scatter of the interval burn rates minus an assumed test noise. It held only 76% of the time against a nominal 90%, and
+  the scatter of the interval burn rates minus an assumed test variation. It held only 76% of the time against a nominal 90%, and
   the readings it called most certain missed by the most. The shipped range uses how far the projection actually missed
   instead.
 * **A time-of-day adjustment, and crediting solid chlorine (cal-hypo, dichlor).** Neither improved out-of-sample error on the
@@ -158,10 +161,13 @@ borderline better (-0.06, range -0.19 to 0.00), on a history with only three log
   setting.
 * **Burn is a constant, not a function of FC.** Chlorine loss in sunlight is closer to proportional to the FC present than
   constant. Not tested.
-* **Weather is not modelled.** The burn is a 21-day average, so it lags a change in season by about half a window. The PoolMath
-  log carries UV index and cloud cover with each entry, which has not been used.
+* **Weather is not modelled.** Rain, UV, cloud and temperature change how much chlorine the pool uses from day to day, and
+  the burn is a 21-day average, so it lags a change in season by about half a window. The PoolMath log carries UV index and
+  cloud cover with each entry, which has not been used, and local measurements such as a personal weather station would be
+  better still.
 * **The daylight curve is an approximation,** using today's sunrise and sunset for every day in the window.
-* **Test noise is not removed.** Reading at a consistent time of day and correcting a mistyped reading in PoolMath help.
+* **Expected variation is not removed.** Part is the test itself and part is real day-to-day consumption. Testing at a
+  consistent time of day and correcting a mistyped reading in PoolMath help with the first.
 * **Scores are on overlapping history.** Neighbouring windows share data, so the errors are correlated and the 90% ranges are
   probably a little too narrow. Picking the best of several variants flatters it (the winner's curse), which is why Tune waits
   for new readings before it tunes again.
@@ -172,9 +178,12 @@ borderline better (-0.06, range -0.19 to 0.00), on a history with only three log
 
 ## What would change this
 
+This is a starting point. As more capable methods, AI included, mature and can run locally, the scoring described above
+is how to compare them with this baseline: a method is better only if it beats the current numbers on the same readings.
+
 More pools with varied test times and enough SWG history, to see whether the defaults hold and whether the temperature
 adjustment helps where the water temperature swings. Past a point, replacing the fixed weighting with an estimator that
-weighs the model and the test by their uncertainty, and using the stored weather fields, are the next steps to try. The
+weighs the model and the test by their uncertainty, and using the stored weather fields (or a personal weather station's data), are the next steps to try. The
 standalone script makes either easy to test on a pool's history before it goes anywhere near the app.
 
 ## Reproduce it

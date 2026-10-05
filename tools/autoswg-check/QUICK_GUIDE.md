@@ -12,8 +12,9 @@ next check adjusts the % to follow it. You choose the target, you review each re
 ## Why it exists
 
 The goal was to make it easier to move the target FC up and down as you prepare for and return from a vacation, and
-to see what was possible with a pool's own data, while embracing the Trouble Free Pool methods and not diverging from
-them. You test FC and log it in PoolMath, you choose the target FC the way those methods do, and AutoSwg only helps
+to see what was possible with a pool's own data run locally on a Raspberry Pi, without depending on external tools such
+as AI, as a starting point as those capabilities mature, while embracing the Trouble Free Pool methods and not diverging
+from them. The calculation runs on your own controller; the only outside input is your PoolMath log. You test FC and log it in PoolMath, you choose the target FC the way those methods do, and AutoSwg only helps
 get the SWG to that target and hold it. It does not suggest a different target or replace testing. Raise the target
 before you leave so the pool is well stocked for the trip, and lower it when you are back, without working out the SWG %
 by hand each time. See "Moving the target for a trip" below. AutoSwg has been checked closely on one pool so far, and
@@ -39,8 +40,10 @@ week is workable and daily is ideal, and more readings make the recommendation s
 ## Day to day
 
 1. Press **Check Now**. It shows a recommended SWG % and the reasons for it, and where the next FC test is likely to read
-   (about 90% of the time). That range is wide on purpose: most of it is the noise of the FC test itself (about a ppm), so
-   one reading a little off the projection is normal and is not a reason to change settings.
+   (about 90% of the time). That range is wide on purpose. It is the variation to expect between a projection and the next test: part is the
+   test itself, and part is real day-to-day differences in how much chlorine the pool uses (sun, rain, temperature,
+   swimmers), which are hard to project without something like a personal weather station. A reading a little off the
+   projection is expected and is not a reason to change settings.
 2. Press **Apply** to send it to the chlorinator.
 3. After the target period, the % returns to the **maintenance %**, the level that just holds FC steady, if
    "Return to the maintenance %" is checked (it is off until you turn it on).
@@ -172,8 +175,9 @@ What-If Sweep includes a "Daylight weighting off" variant if you want to see wha
 
 * **Averaging Window (21 days).** Long enough to smooth out a few days of unusual weather, short enough to
   follow the season. On the pools we checked, 21 to 56 days were indistinguishable and 7 to 14 trended worse.
-* **Projection Weighting (50%) and the taper (3 to 8 days).** FC tests are good to about a ppm, and between
-  tests FC moves less than a model that trusts every number would predict. Applying only half the modelled
+* **Projection Weighting (50%) and the taper (3 to 8 days).** Between tests a reading varies by about a ppm (the
+  test itself, plus day-to-day changes in consumption from sun, rain and temperature), and FC moves less than a model
+  that trusts every number would predict. Applying only half the modelled
   change predicted better than all of it, and better than assuming FC had not changed. The model helps for
   gaps up to about five days and hurts beyond that, so the weight fades to zero by 8 days since the last test.
 * **FC Anomaly Tolerance (2 ppm).** An FC rise the SWG output and logged additions cannot explain, by more than
