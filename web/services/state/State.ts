@@ -34,8 +34,10 @@ import { appendTuneHistory, markLastTuneApplied, markLastTuneHeld, readTuneHisto
 import type { TuneResult } from "../../../controller/AutoSwgService";
 import { evaluateAutoTuneApply } from "../../../controller/AutoSwgAutoTune";
 import { getAutoSwgReadiness } from "../../../controller/AutoSwgReadiness";
+import { saltHistory } from "../../../controller/AutoSwgSaltHistory";
+import type { SaltAddition } from "../../../controller/AutoSwgSaltHistory";
 import { appendAutoSwgHistory, logAutoSwgSettingChanges, readAutoSwgHistory, snapshotAutoSwgSettings, toLocalSwgEntries, AutoSwgApplyTrigger, AUTO_SWG_ALGORITHM_VERSION } from "../../../controller/AutoSwgHistory";
-import { archivedChlorineAdditions, archivedCyaReadings, archivedFcReadings, archivedSwgEvents, archivedWaterTemps, isPoolMathArchiveCurrent, poolMathArchiveSummary, refreshPoolMathArchiveFromPage, syncPoolMathArchive } from "../../../controller/AutoSwgPoolMathArchive";
+import { archivedChlorineAdditions, archivedCyaReadings, archivedFcReadings, archivedSaltAdditions, archivedSwgEvents, archivedWaterTemps, saltAdditionPpm, topUpPoolMathArchive, isPoolMathArchiveCurrent, poolMathArchiveSummary, refreshPoolMathArchiveFromPage, syncPoolMathArchive } from "../../../controller/AutoSwgPoolMathArchive";
 
 // 'HH:MM' wall-clock time of `dt` in `timeZone`.
 function formatHHMMInZone(dt: Date, timeZone: string): string {
@@ -150,6 +152,7 @@ function clearAutoSwgCalculation() {
     state.autoSwg.targetWarning = undefined;
     state.autoSwg.targetInfo = undefined;
     state.autoSwg.staleFcNote = undefined;
+    state.autoSwg.saltNote = undefined;
     state.autoSwg.fcAnomalyNote = undefined;
     state.autoSwg.ratingNote = undefined;
     state.autoSwg.error = undefined;
@@ -340,6 +343,7 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
         projectionTaperEndDays: cfg.projectionTaperEndDays,
         overshootPpmPerDay: cfg.overshootPpmPerDay,
         burnTempAdjust: cfg.burnTempAdjust,
+        saltDrop: saltHistory.recentDrop(Date.now(), autoSwgSaltAdditions()),
     }, undefined, toLocalSwgEntries(readAutoSwgHistory()), refreshAutoSwgArchiveFromPage);
     // A Refresh works from fresh PoolMath data; if the data it read (readings, additions, SWG entries)
     // is exactly what the last apply used -- the newest FC reading is the very one it was based on,
@@ -377,6 +381,7 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
     state.autoSwg.avgWindowStart = result.avgWindowStart;
     state.autoSwg.avgWindowEnd = result.avgWindowEnd;
     state.autoSwg.projectedCurrentFc = result.projectedCurrentFc;
+    state.autoSwg.saltNote = result.saltNote;
     state.autoSwg.details = {
         inputs: result.inputs,
         swgCapacityPpmPerDay: result.swgCapacityPpmPerDay,
@@ -713,6 +718,68 @@ async function runAutoSwgAutoTune(): Promise<void> {
     state.autoSwg.emitEquipmentChange();
 }
 
+// The salt you logged adding in PoolMath (from the archive, see topUpPoolMathArchive), in ppm of this pool.
+function autoSwgSaltAdditions(): SaltAddition[] {
+    try {
+        let gallons = sys.autoSwg.gallons;
+        return archivedSaltAdditions().map(a => ({ ts: a.ts.getTime(), ppm: saltAdditionPpm(a.pounds, gallons) }));
+    }
+    catch (err) { return []; }
+}
+
+// Once an hour, record the chlorinator's own salt reading (AutoSwgSaltHistory keeps it): a fall in salt is the best sign the pool was diluted by
+// rain or a water change. It is local data only and changes no calculation; the timer is checked every ten minutes and the history keeps at most
+// one sample an hour. Nothing is recorded when the chlorinator is not configured for AutoSwg, ignores its salt reading, or reports none.
+let autoSwgSaltTimer: NodeJS.Timeout | undefined;
+function sampleAutoSwgSalt() {
+    try {
+        let cfg = sys.autoSwg;
+        if (!cfg.enabled || cfg.chlorinatorId < 0) return;
+        let chlorRecord = sys.chlorinators.toArray().find(c => c.id === cfg.chlorinatorId);
+        if (!chlorRecord || chlorRecord.ignoreSaltReading) return;
+        let schlor = state.chlorinators.getItemById(chlorRecord.id, false);
+        if (schlor) saltHistory.record(schlor.saltLevel);
+    }
+    catch (err) { logger.warn(`AutoSwg: could not record the salt reading: ${err.message}`); }
+}
+// A top-up of the archive about once a day: salt additions and the extra numbers on new tests (salt, water temperature, pH ...) that the page
+// refresh does not copy. One small request; a failure is retried in a few hours. See topUpPoolMathArchive.
+const AUTO_SWG_TOPUP_FIRST_DELAY_MS = 15 * 60 * 1000;
+const AUTO_SWG_TOPUP_MS = 24 * 3600 * 1000;
+const AUTO_SWG_TOPUP_RETRY_MS = 6 * 3600 * 1000;
+const AUTO_SWG_TOPUP_NOT_READY_MS = 30 * 60 * 1000;
+let autoSwgTopUpTimer: NodeJS.Timeout | undefined;
+export function armAutoSwgArchiveTopUp(delayMs: number = AUTO_SWG_TOPUP_FIRST_DELAY_MS) {
+    if (typeof autoSwgTopUpTimer !== 'undefined') clearTimeout(autoSwgTopUpTimer);
+    autoSwgTopUpTimer = setTimeout(() => { runAutoSwgArchiveTopUp().catch(err => logger.error(`AutoSwg: archive top-up failed: ${err.message}`)); }, delayMs);
+    autoSwgTopUpTimer.unref();
+}
+async function runAutoSwgArchiveTopUp(): Promise<void> {
+    autoSwgTopUpTimer = undefined;
+    let next = AUTO_SWG_TOPUP_MS;
+    try {
+        let cfg = sys.autoSwg;
+        if (cfg.enabled && cfg.shareCode) {
+            if (autoSwgArchiveRunning) next = AUTO_SWG_TOPUP_NOT_READY_MS;
+            else {
+                let r = await topUpPoolMathArchive(cfg.shareCode, cfg.poolName || undefined);
+                if (typeof r === 'undefined') next = AUTO_SWG_TOPUP_NOT_READY_MS;   // the full pull has not happened yet
+                else if (r.saltAdded || r.testsEnriched || r.testsAdded || r.removed) logger.info(`AutoSwg: PoolMath archive top-up: ${r.saltAdded} salt addition${r.saltAdded === 1 ? '' : 's'}, ${r.testsEnriched} test${r.testsEnriched === 1 ? '' : 's'} filled in, ${r.testsAdded} test${r.testsAdded === 1 ? '' : 's'} added, ${r.removed} removed.`);
+            }
+        }
+    }
+    catch (err) { next = AUTO_SWG_TOPUP_RETRY_MS; logger.warn(`AutoSwg: PoolMath archive top-up failed (${err.message}); trying again in ${next / 3600000} hours.`); }
+    finally { armAutoSwgArchiveTopUp(next); }
+}
+
+export function armAutoSwgSaltLog() {
+    if (typeof autoSwgSaltTimer !== 'undefined') return;
+    const first = setTimeout(sampleAutoSwgSalt, 2 * 60 * 1000);
+    first.unref();
+    autoSwgSaltTimer = setInterval(sampleAutoSwgSalt, 10 * 60 * 1000);
+    autoSwgSaltTimer.unref();
+}
+
 // Background PoolMath history sync: pulls up to 18 months of logs from the share link's JSON
 // interface into a local archive (see AutoSwgPoolMathArchive). It is a one-time pull per share
 // code and pool -- it runs only when the archive isn't already for the configured ones (the first
@@ -822,6 +889,19 @@ export class StateRoute {
         armAutoSwgStep(AUTO_SWG_STEP_MIN_DELAY_MS);
         armAutoSwgAutoCheck(AUTO_SWG_AUTO_CHECK_MIN_DELAY_MS);
         armAutoSwgArchiveSync();
+        armAutoSwgSaltLog();
+        armAutoSwgArchiveTopUp();
+        // The chlorinator's salt reading, day by day (median, lowest, highest), and any recent fall in it.
+        app.get('/state/autoSwg/salt', (req, res, next) => {
+            try {
+                let days = parseInt(req.query.days as string, 10);
+                if (isNaN(days) || days < 1 || days > 400) days = 400;
+                let gallons = sys.autoSwg.gallons;
+                let additions = archivedSaltAdditions().filter(a => a.ts.getTime() >= Date.now() - days * 86400000).map(a => ({ ts: a.ts.toISOString(), pounds: Math.round(a.pounds * 10) / 10, ppm: Math.round(saltAdditionPpm(a.pounds, gallons)) }));
+                return res.status(200).send({ samples: saltHistory.count(), recentDrop: saltHistory.recentDrop(Date.now(), autoSwgSaltAdditions()) || null, additions: additions, daily: saltHistory.daily(days) });
+            }
+            catch (err) { next(err); }
+        });
         app.get('/state/rs485Port/:id', async (req, res, next) => {
             try {
                 let portId = parseInt(req.params.id, 10);

@@ -4050,6 +4050,9 @@ export class AutoSwgState extends EqState {
     // When the periodic automatic check is next due (ISO); cleared while it isn't armed.
     // Recomputed whenever the timer is armed (startup, a settings save, after each check).
     // What the last auto tune did (see AutoSwgAutoTune.ts): shown on the AutoSwg page, and kept across restarts.
+    // The note on a recent fall in the chlorinator's salt reading (see AutoSwgSaltHistory); same lifecycle as staleFcNote.
+    public get saltNote(): string { return this.data.saltNote; }
+    public set saltNote(val: string) { this.setDataVal('saltNote', val); }
     public get autoTuneNote(): string { return this.data.autoTuneNote; }
     public set autoTuneNote(val: string) { this.setDataVal('autoTuneNote', val); }
     public get autoTuneAt(): string { return this.data.autoTuneAt; }
