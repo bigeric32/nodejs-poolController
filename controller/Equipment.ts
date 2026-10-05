@@ -2475,17 +2475,20 @@ export class AutoSwg extends EqItem {
         if (typeof this.data.tuneManualApplies === 'undefined') this.data.tuneManualApplies = 0;                 // Tune recommendations applied from the Tune dialog
         // The storm response (the automatic and developer modes; off until turned on): when the last FC reading is 3 or more days old and the chlorinator's
         // salt reading has fallen, the projected FC is lowered by the dilution that implies, so the SWG runs a little higher until FC is back at the target.
-        // It needs the return to the maintenance % (autoStepEnabled) so the extra ends by itself. stormMaxExtraPct is how many points above the maintenance %
-        // the SWG may be asked to run, and stormMaxDays how long one event may keep it going. It only reports the estimate when it is off.
+        // It needs the return to the maintenance % (autoStepEnabled) so the extra ends by itself. stormMaxExtraPct is how many points the storm or outage may
+        // add to the % the plan would have used without it, and stormMaxDays how long one event may keep it going. It only reports the estimate when it is off.
         if (typeof this.data.stormResponseEnabled === 'undefined') this.data.stormResponseEnabled = false;
         if (typeof this.data.stormMaxExtraPct === 'undefined') this.data.stormMaxExtraPct = 20;
         if (typeof this.data.stormMaxDays === 'undefined') this.data.stormMaxDays = 3;
-        // Away protection (every mode; off until turned on for a trip): until the return date, AutoSwg checks PoolMath every autoCheckHours hours and may
-        // raise the SWG % to make up for dilution or an outage (the storm and outage response), but only between the maintenance % and the maintenance %
-        // plus stormMaxExtraPct points, never below it. It needs autoStepEnabled, so each boost ends by itself. awayUntil is the return date, 'YYYY-MM-DD';
-        // it stays on until the end of that day.
+        // Away protection (every mode; off until turned on for a trip). While it is on, AutoSwg checks PoolMath every autoCheckHours hours, applies
+        // the glide to the target you set (never below the maintenance %), and may raise the SWG % further to make up for dilution or an outage (the storm
+        // and outage response), by at most stormMaxExtraPct points. It overrides Auto-Apply, the automatic check and auto tune while it is on (their saved
+        // settings are kept; they just do not act). It needs autoStepEnabled, so each boost ends by itself. It ends when it is unchecked, or by itself when a
+        // new FC reading is logged in PoolMath after it was turned on (see endAwayOnNewReading). awayStartedAt is when it was turned on; awayEndedNote says
+        // why it ended by itself.
         if (typeof this.data.awayEnabled === 'undefined') this.data.awayEnabled = false;
-        if (typeof this.data.awayUntil === 'undefined') this.data.awayUntil = '';
+        if (typeof this.data.awayStartedAt === 'undefined') this.data.awayStartedAt = '';
+        if (typeof this.data.awayEndedNote === 'undefined') this.data.awayEndedNote = '';
         // Automation also needs a Tune that was run and accepted (applied, or accepted as "your settings look good"). A Tune that was
         // applied before this existed counts.
         if (typeof this.data.tuneAcceptedAt === 'undefined' && typeof this.data.lastTuneAppliedAt !== 'undefined') this.data.tuneAcceptedAt = this.data.lastTuneAppliedAt;
@@ -2637,7 +2640,7 @@ export class AutoSwg extends EqItem {
     }
     // Auto tune needs the automatic mode on top of what the other unattended features need; applying its recommendations needs auto tune.
     public get autoTuneAvailable(): boolean { return (this.mode === 'automatic' || this.developerMode) && this.automationAvailable; }
-    public get autoTuneEnabled(): boolean { return this.autoTuneAvailable ? utils.makeBool(this.data.autoTuneEnabled) : false; }
+    public get autoTuneEnabled(): boolean { return this.autoTuneAvailable && !this.awayActive ? utils.makeBool(this.data.autoTuneEnabled) : false; }
     public set autoTuneEnabled(val: boolean) { this.setDataVal('autoTuneEnabled', this.autoTuneAvailable ? utils.makeBool(val) : false); }
     public get autoTuneApplyEnabled(): boolean { return this.autoTuneEnabled ? utils.makeBool(this.data.autoTuneApplyEnabled) : false; }
     // Stored whenever auto tune is available, so a save that sets both checkboxes at once keeps both (the getter still needs auto tune on).
@@ -2665,23 +2668,29 @@ export class AutoSwg extends EqItem {
     public get stormMaxDays(): number { return this.data.stormMaxDays; }
     public set stormMaxDays(val: number) { this.setDataVal('stormMaxDays', val); }
     public get awayEnabled(): boolean { return utils.makeBool(this.data.awayEnabled); }
-    public set awayEnabled(val: boolean) { this.setDataVal('awayEnabled', utils.makeBool(val)); }
-    public get awayUntil(): string { return typeof this.data.awayUntil === 'string' ? this.data.awayUntil : ''; }
-    public set awayUntil(val: string) { this.setDataVal('awayUntil', typeof val === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(val.trim()) ? val.trim() : ''); }
-    // 'off', 'needs-return-date', 'return-date-passed', 'needs-step' (the return to the maintenance % is off) or 'active'.
+    public set awayEnabled(val: boolean) {
+        const on = utils.makeBool(val);
+        if (on && !utils.makeBool(this.data.awayEnabled)) {
+            // turned on now: from here, a new FC reading ends it
+            this.setDataVal('awayStartedAt', new Date().toISOString());
+            this.setDataVal('awayEndedNote', '');
+        }
+        this.setDataVal('awayEnabled', on);
+    }
+    public get awayStartedAt(): string { return typeof this.data.awayStartedAt === 'string' ? this.data.awayStartedAt : ''; }
+    public set awayStartedAt(val: string) { /* set only by turning Away protection on, so a saved form cannot move it */ }
+    public get awayEndedNote(): string { return typeof this.data.awayEndedNote === 'string' ? this.data.awayEndedNote : ''; }
+    public set awayEndedNote(val: string) { this.setDataVal('awayEndedNote', typeof val === 'string' ? val : ''); }
+    // 'off', 'needs-step' (the return to the maintenance % is off, so it cannot act) or 'active'.
     public get awayStatus(): string {
         if (!this.awayEnabled || !this.enabled) return 'off';
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(this.awayUntil)) return 'needs-return-date';
-        // the end of the return date, with a few hours of margin for the time zone (a little longer is the safe side)
-        const end = Date.parse(this.awayUntil + 'T23:59:59Z') + 6 * 3600000;
-        if (isNaN(end) || Date.now() > end) return 'return-date-passed';
         if (!this.autoStepEnabled) return 'needs-step';
         return 'active';
     }
     public get awayActive(): boolean { return this.awayStatus === 'active'; }
     public get tuneManualApplies(): number { return this.data.tuneManualApplies; }
     public set tuneManualApplies(val: number) { this.setDataVal('tuneManualApplies', val); }
-    public get autoApplyEnabled(): boolean { return this.automationAvailable ? this.data.autoApplyEnabled : false; }
+    public get autoApplyEnabled(): boolean { return this.automationAvailable && !this.awayActive ? this.data.autoApplyEnabled : false; }
     public set autoApplyEnabled(val: boolean) { this.setDataVal('autoApplyEnabled', this.automationAvailable ? val : false); }
     public get autoCheckEnabled(): boolean { return this.automationAvailable ? this.data.autoCheckEnabled : false; }
     public set autoCheckEnabled(val: boolean) { this.setDataVal('autoCheckEnabled', this.automationAvailable ? val : false); }

@@ -57,7 +57,7 @@ export const AUTO_SWG_LOGGED_SETTINGS = [
     'windowDays', 'daytimeLossSharePct', 'creditChlorineAdditions', 'fcAnomalyTolerancePpm',
     'projectionWeight', 'projectionTaperStartDays', 'projectionTaperEndDays', 'overshootPpmPerDay', 'burnTempAdjust',
     'mode', 'autoTuneEnabled', 'autoTuneAfterFcReadings', 'autoTuneApplyEnabled', 'autoTuneApplyAfterManual',
-    'stormResponseEnabled', 'stormMaxExtraPct', 'stormMaxDays', 'awayEnabled', 'awayUntil',
+    'stormResponseEnabled', 'stormMaxExtraPct', 'stormMaxDays', 'awayEnabled',
     'shareCode', 'poolName'
 ];
 // Logged as "changed" only: the values are private, but a different pool's data changes everything after it.
@@ -66,7 +66,7 @@ const AUTO_SWG_MASKED_SETTINGS = ['shareCode', 'poolName'];
 export interface AutoSwgHistoryRecord {
     source: 'auto' | 'manual' | 'settings'; // 'auto' = applied via AutoSwg; 'manual' = changed some other way; 'settings' = AutoSwg settings were changed (see `changes`)
     changes?: AutoSwgSettingChange[]; // settings only: what changed
-    via?: 'tune' | 'auto-tune'; // settings only: the change was applied from the Tune dialog, or by auto tune
+    via?: 'tune' | 'auto-tune' | 'away-ended'; // settings only: the change was applied from the Tune dialog, or by auto tune
     algorithm?: number;       // AUTO_SWG_ALGORITHM_VERSION when this was written (absent on older records)
     trigger?: AutoSwgApplyTrigger; // auto only: what caused it (absent on records written before this was kept)
     // auto only: what this apply did with the target date. 'kept' = refreshed against the original deadline; 'new' = a new
@@ -85,6 +85,7 @@ export interface AutoSwgHistoryRecord {
     previousPct?: number;     // the SWG % before this change
     ppmPerDay?: number;       // appliedPct x window capacity; PoolMath-style "X ppm FC" equivalent
     hrs?: number;             // run-window length used for ppmPerDay
+    away?: any;               // settings only, when Away protection ended: a summary of the period (see awaySummary in web/services/state/State.ts)
     inputs?: any;             // the calculation's parameters (auto) or the capacity inputs (manual)
     outputs?: any;            // auto only: the calculation's results as of apply (see AutoSwgState)
 }
@@ -132,7 +133,7 @@ export function snapshotAutoSwgSettings(cfg: any): { [setting: string]: any } {
 
 // Logs the settings that differ between two snapshots as one 'settings' record. Nothing is written when none differ
 // (saving the same values again is not a change).
-export function logAutoSwgSettingChanges(before: { [setting: string]: any }, after: { [setting: string]: any }, via?: 'tune' | 'auto-tune'): void {
+export function logAutoSwgSettingChanges(before: { [setting: string]: any }, after: { [setting: string]: any }, via?: 'tune' | 'auto-tune' | 'away-ended', away?: any): void {
     const changes: AutoSwgSettingChange[] = [];
     for (const k of AUTO_SWG_LOGGED_SETTINGS) {
         if (JSON.stringify(before[k]) === JSON.stringify(after[k])) continue;
@@ -142,6 +143,7 @@ export function logAutoSwgSettingChanges(before: { [setting: string]: any }, aft
     if (changes.length === 0) return;
     const record: AutoSwgHistoryRecord = { source: 'settings', appliedAt: new Date().toISOString(), algorithm: AUTO_SWG_ALGORITHM_VERSION, changes: changes };
     if (via) record.via = via;
+    if (away) record.away = away;
     appendAutoSwgHistory(record);
 }
 

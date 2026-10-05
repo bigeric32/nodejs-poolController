@@ -27,7 +27,7 @@ import { utils } from "../../../controller/Constants";
 import { ServiceProcessError } from "../../../controller/Errors";
 import { state } from "../../../controller/State";
 import { stopPacketCaptureAsync, startPacketCapture } from '../../../app';
-import { armAutoSwgArchiveSync, armAutoSwgAutoCheck } from '../state/State';
+import { armAutoSwgArchiveSync, armAutoSwgAutoCheck, awaySummary } from '../state/State';
 import { markLastTuneApplied } from '../../../controller/AutoSwgTuneHistory';
 import { autoSwgGateInfo } from '../../../controller/AutoSwgReadiness';
 import { snapshotAutoSwgSettings, logAutoSwgSettingChanges } from '../../../controller/AutoSwgHistory';
@@ -1030,11 +1030,14 @@ export class ConfigRoute {
                 let tuningKeys = ['windowDays', 'daytimeLossSharePct', 'creditChlorineAdditions', 'fcAnomalyTolerancePpm', 'projectionWeight', 'projectionTaperStartDays', 'projectionTaperEndDays', 'burnTempAdjust'];
                 let before = tuningKeys.map(k => (sys.autoSwg as any)[k]);
                 let settingsBefore = snapshotAutoSwgSettings(sys.autoSwg);
+                let awayWasActive = sys.autoSwg.awayActive;
+                let awayWasOn = sys.autoSwg.awayEnabled, awayStartedBefore = sys.autoSwg.awayStartedAt;
                 sys.autoSwg.set(req.body);
                 // Keep a record of what changed (target, days to target, tuning ...) in the AutoSwg history, so the
                 // calculation's results can be lined up against the settings in force at the time. A failure here
                 // must not fail the save.
-                try { logAutoSwgSettingChanges(settingsBefore, snapshotAutoSwgSettings(sys.autoSwg), req.body && req.body.tuneApplied === true ? 'tune' : undefined); }
+                // Turning Away protection off by hand writes the summary of the period, as its ending by itself does.
+                try { logAutoSwgSettingChanges(settingsBefore, snapshotAutoSwgSettings(sys.autoSwg), req.body && req.body.tuneApplied === true ? 'tune' : undefined, awayWasOn && !sys.autoSwg.awayEnabled ? awaySummary(awayStartedBefore) : undefined); }
                 catch (err) { logger.warn(`AutoSwg: could not log the settings change: ${err.message}`); }
                 if (tuningKeys.some((k, i) => (sys.autoSwg as any)[k] !== before[i])) sys.autoSwg.tuningChangedAt = new Date().toISOString();
                 // The Tune dialog marks its own Apply, so a later Tune can tell its changes from ones made by hand.
@@ -1052,7 +1055,8 @@ export class ConfigRoute {
                 // than needing a restart.
                 // "Your settings look good" has nothing to apply: accepting that result is what counts as accepting the Tune.
                 if (req.body && req.body.tuneAccepted === true && sys.autoSwg.tuningAvailable) sys.autoSwg.tuneAcceptedAt = new Date().toISOString();
-                armAutoSwgAutoCheck();
+                // Saving with Away protection newly on is what starts it: its first check runs a minute later, so the target just set takes effect.
+                armAutoSwgAutoCheck(0, !awayWasActive && sys.autoSwg.awayActive ? 60 * 1000 : undefined);
                 // If the share code or pool changed, pull its history soon (a no-op otherwise).
                 armAutoSwgArchiveSync(60 * 1000);
                 return res.status(200).send(Object.assign({}, sys.autoSwg.get(true), { automationAvailable: sys.autoSwg.automationAvailable, gate: autoSwgGateInfo(sys.autoSwg), awayStatus: sys.autoSwg.awayStatus }));
