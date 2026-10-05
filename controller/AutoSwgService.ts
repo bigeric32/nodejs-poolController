@@ -153,6 +153,9 @@ export interface AutoSwgParams {
     overshootPpmPerDay?: number;
     // Adjust the burn rate for the water temperature (see BURN_TEMP_MIN_INTERVALS). Off unless set; the what-if sweep scores it.
     burnTempAdjust?: boolean;
+    // A recent fall in the chlorinator's own salt reading (see AutoSwgSaltHistory.recentDrop). Only noted in the result (saltNote); the
+    // calculation is not adjusted for it.
+    saltDrop?: { fromPpm: number; toPpm: number; pct: number; fromAt: string; toAt: string; addedPpm?: number };
     sunriseTime?: string;
     sunsetTime?: string;
     // Share (percent) of a day's FC consumption that happens in daylight. 0 or omitted =
@@ -177,6 +180,7 @@ export interface AutoSwgResult {
     projectedFcRange: { low: number; high: number; sd: number; basis: 'history' | 'default'; intervals: number };
     targetMarginPpm: number;         // how far above the target the % for the target was aimed (0 = at the target itself); see AutoSwgParams.overshootPpmPerDay
     burnTempNote?: string;           // set when the water temperature adjustment was asked for: what it did or why it did nothing
+    saltNote?: string;               // set when the chlorinator's salt reading fell noticeably (dilution by rain or a water change); informational, nothing is adjusted
     // What recommendedPctForTarget was actually aimed at: a new target (today's configured
     // FC, reached in the above/below window that applied) or, if `refreshed`, the
     // in-flight one (its original FC and deadline, unchanged).
@@ -1055,6 +1059,17 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         rationale.push(`NOTE: ${staleFcNote}`);
     }
 
+    // A fall in the chlorinator's salt reading means the pool was diluted (rain, or water removed and refilled), and FC was diluted with it: that
+    // part of the FC lost is not consumption, so the burn average over this stretch may run a little high. That errs on the safe side (more
+    // chlorine), and a credit for it is not made until it can be checked against logged water changes; this only says so.
+    let saltNote: string | undefined;
+    if (params.saltDrop && typeof asOfMs === 'undefined') {
+        const sd = params.saltDrop;
+        const counted = sd.addedPpm ? ` After counting the salt you logged adding (about ${Math.round(sd.addedPpm)} ppm) it should read about ${Math.round(sd.fromPpm + sd.addedPpm)} ppm and reads ${Math.round(sd.toPpm)}.` : '';
+        saltNote = `The chlorinator's salt reading fell from about ${Math.round(sd.fromPpm)} to ${Math.round(sd.toPpm)} ppm (${(sd.pct * 100).toFixed(0)}%) between ${formatLocalDateTime(new Date(sd.fromAt), params.timezone)} and ${formatLocalDateTime(new Date(sd.toAt), params.timezone)}, which usually means the pool was diluted (rain, or water removed and refilled).${counted} Some of the FC lost over that time may be dilution and not consumption, so the burn average may run a little high. Nothing is adjusted for it.`;
+        rationale.push(`NOTE: ${saltNote}`);
+    }
+
     // Where the next FC test is likely to read: the projection plus or minus how far the same weighting has recently missed the readings
     // that followed it (for each interval between two readings in the last FC_RANGE_LOOKBACK_DAYS, the projection from the first to the
     // second, which needs no replay), grown a little with the age of the last reading. Intervals left out of the average (before the SWG
@@ -1181,6 +1196,7 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     const inputsUsed: any = Object.assign({}, params, { targetFc: targetFc, targetDays: targetDays });
     delete inputsUsed.inFlight;
     delete inputsUsed.asOf;
+    delete inputsUsed.saltDrop;
 
     return {
         currentPct: latestSwg.pct,
@@ -1198,6 +1214,7 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         projectedFcRange: { low: Math.round(projectedFcRange.low * 100) / 100, high: Math.round(projectedFcRange.high * 100) / 100, sd: Math.round(projectedFcRange.sd * 100) / 100, basis: projectedFcRange.basis, intervals: projectedFcRange.intervals },
         targetMarginPpm: Math.round(targetMarginPpm * 100) / 100,
         burnTempNote: burnTempNote,
+        saltNote: saltNote,
         targetFcUsed: targetFc,
         targetDateUsed: targetDate.toISOString(),
         targetDaysUsed: targetDays,
