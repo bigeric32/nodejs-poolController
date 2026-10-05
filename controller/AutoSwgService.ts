@@ -166,8 +166,9 @@ export interface AutoSwgParams {
     saltDrop?: { fromPpm: number; toPpm: number; pct: number; fromAt: string; toAt: string; addedPpm?: number };
     // The storm response: when the last FC reading is STALE_FC_DAYS or more old and the salt reading has fallen (dilution by rain or a water change),
     // the projected FC is lowered by the dilution it implies, so the % that brings FC back to the target is a little higher. `apply` false only
-    // reports the estimate. maxExtraPct is how far (in points) the % for the target may rise above the maintenance %. A lower projection can only
-    // raise the %, never lower it, and changes nothing when FC is still projected above the target.
+    // reports the estimate. maxExtraPct is how many points the storm or outage may add to the % that the plan would have used without it (the glide
+    // to a target you set is not limited by it). A lower projection can only raise the %, never lower it, and changes nothing when FC is still
+    // projected above the target.
     storm?: { apply: boolean; maxExtraPct: number };
     // Times njsPC was not running (the pool equipment was off), recent enough to still matter. With a stale last FC reading, the chlorine the SWG would
     // have made in its run window during them, at the % that was set, is taken off the projected FC like dilution (and within the same cap), but only when
@@ -199,6 +200,8 @@ export interface AutoSwgResult {
     burnTempNote?: string;           // set when the water temperature adjustment was asked for: what it did or why it did nothing
     saltNote?: string;               // set when the chlorinator's salt reading fell noticeably (dilution by rain or a water change); informational, nothing is adjusted unless stormApplied
     stormApplied?: boolean;          // the projected FC was lowered for the dilution (the storm response acted) -- see AutoSwgParams.storm
+    stormLossPpm?: number;           // how much FC the storm and outage correction took off the projection (0 when it did not act)
+    projectedFcBeforeStorm?: number; // the projected FC without that correction, so the next FC test can be scored against both
     // What recommendedPctForTarget was actually aimed at: a new target (today's configured
     // FC, reached in the above/below window that applied) or, if `refreshed`, the
     // in-flight one (its original FC and deadline, unchanged).
@@ -1093,6 +1096,7 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     // not used up its limits, taken off the projected FC. That only ever raises the % (more chlorine, the safe miss), and nothing happens if FC is
     // still projected above the target. It covers dilution only, not the chlorine that debris and organics consume.
     let stormApplied = false;
+    let stormLossPpm = 0;               // FC taken off the projection for dilution and outages, so the % the plan would have used without it can be found
     if (params.saltDrop && saltNote && typeof asOfMs === 'undefined') {
         const fraction = Math.max(0, params.saltDrop.pct - STORM_SALT_NOISE_PCT);
         const lossPpm = projectedCurrentFc * fraction;
@@ -1101,6 +1105,7 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
             else if (!params.storm || !params.storm.apply) saltNote += ` That is about ${lossPpm.toFixed(1)} ppm of FC (${(fraction * 100).toFixed(0)}% of ${projectedCurrentFc.toFixed(1)} ppm). The storm response is not acting on it (it is off, or its limits are used up), so the projection is unchanged.`;
             else {
                 projectedCurrentFc -= lossPpm;
+                stormLossPpm += lossPpm;
                 stormApplied = true;
                 saltNote += ` Because the last FC reading is ${elapsedDays.toFixed(1)} days old, the projected FC was lowered by about ${lossPpm.toFixed(1)} ppm (${(fraction * 100).toFixed(0)}% dilution) to ${projectedCurrentFc.toFixed(2)} ppm, so the SWG runs a little higher until FC is back at the target (at most ${params.storm.maxExtraPct} points above the maintenance %).`;
             }
@@ -1120,6 +1125,7 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         }
         if (lost >= OUTAGE_MIN_LOSS_PPM) {
             projectedCurrentFc -= lost;
+            stormLossPpm += lost;
             stormApplied = true;
             const outageNote = `njsPC was not running for part of the time since the last FC reading (${params.outages.length} outage${params.outages.length === 1 ? '' : 's'}), so the SWG missed about ${lost.toFixed(1)} ppm of chlorine in its run window. The projected FC was lowered by that to ${projectedCurrentFc.toFixed(2)} ppm, so the SWG runs a little higher until FC is back at the target (at most ${params.storm.maxExtraPct} points above the maintenance %).`;
             rationale.push(`NOTE: ${outageNote}`);
@@ -1246,13 +1252,19 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         recommendedPctForTarget = recommendedPct;
     }
 
-    // However far the storm response lowered the projected FC, the % stays within maxExtraPct points of the maintenance %.
-    if (stormApplied && params.storm && recommendedPctForTarget > recommendedPct + params.storm.maxExtraPct) {
-        const capped = Math.min(100, recommendedPct + params.storm.maxExtraPct);
-        const capNote = `The storm response keeps the SWG within ${params.storm.maxExtraPct} points of the maintenance %: ${capped.toFixed(1)}% instead of ${recommendedPctForTarget.toFixed(1)}%.`;
-        rationale.push(`NOTE: ${capNote}`);
-        if (typeof targetInfo !== 'undefined') targetInfo += ` ${capNote}`;
-        recommendedPctForTarget = capped;
+    // However far the storm response lowered the projected FC, it adds at most maxExtraPct points to the % the plan would have used without it. The
+    // glide to a target you set, and the maintenance floor, are not limited by it.
+    if (stormApplied && params.storm && stormLossPpm > 0 && producibleAtFull > 0) {
+        const neededWithoutStorm = (targetFc + targetMarginPpm - (projectedCurrentFc + stormLossPpm)) + (avgPerDay * targetDays);
+        let withoutStorm = Math.max(0, Math.min(100, (neededWithoutStorm / producibleAtFull) * 100));
+        if (staleFcNote && withoutStorm < recommendedPct) withoutStorm = recommendedPct;
+        if (recommendedPctForTarget > withoutStorm + params.storm.maxExtraPct) {
+            const capped = Math.min(100, withoutStorm + params.storm.maxExtraPct);
+            const capNote = `The storm response adds at most ${params.storm.maxExtraPct} points to the ${withoutStorm.toFixed(1)}% the plan would have used without it: ${capped.toFixed(1)}% instead of ${recommendedPctForTarget.toFixed(1)}%.`;
+            rationale.push(`NOTE: ${capNote}`);
+            if (typeof targetInfo !== 'undefined') targetInfo += ` ${capNote}`;
+            recommendedPctForTarget = capped;
+        }
     }
 
     // What gets recorded as this result's inputs: the parameters, minus the in-flight
@@ -1282,6 +1294,8 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         burnTempNote: burnTempNote,
         saltNote: saltNote,
         stormApplied: stormApplied,
+        stormLossPpm: Math.round(stormLossPpm * 100) / 100,
+        projectedFcBeforeStorm: Math.round((projectedCurrentFc + stormLossPpm) * 100) / 100,
         targetFcUsed: targetFc,
         targetDateUsed: targetDate.toISOString(),
         targetDaysUsed: targetDays,

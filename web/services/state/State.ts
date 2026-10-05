@@ -430,6 +430,9 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
         targetThresholdPpm: result.targetThresholdPpm,
         targetDateExtended: result.targetDateExtended,
         projectedFcRange: result.projectedFcRange,
+        stormApplied: result.stormApplied,
+        stormLossPpm: result.stormLossPpm,
+        projectedFcBeforeStorm: result.projectedFcBeforeStorm,
         targetMarginPpm: result.targetMarginPpm,
         burnTempNote: result.burnTempNote,
     };
@@ -766,6 +769,32 @@ function autoSwgSaltAdditions(): SaltAddition[] {
 // Once an hour, record the chlorinator's own salt reading (AutoSwgSaltHistory keeps it): a fall in salt is the best sign the pool was diluted by
 // rain or a water change. It is local data only and changes no calculation; the timer is checked every ten minutes and the history keeps at most
 // one sample an hour. Nothing is recorded when the chlorinator is not configured for AutoSwg, ignores its salt reading, or reports none.
+// A summary of an Away protection period for the history, written when it ends (by itself or unchecked): how many checks ran and the lowest and
+// highest % applied, the last check's projection with and without the storm and outage correction (to score against the FC test that ended it), the
+// outages and the alerts seen at the checks, and the reading that ended it. The records of the checks themselves are in the history too.
+export function awaySummary(startedAt: string, reading?: { value: number; ts: string }) {
+    let from = new Date(startedAt).getTime();
+    if (isNaN(from)) return undefined;
+    let recs = readAutoSwgHistory().filter(r => r.source === 'auto' && new Date(r.appliedAt).getTime() >= from);
+    let pcts = recs.map(r => r.appliedPct).filter(p => typeof p === 'number');
+    let alertIds: string[] = [];
+    for (const r of recs) for (const a of ((r.outputs && r.outputs.alerts) || [])) if (a && a.id && alertIds.indexOf(a.id) < 0) alertIds.push(a.id);
+    let last = recs.length ? recs[recs.length - 1] : undefined;
+    let o: any = last && last.outputs ? last.outputs : {};
+    return {
+        startedAt: startedAt,
+        endedAt: new Date().toISOString(),
+        endingReading: reading,
+        checks: recs.length,
+        minPct: pcts.length ? Math.min(...pcts) : undefined,
+        maxPct: pcts.length ? Math.max(...pcts) : undefined,
+        stormChecks: recs.filter(r => r.outputs && r.outputs.stormApplied).length,
+        lastCheck: last ? { at: last.appliedAt, appliedPct: last.appliedPct, recommendedPct: last.recommendedPct, maintenancePct: o.maintenancePct, projectedFc: o.projectedCurrentFc, projectedFcBeforeStorm: o.projectedFcBeforeStorm, stormLossPpm: o.stormLossPpm, projectedFcRange: o.projectedFcRange } : undefined,
+        outages: (state.autoSwg.outages || []).filter(x => x && new Date(x.to).getTime() >= from).map(x => ({ from: x.from, to: x.to, minutes: x.minutes, rebooted: x.rebooted })),
+        alertsSeen: alertIds,
+    };
+}
+
 // Away protection ends by itself when an FC reading logged in PoolMath after it was turned on shows up (see runAutoSwgRecommendation). Called after
 // every read of PoolMath: each check and the daily top-up.
 function endAwayOnNewReading(reading?: { value: number; ts: string }) {
@@ -774,9 +803,10 @@ function endAwayOnNewReading(reading?: { value: number; ts: string }) {
     let readingAt = new Date(reading.ts).getTime(), startedAt = new Date(cfg.awayStartedAt).getTime();
     if (isNaN(readingAt) || isNaN(startedAt) || readingAt <= startedAt) return;
     let before = snapshotAutoSwgSettings(cfg);
+    let summary = awaySummary(cfg.awayStartedAt, reading);
     cfg.awayEnabled = false;
     cfg.awayEndedNote = `Away protection ended by itself: a new FC reading (${reading.value} ppm, ${formatLocalDateTime(new Date(reading.ts), cfg.timezone)}) was logged in PoolMath after it was turned on. Your other settings apply again.`;
-    try { logAutoSwgSettingChanges(before, snapshotAutoSwgSettings(cfg), 'away-ended'); } catch (err) { logger.warn(`AutoSwg: could not log the end of Away protection: ${err.message}`); }
+    try { logAutoSwgSettingChanges(before, snapshotAutoSwgSettings(cfg), 'away-ended', summary); } catch (err) { logger.warn(`AutoSwg: could not log the end of Away protection: ${err.message}`); }
     logger.info(`AutoSwg: ${cfg.awayEndedNote}`);
     state.autoSwg.awayStatus = cfg.awayStatus;
     state.autoSwg.awayStartedAt = undefined;
@@ -810,7 +840,12 @@ function watchAutoSwg() {
         let cfg = sys.autoSwg;
         if (state.autoSwg.awayStatus !== cfg.awayStatus) { state.autoSwg.awayStatus = cfg.awayStatus; state.autoSwg.awayStartedAt = cfg.awayActive ? cfg.awayStartedAt : undefined; state.autoSwg.emitEquipmentChange(); }
         let put = (alerts: any[]) => {
-            if (JSON.stringify(alerts) !== JSON.stringify(state.autoSwg.alerts || [])) { state.autoSwg.alerts = alerts; state.autoSwg.emitEquipmentChange(); }
+            if (JSON.stringify(alerts) !== JSON.stringify(state.autoSwg.alerts || [])) {
+                let was: any[] = state.autoSwg.alerts || [];
+                for (const a of alerts) if (!was.some(w => w && w.id === a.id)) logger.info(`AutoSwg alert raised (${a.level}): ${a.text}`);
+                for (const w of was) if (w && !alerts.some(a => a.id === w.id)) logger.info(`AutoSwg alert cleared: ${w.id}`);
+                state.autoSwg.alerts = alerts; state.autoSwg.emitEquipmentChange();
+            }
         };
         if (!cfg.enabled || cfg.chlorinatorId < 0) { put([]); return; }
         let chlorRecord = sys.chlorinators.toArray().find(c => c.id === cfg.chlorinatorId);
@@ -951,13 +986,12 @@ async function runAutoSwgArchiveSync(): Promise<void> {
     }
 }
 
-// The SWG % Away protection may apply: the recommendation, held between the maintenance % (never lower) and the maintenance % plus
-// stormMaxExtraPct points. Away protection can only add chlorine, within that limit.
+// The SWG % Away protection may apply: the recommendation (the glide to the target you set, plus what a storm or outage adds, which the calculation
+// limits to stormMaxExtraPct points), but never below the maintenance %. Away protection can only add chlorine.
 function awayBoundedPct(): number | undefined {
     let maintenance = state.autoSwg.maintenancePct, recommended = state.autoSwg.recommendedPct;
     if (typeof maintenance !== 'number' || isNaN(maintenance) || typeof recommended !== 'number' || isNaN(recommended)) return undefined;   // no usable check: nothing to apply
-    let ceiling = Math.min(100, maintenance + sys.autoSwg.stormMaxExtraPct);
-    return Math.round(Math.max(maintenance, Math.min(ceiling, recommended)));
+    return Math.round(Math.max(maintenance, Math.min(100, recommended)));
 }
 
 async function runAutoSwgAutoCheck() {
@@ -976,7 +1010,7 @@ async function runAutoSwgAutoCheck() {
             // Away protection only: the % is held within its limits.
             let bounded = awayBoundedPct();
             if (typeof bounded === 'undefined') { logger.info('AutoSwg: Away protection had no usable recommendation to apply.'); return; }
-            if (bounded !== state.autoSwg.recommendedPct) logger.info(`AutoSwg: Away protection held the recommended ${state.autoSwg.recommendedPct}% to ${bounded}% (the maintenance % is ${state.autoSwg.maintenancePct}%, and it may add at most ${cfg.stormMaxExtraPct} points).`);
+            if (bounded !== state.autoSwg.recommendedPct) logger.info(`AutoSwg: Away protection held the recommended ${state.autoSwg.recommendedPct}% to ${bounded}%, the maintenance %.`);
             await applyAutoSwgRecommendation(true, bounded, 'automatic-check');
         }
     }

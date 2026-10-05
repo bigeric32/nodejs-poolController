@@ -18,7 +18,7 @@ choose the way those methods do, and nothing here proposes a different target or
 the target and hold it. It is a helper that runs on your own controller: you set the target, you review each recommendation, and
 you apply it. It does two things by itself, both optional and off until you turn them on: the return to the maintenance % when a
 target period ends, and, while Away protection is turned on for a trip, the 12-hourly check that may raise the SWG % to make up
-for dilution or an outage (only upward from the maintenance %, up to a limit you set). Away protection ends when you turn it off,
+for dilution or an outage (only upward from the maintenance %, and the extra for dilution or an outage limited to a number of points you set). Away protection ends when you turn it off,
 or by itself when a new FC reading is logged in PoolMath after it was turned on. PoolMath is also read at least once a day in
 every mode, so that new tests, and the salt you add, are picked up without any check being run.
 
