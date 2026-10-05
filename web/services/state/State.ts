@@ -16,6 +16,7 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 import * as express from "express";
+import * as os from "os";
 import * as extend from "extend";
 
 import { state, ICircuitState, LightGroupState, ICircuitGroupState, ChemicalDoseState, ChlorinatorState } from "../../../controller/State";
@@ -33,7 +34,8 @@ import { appendTuneHistory, markLastTuneApplied, markLastTuneHeld, readTuneHisto
 import type { TuneResult } from "../../../controller/AutoSwgService";
 import { evaluateAutoTuneApply } from "../../../controller/AutoSwgAutoTune";
 import { getAutoSwgReadiness } from "../../../controller/AutoSwgReadiness";
-import { saltHistory } from "../../../controller/AutoSwgSaltHistory";
+import { saltHistory, stormEventStatus } from "../../../controller/AutoSwgSaltHistory";
+import { AutoSwgWatch, inRunWindow } from "../../../controller/AutoSwgWatch";
 import type { SaltAddition } from "../../../controller/AutoSwgSaltHistory";
 import { appendAutoSwgHistory, logAutoSwgSettingChanges, readAutoSwgHistory, snapshotAutoSwgSettings, toLocalSwgEntries, AutoSwgApplyTrigger, AUTO_SWG_ALGORITHM_VERSION } from "../../../controller/AutoSwgHistory";
 import { archivedChlorineAdditions, archivedCyaReadings, archivedFcReadings, archivedSaltAdditions, archivedSwgEvents, archivedWaterTemps, saltAdditionPpm, topUpPoolMathArchive, isPoolMathArchiveCurrent, poolMathArchiveSummary, refreshPoolMathArchiveFromPage, syncPoolMathArchive } from "../../../controller/AutoSwgPoolMathArchive";
@@ -290,7 +292,7 @@ function autoSwgSettingsKey(): string {
     catch (err) { /* the typed-in window is the fallback */ }
     return [
         cfg.targetFc, cfg.targetDaysAbove, cfg.targetDaysBelow, cfg.newTargetDateThresholdPpm,
-        cfg.windowDays, cfg.gallons, cfg.swgLbsPerDay, cfg.timezone, cfg.daytimeLossSharePct, cfg.creditChlorineAdditions, cfg.fcAnomalyTolerancePpm, cfg.projectionWeight, cfg.projectionTaperStartDays, cfg.projectionTaperEndDays, cfg.overshootPpmPerDay, cfg.burnTempAdjust,
+        cfg.windowDays, cfg.gallons, cfg.swgLbsPerDay, cfg.timezone, cfg.daytimeLossSharePct, cfg.creditChlorineAdditions, cfg.fcAnomalyTolerancePpm, cfg.projectionWeight, cfg.projectionTaperStartDays, cfg.projectionTaperEndDays, cfg.overshootPpmPerDay, cfg.burnTempAdjust, cfg.stormResponseEnabled, cfg.stormMaxExtraPct,
         cfg.shareCode, cfg.poolName, cfg.scheduleId, windowKeyTime(start), windowKeyTime(stop)
     ].join('|');
 }
@@ -319,6 +321,23 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
     let sunTimes = autoSwgSunTimes(cfg.timezone);
     let chlorRecord = sys.chlorinators.toArray().find(c => c.id === cfg.chlorinatorId);
     let schlor = chlorRecord ? state.chlorinators.getItemById(chlorRecord.id, false) : undefined;
+    // The storm response: whether it may act on a salt drop now (it must be on, the return to the maintenance % must be on so the extra ends by
+    // itself, and one event may only keep the SWG raised for stormMaxDays; see stormEventStatus).
+    let saltDrop = saltHistory.recentDrop(Date.now(), autoSwgSaltAdditions());
+    let storm: { apply: boolean; maxExtraPct: number } | undefined;
+    let stormNewEvent = false;
+    let stormOutages: { from: string; to: string }[] | undefined;
+    if (cfg.stormResponseEnabled && cfg.autoStepEnabled) {
+        storm = { apply: true, maxExtraPct: cfg.stormMaxExtraPct };
+        if (saltDrop) {
+            let ev = stormEventStatus(state.autoSwg.stormStartedAt, state.autoSwg.stormStartPct, saltDrop.pct, cfg.stormMaxDays);
+            storm.apply = ev.apply;
+            stormNewEvent = ev.newEvent;
+        }
+        // Outages (njsPC not running) from the last stormMaxDays days: a shortfall the response makes up for that long, like a dilution event.
+        let since = Date.now() - cfg.stormMaxDays * 86400000;
+        stormOutages = (state.autoSwg.outages || []).filter(o => o && new Date(o.to).getTime() >= since).map(o => ({ from: o.from, to: o.to }));
+    }
     let result = await computeRecommendation({
         shareCode: cfg.shareCode,
         poolName: cfg.poolName || undefined,
@@ -342,7 +361,9 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
         projectionTaperEndDays: cfg.projectionTaperEndDays,
         overshootPpmPerDay: cfg.overshootPpmPerDay,
         burnTempAdjust: cfg.burnTempAdjust,
-        saltDrop: saltHistory.recentDrop(Date.now(), autoSwgSaltAdditions()),
+        saltDrop: saltDrop,
+        storm: storm,
+        outages: stormOutages,
     }, undefined, toLocalSwgEntries(readAutoSwgHistory()), refreshAutoSwgArchiveFromPage);
     // A Refresh works from fresh PoolMath data; if the data it read (readings, additions, SWG entries)
     // is exactly what the last apply used -- the newest FC reading is the very one it was based on,
@@ -381,6 +402,13 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
     state.autoSwg.avgWindowEnd = result.avgWindowEnd;
     state.autoSwg.projectedCurrentFc = result.projectedCurrentFc;
     state.autoSwg.saltNote = result.saltNote;
+    if (result.stormApplied && saltDrop && stormNewEvent) {
+        // the first time the response acts on an event, note when and how deep the drop was, so it cannot run on for longer than stormMaxDays
+        state.autoSwg.stormEventKey = saltDrop.fromAt;
+        state.autoSwg.stormStartedAt = new Date().toISOString();
+        state.autoSwg.stormStartPct = saltDrop.pct;
+        logger.info(`AutoSwg: storm response acting on a ${(saltDrop.pct * 100).toFixed(0)}% fall in salt (${Math.round(saltDrop.fromPpm)} to ${Math.round(saltDrop.toPpm)} ppm) with a stale FC reading; it may keep the SWG raised for up to ${cfg.stormMaxDays} days.`);
+    }
     state.autoSwg.details = {
         inputs: result.inputs,
         swgCapacityPpmPerDay: result.swgCapacityPpmPerDay,
@@ -729,8 +757,59 @@ function autoSwgSaltAdditions(): SaltAddition[] {
 // Once an hour, record the chlorinator's own salt reading (AutoSwgSaltHistory keeps it): a fall in salt is the best sign the pool was diluted by
 // rain or a water change. It is local data only and changes no calculation; the timer is checked every ten minutes and the history keeps at most
 // one sample an hour. Nothing is recorded when the chlorinator is not configured for AutoSwg, ignores its salt reading, or reports none.
+// The ways the SWG can fail to hold FC that no recommendation can fix (a bad chlorinator status or no output in the run window, an automatic check that
+// stopped, a step that did not happen) become alerts in the AutoSwg area of the dashboard, checked with each salt sample. See AutoSwgWatch.ts.
+const autoSwgWatch = new AutoSwgWatch();
+// A gap of this long since njsPC last knew it was running (found at start-up) is an outage: the pool equipment it keeps on was off for the time.
+const AUTO_SWG_OUTAGE_MIN_MS = 25 * 60 * 1000;
+function detectAutoSwgOutage() {
+    try {
+        let now = Date.now();
+        let beat = state.autoSwg.heartbeatAt ? new Date(state.autoSwg.heartbeatAt).getTime() : NaN;
+        if (!isNaN(beat) && now - beat >= AUTO_SWG_OUTAGE_MIN_MS && now - beat < 400 * 86400000) {
+            // If the computer itself started after njsPC was last seen, it restarted (a power loss or a reboot) and not just njsPC.
+            let rebooted = os.uptime() * 1000 < (now - beat) + 5 * 60 * 1000;
+            let outage = { from: new Date(beat).toISOString(), to: new Date(now).toISOString(), minutes: Math.round((now - beat) / 60000), rebooted: rebooted };
+            state.autoSwg.outages = (state.autoSwg.outages || []).concat([outage]).slice(-10);
+            logger.warn(`AutoSwg: njsPC was not running from ${outage.from} to ${outage.to} (${outage.minutes} minutes), so the pool equipment it controls was off${rebooted ? '; the computer restarted (a power loss or a reboot)' : ''}.`);
+            state.autoSwg.emitEquipmentChange();
+        }
+        state.autoSwg.heartbeatAt = new Date(now).toISOString();
+    }
+    catch (err) { logger.warn(`AutoSwg: could not check for an outage: ${err.message}`); }
+}
+function watchAutoSwg() {
+    try {
+        let cfg = sys.autoSwg;
+        let put = (alerts: any[]) => {
+            if (JSON.stringify(alerts) !== JSON.stringify(state.autoSwg.alerts || [])) { state.autoSwg.alerts = alerts; state.autoSwg.emitEquipmentChange(); }
+        };
+        if (!cfg.enabled || cfg.chlorinatorId < 0) { put([]); return; }
+        let chlorRecord = sys.chlorinators.toArray().find(c => c.id === cfg.chlorinatorId);
+        let schlor = chlorRecord ? state.chlorinators.getItemById(chlorRecord.id, false) : undefined;
+        let now = Date.now();
+        let win = resolveAutoSwgRunWindow(cfg);
+        let statusDesc = '';
+        if (schlor) { try { let v: any = sys.board.valueMaps.chlorinatorStatus.transform(schlor.status); statusDesc = v && (v.desc || v.name) ? (v.desc || v.name) : String(schlor.status); } catch (err) { statusDesc = String(schlor.status); } }
+        put(autoSwgWatch.evaluate({
+            now: now,
+            inRunWindow: inRunWindow(win.swgStartTime, win.swgStopTime, cfg.timezone, now),
+            chlorinator: schlor ? { status: schlor.status, statusDesc: statusDesc, currentOutput: schlor.currentOutput, setpoint: schlor.poolSetpoint } : undefined,
+            autoCheckEnabled: cfg.autoCheckEnabled && cfg.autoApplyEnabled,
+            autoCheckHours: cfg.autoCheckHours,
+            lastCheckedAt: state.autoSwg.lastCheckedAt,
+            checkError: state.autoSwg.error,
+            stepAt: state.autoSwg.stepAt,
+            outages: state.autoSwg.outages || [],
+        }));
+    }
+    catch (err) { logger.warn(`AutoSwg: could not update the dashboard alerts: ${err.message}`); }
+}
+
 let autoSwgSaltTimer: NodeJS.Timeout | undefined;
 function sampleAutoSwgSalt() {
+    try { state.autoSwg.heartbeatAt = new Date().toISOString(); } catch (err) { /* the heartbeat is best effort */ }
+    watchAutoSwg();
     try {
         let cfg = sys.autoSwg;
         if (!cfg.enabled || cfg.chlorinatorId < 0) return;
@@ -773,6 +852,7 @@ async function runAutoSwgArchiveTopUp(): Promise<void> {
 
 export function armAutoSwgSaltLog() {
     if (typeof autoSwgSaltTimer !== 'undefined') return;
+    detectAutoSwgOutage();
     const first = setTimeout(sampleAutoSwgSalt, 2 * 60 * 1000);
     first.unref();
     autoSwgSaltTimer = setInterval(sampleAutoSwgSalt, 10 * 60 * 1000);
