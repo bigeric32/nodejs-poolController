@@ -1027,7 +1027,7 @@ export class ConfigRoute {
             try {
                 // Note when a tuning setting actually changes (saving the same values again doesn't count), so the
                 // accuracy report can show how the new settings do on readings they weren't tuned on.
-                let tuningKeys = ['windowDays', 'daytimeLossSharePct', 'creditChlorineAdditions', 'fcAnomalyTolerancePpm', 'projectionWeight', 'projectionTaperStartDays', 'projectionTaperEndDays'];
+                let tuningKeys = ['windowDays', 'daytimeLossSharePct', 'creditChlorineAdditions', 'fcAnomalyTolerancePpm', 'projectionWeight', 'projectionTaperStartDays', 'projectionTaperEndDays', 'burnTempAdjust'];
                 let before = tuningKeys.map(k => (sys.autoSwg as any)[k]);
                 let settingsBefore = snapshotAutoSwgSettings(sys.autoSwg);
                 sys.autoSwg.set(req.body);
