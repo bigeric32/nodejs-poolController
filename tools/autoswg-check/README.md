@@ -92,11 +92,10 @@ agreed.
 
 ## Using the in-app reports: Projection Accuracy and What-If Sweep
 
-**Getting started, go in stages.** Run in manual mode first for a while: use Check Now, read each
-recommendation and apply it yourself. Then turn on Auto-Apply Recommendations for a while and tune with
-your real history (the Tune button below); Auto-Apply changes the SWG % with no review, so watch the
-dashboard warnings. Only then turn on "Also check PoolMath automatically", which re-checks every "Check
-Every" hours.
+**Getting started.** Run in manual mode: use Check Now, read each recommendation and apply it yourself.
+Once you have some history, tune with it (the Tune button below) and keep applying each recommendation
+yourself. The only thing AutoSwg does on its own is the optional return to the maintenance % at the end of a target
+period you started; see the quick guide.
 
 dashPanel has the same two reports for your own pool, under **Settings > Chemistry > AutoSwg > Tuning
 options** (click "Tuning options" to expand it). This script gives you the same numbers for any pool, and
