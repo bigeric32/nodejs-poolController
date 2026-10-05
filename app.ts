@@ -71,7 +71,17 @@ export async function stopPacketCaptureAsync() {
     // Pass REM logs to the logger for inclusion in the backup
     return logger.stopCaptureForReplayAsync(remLogs);
 }
-export async function stopAsync(): Promise<void> {
+let _stopPromise: Promise<void> = null;
+export function stopAsync(): Promise<void> {
+    // Signals can arrive more than once (SIGINT + SIGTERM, repeated Ctrl+C); only run shutdown once.
+    if (_stopPromise) {
+        console.log('Shutdown already in progress');
+        return _stopPromise;
+    }
+    _stopPromise = stopProcessesAsync();
+    return _stopPromise;
+}
+async function stopProcessesAsync(): Promise<void> {
     try {
         console.log('Shutting down open processes');
         await webApp.stopAutoBackup();
@@ -92,25 +102,21 @@ export async function stopAsync(): Promise<void> {
         process.exit();
     }
 }
-async function onShutdownSignal() {
-    try { await stopAsync(); } catch (err) { console.log(`Error shutting down processes ${err.message}`); }
-}
 if (process.platform === 'win32') {
     let rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    rl.on('SIGINT', onShutdownSignal);
+    rl.on('SIGINT', async function () {
+        try { await stopAsync(); } catch (err) { console.log(`Error shutting down processes ${err.message}`); }
+    });
 }
 else {
     process.stdin.resume();
-    process.on('SIGINT', onShutdownSignal);
+    const onStopSignal = async function () {
+        try { return await stopAsync(); } catch (err) { console.log(`Error shutting down processes ${err.message}`); }
+    };
+    process.on('SIGINT', onStopSignal);
+    // systemd, Docker, and pm2 stop the process with SIGTERM.
+    process.on('SIGTERM', onStopSignal);
 }
-// SIGTERM is how service managers (systemd, Docker, pm2, most Windows service
-// wrappers) ask a daemon to stop -- unlike SIGINT, it's not tied to a console/tty,
-// so it needs its own listener rather than piggybacking on the readline SIGINT
-// shim above. Without this, a SIGTERM-based restart skips stopAsync() entirely:
-// equipment doesn't get a chance to report itself off before the process dies,
-// which (among other things) used to leave Nixie circuits' persisted "isOn" state
-// stale across the restart -- see the boot-time reset in State.ts's init().
-process.on('SIGTERM', onShutdownSignal);
 if (typeof process === 'object') {
     process.on('unhandledRejection', (error: Error, promise) => {
         console.group('unhandled rejection');
