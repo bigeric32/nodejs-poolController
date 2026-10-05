@@ -51,7 +51,7 @@ import { logger } from '../logger/Logger';
 const STALE_FC_DAYS = 3;
 
 // Default for params.fcAnomalyTolerancePpm: an FC rise that the SWG output and logged additions fall
-// short of explaining by more than this many ppm (test-kit noise is about a ppm) marks the interval
+// short of explaining by more than this many ppm (a test varies by about a ppm) marks the interval
 // as suspect: an unlogged chlorine addition, a mistyped reading, or a missing SWG % entry. Such
 // intervals are left out of the average. 0 turns the check off.
 const ANOMALY_TOLERANCE_PPM = 2;
@@ -62,8 +62,8 @@ const SWG_RATING_TOLERANCE = 0.15;
 
 // The range shown for what the next FC test is likely to read (AutoSwgResult.projectedFcRange). Its spread is how far the
 // projection has missed the FC readings that followed it over the last FC_RANGE_LOOKBACK_DAYS (the same weighting applied to each
-// interval between two readings, which needs no replay), so it includes the noise of the test itself -- on the pool this was
-// built on, that noise is most of the miss, and the miss barely grows with the gap between tests. A small term grows the spread
+// interval between two readings, which needs no replay), so it includes the variation of the test itself and of real day-to-day consumption -- on the pool this was
+// built on, that variation is most of the miss, and the miss barely grows with the gap between tests. A small term grows the spread
 // with the age of the last reading. FC_RANGE_Z gives about 90% on that pool's history (the Projection Accuracy report shows how often
 // the range held on yours). With fewer than FC_RANGE_MIN_INTERVALS intervals to measure it from, FC_RANGE_DEFAULT_SD is used.
 const FC_RANGE_LOOKBACK_DAYS = 90;
@@ -1075,7 +1075,7 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         low: Math.max(0, projectedCurrentFc - FC_RANGE_Z * rangeSd), high: projectedCurrentFc + FC_RANGE_Z * rangeSd, sd: rangeSd,
         basis: (rangeCount >= FC_RANGE_MIN_INTERVALS ? 'history' : 'default') as 'history' | 'default', intervals: rangeCount
     };
-    rationale.push(`Where the next FC test is likely to read (about 90%): ${projectedFcRange.low.toFixed(1)} to ${projectedFcRange.high.toFixed(1)} ppm, the projection plus or minus ${(FC_RANGE_Z * rangeSd).toFixed(1)} ppm. ${projectedFcRange.basis === 'history' ? `That is how far the projection has missed the tests that followed it over the last ${FC_RANGE_LOOKBACK_DAYS} days (${rangeCount} intervals), most of it the noise of the FC test itself.` : `There are too few intervals in the last ${FC_RANGE_LOOKBACK_DAYS} days to measure that, so a typical value was used.`}`);
+    rationale.push(`Where the next FC test is likely to read (about 90%): ${projectedFcRange.low.toFixed(1)} to ${projectedFcRange.high.toFixed(1)} ppm, the projection plus or minus ${(FC_RANGE_Z * rangeSd).toFixed(1)} ppm. ${projectedFcRange.basis === 'history' ? `That is how far the projection has missed the tests that followed it over the last ${FC_RANGE_LOOKBACK_DAYS} days (${rangeCount} intervals), part of it the test itself and part real day-to-day differences in consumption (sun, rain, temperature).` : `There are too few intervals in the last ${FC_RANGE_LOOKBACK_DAYS} days to measure that, so a typical value was used.`}`);
 
     // What to aim at. If there's an in-flight target and the projected FC is still within
     // its stray threshold of the configured target, stay on course for it: same FC, same
