@@ -2437,8 +2437,12 @@ export class AutoSwg extends EqItem {
         // nobody reviewing it would otherwise just overwrite whatever unapplied preview the
         // user is looking at on the calculation screen.
         if (typeof this.data.autoCheckEnabled === 'undefined') this.data.autoCheckEnabled = false;
-        // The thresholds for unlocking tuning and automation (see AutoSwgReadiness.ts). They are not on the settings screen; change them here
-        // (poolConfig.json) or through the config API. gateOff true makes both always available.
+        // 'standard' (the default) or 'advanced'. Advanced makes the unattended features (Auto-Apply and the automatic PoolMath check) available,
+        // still only once there is enough history and a Tune has been accepted (see AutoSwgReadiness.ts). It is not on the settings screen: set
+        // it in poolConfig.json or through the config API. A pool that already had either unattended feature turned on stays in advanced.
+        if (typeof this.data.mode === 'undefined') this.data.mode = (this.data.autoApplyEnabled === true || this.data.autoCheckEnabled === true) ? 'advanced' : 'standard';
+        // The thresholds for unlocking the tuning tools (see AutoSwgReadiness.ts). They are not on the settings screen; change them here
+        // (poolConfig.json) or through the config API. gateOff true makes the tuning tools always available.
         if (typeof this.data.gateMinFcReadings === 'undefined') this.data.gateMinFcReadings = 15;   // what Tune itself needs (see buildTune)
         if (typeof this.data.gateMinSwgEntries === 'undefined') this.data.gateMinSwgEntries = 1;
         if (typeof this.data.gateMinDays === 'undefined') this.data.gateMinDays = 42;
@@ -2552,6 +2556,8 @@ export class AutoSwg extends EqItem {
     // pushing FC past targetFc indefinitely.
     public get autoStepEnabled(): boolean { return this.data.autoStepEnabled; }
     public set autoStepEnabled(val: boolean) { this.setDataVal('autoStepEnabled', val); }
+    public get mode(): string { return this.data.mode === 'advanced' ? 'advanced' : 'standard'; }
+    public set mode(val: string) { this.setDataVal('mode', val === 'advanced' ? 'advanced' : 'standard'); }
     public get gateMinFcReadings(): number { return this.data.gateMinFcReadings; }
     public set gateMinFcReadings(val: number) { this.setDataVal('gateMinFcReadings', val); }
     public get gateMinSwgEntries(): number { return this.data.gateMinSwgEntries; }
@@ -2568,8 +2574,10 @@ export class AutoSwg extends EqItem {
         try { return typeof autoSwgReadinessProvider === 'function' && autoSwgReadinessProvider(this).ready === true; }
         catch (err) { return false; }
     }
-    // Automation (Auto-Apply and the automatic check) needs the same history and, on top of it, a Tune that was run and accepted.
+    // The unattended features (Auto-Apply and the automatic check) need the advanced mode and, on top of the history the tuning tools need,
+    // a Tune that was run and accepted.
     public get automationAvailable(): boolean {
+        if (this.mode !== 'advanced') return false;
         if (this.gateOff) return true;
         return this.tuningAvailable && typeof this.tuneAcceptedAt === 'string' && this.tuneAcceptedAt.length > 0;
     }
