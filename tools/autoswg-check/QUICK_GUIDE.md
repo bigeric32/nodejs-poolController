@@ -201,6 +201,30 @@ What-If Sweep includes a "Daylight weighting off" variant if you want to see wha
   arrive. Tuning again on the same history makes the numbers look better without the pool predicting any better.
   That is why Tune waits for about 10 new readings.
 
+## What was looked at and set aside
+
+Several ideas were tested on one pool's history and not adopted. The reasons are in [Method and evidence](METHOD_AND_EVIDENCE.md),
+with the numbers.
+
+* **A shorter averaging window (14 days).** Not clearly better or worse than 21 days, and it makes the burn estimate noisier, so the
+  default stays.
+* **Water temperature in the burn.** No gain on the pool it was tried on; it is an option, off by default.
+* **A state estimator (a Kalman-style filter).** About 0.04 ppm better, within the noise, so the simpler weighting and taper stay.
+* **Sunlight, air temperature and rain as inputs.** They follow the seasons, which the 21 day average already does, and added nothing
+  to the swings around it.
+* **A nearby weather station's rain.** Its gauge read far higher than the modeled rain and needs quality control before it can be
+  trusted; a rain based dilution credit improved the projection by about 1%.
+* **Crediting dilution from water changes.** Dilution is real (salt and CYA step down after long wet spells) but unlogged, so it
+  cannot be credited reliably yet. A drop in the chlorinator's salt reading is noted in the recommendation for now.
+
+Why these were set aside, in short:
+* A change has to beat the current numbers on the same readings, with a range that excludes zero.
+* The expected variation between a projection and the next test (the test itself plus real day to day consumption) is larger than
+  most of these effects, so a small real effect cannot be told from none.
+* A correction that lowers the estimated burn needs more proof than one that raises it, because running a little high is the safer
+  miss.
+* A logged fact (a liquid chlorine dose, a water change) is better than a guess from sparse tests.
+
 The standalone script in this folder (see the README) runs the same reports on any pool's PoolMath history
 without installing njsPC. **[Method and evidence](METHOD_AND_EVIDENCE.md)** gives the formulas, how the calculation is
 scored, what was measured on one pool, what was tried and not adopted, and the known limits.

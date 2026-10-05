@@ -151,6 +151,60 @@ borderline better (-0.06, range -0.19 to 0.00), on a history with only three log
 * **A time-of-day adjustment, and crediting solid chlorine (cal-hypo, dichlor).** Neither improved out-of-sample error on the
   histories checked, so neither is in. Solid chlorine is not credited, so a pool that doses it will see projections run low
   after each dose.
+* **A shorter averaging window (14 days).** Compared with the 21 day default on the same readings, a 14 day window changed mean
+  absolute error by +0.007 ppm overall (90% range -0.021 to +0.035) and by -0.018 in the shoulder months, March to May and
+  September to November (range -0.046 to +0.008). Neither range excludes zero, and 7 days is clearly worse (+0.08). What a short
+  window costs is steadier to measure: at two tests a week it holds a median of 3 intervals (sometimes 1) against 4, and the burn
+  estimate moves about 40% more between checks (median 0.11 against 0.08 ppm/day). Weighting recent intervals more, over a 42 day
+  window, gave no detectable edge either. A shorter window is a reasonable judgment call, since a longer one lags a rising burn in
+  spring, but the data cannot settle it, so the default stays at 21 days. Tune only moves to a window that is clearly better, so it
+  will not choose the shorter one for you; one idea is to accept a shorter window whenever it is not worse by more than a small
+  margin (about +0.05 ppm in the paired comparison), which 14 days passes and 7 days fails.
+* **Weather as an input to the burn: sunlight, air temperature, rain and cloud cover.** Daily values for the pool's area, set
+  against the burn of each interval between two tests, explained 16 to 23% of it, but that is the season: the burn rises into summer
+  and falls into winter, and the 21 day average already follows that. Against the swings around the average, which is all a new
+  input could add, sunlight explained 2%, air temperature 3%, rain 0% and the three together 6%, and out of sample the fit was worse
+  than no fit (-10%). So none of them is used.
+* **Rain as events, and leaving out the intervals that had heavy rain.** Dilution by rain is an event, not a daily average, so rain
+  was also tried as total rain per interval (no relationship, correlation +0.04) and by leaving the intervals with a 0.25, 0.5 or 1
+  inch day out of the burn average. That made the projections worse (+0.04 to +0.14 ppm), most likely because the stormiest weeks are
+  also the typical ones and are worth keeping. A first version of this test used only intervals of 10 days or less and so missed the
+  longest, wettest stretches; the later tests used every interval.
+* **A nearby personal weather station's rain gauge.** Sixteen months of its published daily rain were compared with the modeled
+  data. The station totalled 2.4 times the modeled rain (170 against 70 inches), agreed with it day by day only 0.36, and reported
+  single days of 7 to 9 inches where the model showed under 1.5. A gauge can read high for ordinary reasons (sprinkler spray, a
+  miscalibrated bucket), so a third-party sensor needs quality control, such as a comparison with neighbors and radar, before its
+  numbers are trusted. Using the salt tests as a tracer for dilution (intervals with no salt added), rain explained only about 8% of
+  the salt change, with the gauge and the model about equal, and a rain based dilution credit improved the projection by 0.004 to
+  0.013 ppm, about 1% of the error: detectable, not substantial.
+* **Crediting dilution from the salt, CYA and CH tests.** Salt, CYA or CH stepped down 7 to 20% in stretches with 2.5 to 12 inches of
+  rain, which is what rain plus water removal and refilling would do, so dilution is real on this pool. Treating the drop as water
+  replaced, and crediting FC times that fraction the way liquid chlorine is credited, changed the projection error by -0.001 to
+  -0.003 ppm. Salt, CYA and CH are tested too rarely to place a drop in time, the events sit in long gaps between tests, and nothing
+  records a drawdown. Rough arithmetic suggests a 10% replacement at 10 ppm removes about 1 ppm of FC, which the calculation reads as
+  consumption and so overstates the burn by roughly 0.2 to 0.3 ppm/day for up to a window length. That errs on the side of more
+  chlorine, which is the safer miss, so it is left uncorrected for now.
+
+## Why these were set aside: the general reasoning
+
+* **A change has to earn its place out of sample.** It is scored on the same readings as the current settings, against a baseline,
+  with a range that excludes zero. Plausible is not enough, and this page lists what failed that test as well as what passed.
+* **Most effects here are smaller than the expected variation.** A projection misses the next reading by about 1.8 ppm either way,
+  partly the test itself and partly real day to day consumption. An effect of a tenth of a ppm or less cannot be seen against
+  that, so a small real effect and no effect look the same. The honest answer is then "not shown", not "absent".
+* **A new input has to explain what the average does not.** The 21 day average already follows the seasons. Sunlight and
+  temperature explain the seasons well and the swings around them hardly at all.
+* **Errors that run high are safer than errors that run low.** A correction that lowers the estimated burn, such as a dilution credit,
+  would make the SWG under-generate if it were applied wrongly. It therefore needs more proof than one that raises it, and an
+  uncorrected overstatement is acceptable meanwhile.
+* **A logged fact beats an inferred one.** A liquid chlorine entry is a fact. Dilution guessed from tests every ten days is not. The
+  better path is a measured salt reading plus a logged water change, so the credit rests on two things that agree.
+* **Check the instrument before trusting it.** The nearby gauge read 2.4 times the modeled rain. Data from a neighbor's sensor is
+  only as good as that sensor.
+* **Collect data before building on it.** Logging first and testing later costs little and risks nothing. One pool shows a case,
+  not a rule, so what held here is a starting point for the next pool.
+* **Where the data cannot decide, say so.** The averaging window is such a case. The default is the one that is easier to defend,
+  and the alternative is written down with its evidence.
 
 ## Known limits
 
@@ -162,9 +216,11 @@ borderline better (-0.06, range -0.19 to 0.00), on a history with only three log
 * **Burn is a constant, not a function of FC.** Chlorine loss in sunlight is closer to proportional to the FC present than
   constant. Not tested.
 * **Weather is not modelled.** Rain, UV, cloud and temperature change how much chlorine the pool uses from day to day, and
-  the burn is a 21-day average, so it lags a change in season by about half a window. The PoolMath log carries UV index and
-  cloud cover with each entry, which has not been used, and local measurements such as a personal weather station would be
-  better still.
+  the burn is a 21-day average, so it lags a change in season by about half a window. Daily weather was tried as an input and
+  added nothing measurable on this pool (see above). Local measurements may do better than modeled data, but the one nearby
+  gauge checked needed quality control first.
+* **Water removal and refilling is not modelled.** It dilutes FC in a step the calculation reads as consumption, which
+  overstates the burn for a while. When salt drops noticeably the recommendation says so; it does not adjust for it.
 * **The daylight curve is an approximation,** using today's sunrise and sunset for every day in the window.
 * **Expected variation is not removed.** Part is the test itself and part is real day-to-day consumption. Testing at a
   consistent time of day and correcting a mistyped reading in PoolMath help with the first.
@@ -182,7 +238,11 @@ This is a starting point. As more capable methods, AI included, mature and can r
 is how to compare them with this baseline: a method is better only if it beats the current numbers on the same readings.
 
 More pools with varied test times and enough SWG history, to see whether the defaults hold and whether the temperature
-adjustment helps where the water temperature swings. Past a point, replacing the fixed weighting with an estimator that
+adjustment helps where the water temperature swings. For dilution, a local log of the chlorinator's own salt reading is kept now: the recommendation notes a drop of about 7% or more,
+and counts salt you logged adding in PoolMath (the local archive is topped up from PoolMath's JSON feed about once a day, which
+is also where salt additions and the extra numbers on new tests come from). The next steps are a logged water change with the
+pool's surface area, with salt as the cross-check. Only once such a log has a few real events in it is a cautious,
+off-by-default credit worth testing. Past a point, replacing the fixed weighting with an estimator that
 weighs the model and the test by their uncertainty, and using the stored weather fields (or a personal weather station's data), are the next steps to try. The
 standalone script makes either easy to test on a pool's history before it goes anywhere near the app.
 
