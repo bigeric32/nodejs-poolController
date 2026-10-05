@@ -9,6 +9,16 @@ behind it, your SWG % changes, and a longer archive of your PoolMath history) an
 calculation to you and your pool's own behavior. When weather, bather load or sunlight change that usage, the
 next check adjusts the % to follow it. You choose the target, you review each recommendation, and you press Apply.
 
+## Why it exists
+
+The goal was to make it easier to move the target FC up and down as you prepare for and return from a vacation, and
+to see what was possible with a pool's own data, while embracing the Trouble Free Pool methods and not diverging from
+them. You test FC and log it in PoolMath, you choose the target FC the way those methods do, and AutoSwg only helps
+get the SWG to that target and hold it. It does not suggest a different target or replace testing. Raise the target
+before you leave so the pool is well stocked for the trip, and lower it when you are back, without working out the SWG %
+by hand each time. See "Moving the target for a trip" below. AutoSwg has been checked closely on one pool so far, and
+"Method and evidence" says what that does and does not show, so you can judge it for yours.
+
 ## What it needs from you
 
 **FC tests must be logged in PoolMath, accurately.** AutoSwg has no other source for FC, so every test goes in
@@ -28,10 +38,22 @@ week is workable and daily is ideal, and more readings make the recommendation s
 
 ## Day to day
 
-1. Press **Check Now**. It shows a recommended SWG % and the reasons for it.
+1. Press **Check Now**. It shows a recommended SWG % and the reasons for it, and where the next FC test is likely to read
+   (about 90% of the time). That range is wide on purpose: most of it is the noise of the FC test itself (about a ppm), so
+   one reading a little off the projection is normal and is not a reason to change settings.
 2. Press **Apply** to send it to the chlorinator.
 3. After the target period, the % returns to the **maintenance %**, the level that just holds FC steady, if
    "Return to the maintenance %" is checked (it is off until you turn it on).
+
+## Moving the target for a trip
+
+1. **Before you leave.** Log an FC test, raise **Target FC** by a ppm or two (with a short **Days to Target (FC below
+   target)**) and press Check Now, then Apply. FC builds toward the higher target and then holds near it.
+2. **While you are away.** With no new reading for 3 days or more, the SWG never runs below the maintenance %, so a long
+   absence runs at about the level that matches consumption. Running a little high is the safer miss.
+3. **When you are back.** Test FC and log it, set **Target FC** back to your usual level and press Check Now. If FC is above
+   the target, the SWG is cut back (to 0% if need be) and consumption brings FC down over **Days to Target (FC above
+   target)**, which is the gentle direction.
 
 ## Start with the defaults
 
@@ -49,6 +71,10 @@ SWG Run Start/Stop) and Time Zone.
 * **Target FC**: the FC you want to hold.
 * **Days to Target (above / below)**: how quickly to correct when FC is above or below the target. Above is
   gentle, since consumption does most of the work. Below is quicker, so you recover sooner.
+* **Aim Above Target as the Last Test Ages** (0.15 ppm per day, at most 1 ppm; 0 = aim at the target itself): an old
+  reading is a less certain place to start from, and FC a little high is the safer miss, so the SWG % that reaches the target is
+  worked out for the target plus this many ppm for each day since the last test. It changes only that % (not the
+  maintenance %, the target date or the projection).
 * **Return to the maintenance % when the target period ends** (off until you turn it on): the only thing AutoSwg
   does by itself, and only a convenience. A target period often ends between your FC tests, and the % you applied
   to reach the target would keep pushing FC past it (or leave it short) until you next test. With this checked, the
@@ -61,6 +87,10 @@ SWG Run Start/Stop) and Time Zone.
 * **Projection Weighting** (50%), **Taper Weighting After** (3 days) and **Down to Zero At** (8 days): how much
   of the modelled change to apply between FC tests. The longer since your last test, the less it is trusted.
 * **FC Anomaly Tolerance** (2 ppm), **Credit liquid chlorine** (on) and **Daytime Share** (automatic).
+* **Adjust the burn for the water temperature** (off): moves the burn along a line fitted to your own burn rates against
+  the water temperature logged with your FC tests, only when that line is clear. It did not improve the projection on the
+  pool it was tried on (the water temperature barely changes within a 21-day window), so it is off; What-If Sweep scores it
+  for yours once there are enough temperatures logged.
 
 ## Tuning, when you are ready
 
@@ -157,7 +187,8 @@ What-If Sweep includes a "Daylight weighting off" variant if you want to see wha
 * **Projection Accuracy** re-runs the calculation as of each past FC reading, using only what was known then,
   and compares its projection with the next reading. It shows the average error in ppm, how often it was
   within 1 and 2 ppm, and the same score for "FC unchanged since the last reading", which is the bar to beat.
-  It also suggests a weighting and taper.
+  It also shows the bias with its uncertainty, how often the next-test range held, and how often the measured FC was
+  more than 1 ppm below or above the projection. It also suggests a weighting and taper.
 * **What-If Sweep** scores alternative settings on those same readings. Each has a 90% range, and a setting is
   called better or worse only when that range excludes zero. Anything smaller than about a tenth of a ppm is noise.
 * **Tune** runs both and gives one recommendation, the window first. It looks further back when your last year
@@ -167,4 +198,5 @@ What-If Sweep includes a "Daylight weighting off" variant if you want to see wha
   That is why Tune waits for about 10 new readings.
 
 The standalone script in this folder (see the README) runs the same reports on any pool's PoolMath history
-without installing njsPC.
+without installing njsPC. **[Method and evidence](METHOD_AND_EVIDENCE.md)** gives the formulas, how the calculation is
+scored, what was measured on one pool, what was tried and not adopted, and the known limits.
