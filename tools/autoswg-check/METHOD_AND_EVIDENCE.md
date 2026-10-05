@@ -6,15 +6,19 @@ is the one to read to use it.
 
 ## Goal and status
 
-The goal was to make it easier to move the target FC up and down as you prepare for and return from a vacation,
-and to see what was possible with a pool's own data run locally on a Raspberry Pi, without depending on external tools
-such as AI, as a starting point as those capabilities mature, while embracing the Trouble Free Pool methods and not
-diverging from them. Everything here is plain arithmetic on your own controller; the only outside input is your PoolMath
-log. It embraces those methods: FC is tested and logged in PoolMath, the target FC is the one you choose
-the way those methods do, and nothing here proposes a different target or replaces testing. It only helps get the SWG to
-the target and hold it. It is a helper that runs on your own controller: you set the target, you review each
-recommendation, and you apply it. The only thing it does by itself is the optional return to the maintenance % when a
-target period ends.
+AutoSwg has two goals. The first is semi-automated SWG changes that follow your PoolMath test logs while you are in town: you test
+and log FC, press Check Now and Apply, and the % follows your tests and returns to the steady maintenance level on its own. The second
+is FC safety while you are on vacation, and a smooth recovery to steady state when you are back: raise the target and test before
+you leave, a floor at the maintenance % and dashboard alerts while you are away, and a way down (or up) to your usual target
+from your first test when you return. It also began as a way to see what was possible with a pool's own data run locally on a
+Raspberry Pi, without depending on external tools such as AI, as a starting point as those capabilities mature, while embracing
+the Trouble Free Pool methods and not diverging from them. Everything here is plain arithmetic on your own controller; the only
+outside input is your PoolMath log. It embraces those methods: FC is tested and logged in PoolMath, the target FC is the one you
+choose the way those methods do, and nothing here proposes a different target or replaces testing. It only helps get the SWG to
+the target and hold it. It is a helper that runs on your own controller: you set the target, you review each recommendation, and
+you apply it. It does two things by itself, both optional and off until you turn them on: the return to the maintenance % when a
+target period ends, and, while Away protection is turned on for a trip, the 12-hourly check that may raise the SWG % to make up
+for dilution or an outage (only upward from the maintenance %, up to a limit you set, until the return date you enter).
 
 The evidence below comes from one pool, the author's (12,000 gallons, a salt chlorine generator, 114 FC readings
 from June 2025 to October 2026, 61 of them scorable). That is enough to say the method works there and to find where it

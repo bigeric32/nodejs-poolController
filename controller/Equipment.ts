@@ -2480,6 +2480,12 @@ export class AutoSwg extends EqItem {
         if (typeof this.data.stormResponseEnabled === 'undefined') this.data.stormResponseEnabled = false;
         if (typeof this.data.stormMaxExtraPct === 'undefined') this.data.stormMaxExtraPct = 20;
         if (typeof this.data.stormMaxDays === 'undefined') this.data.stormMaxDays = 3;
+        // Away protection (every mode; off until turned on for a trip): until the return date, AutoSwg checks PoolMath every autoCheckHours hours and may
+        // raise the SWG % to make up for dilution or an outage (the storm and outage response), but only between the maintenance % and the maintenance %
+        // plus stormMaxExtraPct points, never below it. It needs autoStepEnabled, so each boost ends by itself. awayUntil is the return date, 'YYYY-MM-DD';
+        // it stays on until the end of that day.
+        if (typeof this.data.awayEnabled === 'undefined') this.data.awayEnabled = false;
+        if (typeof this.data.awayUntil === 'undefined') this.data.awayUntil = '';
         // Automation also needs a Tune that was run and accepted (applied, or accepted as "your settings look good"). A Tune that was
         // applied before this existed counts.
         if (typeof this.data.tuneAcceptedAt === 'undefined' && typeof this.data.lastTuneAppliedAt !== 'undefined') this.data.tuneAcceptedAt = this.data.lastTuneAppliedAt;
@@ -2658,6 +2664,21 @@ export class AutoSwg extends EqItem {
     public set stormMaxExtraPct(val: number) { this.setDataVal('stormMaxExtraPct', val); }
     public get stormMaxDays(): number { return this.data.stormMaxDays; }
     public set stormMaxDays(val: number) { this.setDataVal('stormMaxDays', val); }
+    public get awayEnabled(): boolean { return utils.makeBool(this.data.awayEnabled); }
+    public set awayEnabled(val: boolean) { this.setDataVal('awayEnabled', utils.makeBool(val)); }
+    public get awayUntil(): string { return typeof this.data.awayUntil === 'string' ? this.data.awayUntil : ''; }
+    public set awayUntil(val: string) { this.setDataVal('awayUntil', typeof val === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(val.trim()) ? val.trim() : ''); }
+    // 'off', 'needs-return-date', 'return-date-passed', 'needs-step' (the return to the maintenance % is off) or 'active'.
+    public get awayStatus(): string {
+        if (!this.awayEnabled || !this.enabled) return 'off';
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(this.awayUntil)) return 'needs-return-date';
+        // the end of the return date, with a few hours of margin for the time zone (a little longer is the safe side)
+        const end = Date.parse(this.awayUntil + 'T23:59:59Z') + 6 * 3600000;
+        if (isNaN(end) || Date.now() > end) return 'return-date-passed';
+        if (!this.autoStepEnabled) return 'needs-step';
+        return 'active';
+    }
+    public get awayActive(): boolean { return this.awayStatus === 'active'; }
     public get tuneManualApplies(): number { return this.data.tuneManualApplies; }
     public set tuneManualApplies(val: number) { this.setDataVal('tuneManualApplies', val); }
     public get autoApplyEnabled(): boolean { return this.automationAvailable ? this.data.autoApplyEnabled : false; }

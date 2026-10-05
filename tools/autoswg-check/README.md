@@ -1,10 +1,10 @@
 # autoswg-check
 
-AutoSwg was built to make it easier to move the target FC up and down as you prepare for and return from a vacation,
-and to see what was possible with a pool's own data run locally on a Raspberry Pi, without depending on external tools
-such as AI, as a starting point as those capabilities mature, while embracing the Trouble Free Pool methods and not
-diverging from them. This folder is the quick guide, the method and evidence page, and a way to check the calculation on
-any pool.
+AutoSwg has two goals: semi-automated SWG changes that follow your PoolMath test logs while you are in town, and FC safety while
+you are on vacation with a smooth return to steady state when you are back. It also began as a way to see what was possible
+with a pool's own data run locally on a Raspberry Pi, without depending on external tools such as AI, as a starting point as
+those capabilities mature, while embracing the Trouble Free Pool methods and not diverging from them. This folder is the quick
+guide, the method and evidence page, and a way to check the calculation on any pool.
 
 A standalone, standard-library-only Python script (3.8+) that checks the AutoSwg algorithm against a
 pool's PoolMath history, without installing njsPC. Give it a PoolMath share code (or a saved JSON
