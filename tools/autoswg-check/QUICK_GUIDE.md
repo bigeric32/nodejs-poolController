@@ -2,23 +2,36 @@
 
 ## What it is for
 
-AutoSwg is a local, data-based helper for keeping your pool's FC near a target you set. It runs on your own
-controller. It reads your PoolMath log, works out how much chlorine your pool really uses, and recommends the SWG %
-that keeps FC near the target. It also keeps extra detail locally (every recommendation and apply with the numbers
-behind it, your SWG % changes, and a longer archive of your PoolMath history) and uses that to tune the
-calculation to you and your pool's own behavior. When weather, bather load or sunlight change that usage, the
-next check adjusts the % to follow it. You choose the target, you review each recommendation, and you press Apply.
+AutoSwg is a local, data-based helper for keeping your pool's FC near a target you set. It is built around two goals.
 
-## Why it exists
+**1. Semi-automated changes that follow your PoolMath test logs while you are in town.** Test FC, log it in PoolMath, press
+**Check Now** and then **Apply**. AutoSwg works out how much chlorine your pool really uses from your own log and sets the SWG %
+that brings FC to the target. When the target period ends, the % returns by itself to the **maintenance %**, the level that just
+holds FC steady (the "Return to the maintenance %" checkbox, which is off until you turn it on). You still test, log and
+press Apply; there is nothing to babysit between tests and no arithmetic to do, and each new test in your log moves the plan.
 
-The goal was to make it easier to move the target FC up and down as you prepare for and return from a vacation, and
-to see what was possible with a pool's own data run locally on a Raspberry Pi, without depending on external tools such
-as AI, as a starting point as those capabilities mature, while embracing the Trouble Free Pool methods and not diverging
-from them. The calculation runs on your own controller; the only outside input is your PoolMath log. You test FC and log it in PoolMath, you choose the target FC the way those methods do, and AutoSwg only helps
-get the SWG to that target and hold it. It does not suggest a different target or replace testing. Raise the target
-before you leave so the pool is well stocked for the trip, and lower it when you are back, without working out the SWG %
-by hand each time. See "Moving the target for a trip" below. AutoSwg has been checked closely on one pool so far, and
-"Method and evidence" says what that does and does not show, so you can judge it for yours.
+**2. FC safety while you are on vacation, and a smooth return to steady state when you are back.** Raise the target and test
+before you leave. While you are away, the SWG never runs below the maintenance % once your last test is 3 days old, and the
+AutoSwg area of the dashboard raises an alert if the chlorinator is not producing, a planned step did not happen, njsPC was not
+running, or the salt reading fell sharply (dilution from rain). When you are back, your first test sets the way to your usual
+target and then back to the maintenance %, again without hand calculations. See "Vacation: before, during and after" below.
+
+How it works: it runs on your own controller, reads your PoolMath log, works out how much chlorine your pool really uses, and
+recommends the SWG % that keeps FC near the target. It also keeps extra detail locally (every recommendation and apply with
+the numbers behind it, your SWG % changes, and a longer archive of your PoolMath history) and uses that to tune the
+calculation to you and your pool's own behavior. When weather, bather load or sunlight change that usage, the next check
+adjusts the % to follow it. You choose the target, you review each recommendation, and you press Apply.
+
+## Where it came from
+
+AutoSwg began as a way to make the vacation routine easier: raise the target before you leave, and bring it back down when you
+return, without working out the SWG % by hand each time. It was also a way to see what was possible with a pool's own data run
+locally on a Raspberry Pi, without depending on external tools such as AI, as a starting point as those capabilities mature,
+while embracing the Trouble Free Pool methods and not diverging from them. You test FC and log it in PoolMath, you choose the
+target FC the way those methods do, and AutoSwg only helps get the SWG to that target and hold it. It does not suggest a
+different target or replace testing. The calculation runs on your own controller; the only outside input is your PoolMath log.
+It has been checked closely on one pool so far, and "Method and evidence" says what that does and does not show, so you can judge
+it for yours.
 
 ## What it needs from you
 
@@ -46,17 +59,44 @@ week is workable and daily is ideal, and more readings make the recommendation s
    projection is expected and is not a reason to change settings.
 2. Press **Apply** to send it to the chlorinator.
 3. After the target period, the % returns to the **maintenance %**, the level that just holds FC steady, if
-   "Return to the maintenance %" is checked (it is off until you turn it on).
+   "Return to the maintenance %" is checked (it is off until you turn it on). That is what makes it semi-automated: you test, log and
+   press Apply, and the rest of the plan, including the step back, happens on its own.
 
-## Moving the target for a trip
+## Vacation: before, during and after
 
-1. **Before you leave.** Log an FC test, raise **Target FC** by a ppm or two (with a short **Days to Target (FC below
-   target)**) and press Check Now, then Apply. FC builds toward the higher target and then holds near it.
-2. **While you are away.** With no new reading for 3 days or more, the SWG never runs below the maintenance %, so a long
-   absence runs at about the level that matches consumption. Running a little high is the safer miss.
-3. **When you are back.** Test FC and log it, set **Target FC** back to your usual level and press Check Now. If FC is above
-   the target, the SWG is cut back (to 0% if need be) and consumption brings FC down over **Days to Target (FC above
-   target)**, which is the gentle direction.
+**Before you leave**
+1. Log an FC test the day you leave. A recent reading is the best starting point for everything below.
+2. Raise **Target FC** by a ppm or two, with a short **Days to Target (FC below target)**, and press Check Now, then Apply.
+   FC builds toward the higher target and then holds near it.
+
+**While you are away**
+* With your last test 3 days old or more, the SWG never runs below the maintenance %. A long absence runs at about the level
+  that matches consumption, and running a little high is the safer miss. The card says when this applies.
+* The AutoSwg area of the dashboard shows an alert for things no recommendation can fix: the chlorinator reports a fault
+  (low flow, low salt, clean cell, communication lost and so on) or no output while the SWG is set above 0% during its scheduled run
+  window; a planned step to the maintenance % did not happen; njsPC was not running for 25 minutes or more, so the pool equipment
+  it controls was off (it says when the computer restarted, which points to a power loss, and shows once njsPC is running again).
+  Alerts appear on the dashboard only: nothing is sent to a phone, so look at it, or reach it remotely if you have set that up.
+* A sharp fall in the chlorinator's salt reading is noted in the recommendation: the pool was probably diluted by rain or a
+  water change, and some of the FC lost may not be consumption. On its own, nothing is adjusted for it.
+* **Away protection (optional, off until you turn it on for a trip).** In the settings, under "Vacation: Away protection", check
+  the box and enter your return date. Until the end of that day AutoSwg checks PoolMath every 12 hours by itself and may raise the
+  SWG % to make up for FC lost to a sharp fall in the salt reading (dilution) or to an outage (njsPC was not running, so the
+  equipment was off). It can only add chlorine, and only within limits: the % stays between the maintenance % and the maintenance %
+  plus the "At most" points you set (20 by default), it never goes below the maintenance %, it acts only when your last test is 3
+  days old or more, one event acts for at most 3 days, and it needs "Return to the maintenance %" so each boost ends by itself. A
+  note on the card says it is on. It does nothing after the return date, and your first test after you are back takes over. This
+  is the one case, besides the return to the maintenance %, where AutoSwg changes the SWG % without you pressing Apply, and it
+  only does so while you have turned it on.
+* None of this tests FC for you. Heavy rain, debris or an equipment failure can still lower it; the raised target is your margin.
+
+**When you are back: recovery to steady state**
+1. Test FC and log it.
+2. Set **Target FC** back to your usual level and press Check Now, then Apply.
+3. If FC is above the target, the SWG is cut back (to 0% if need be) and consumption brings FC down over **Days to Target (FC
+   above target)**, the gentle direction. If it is below, the SWG pushes up over **Days to Target (FC below target)**. When
+   the period ends, the % returns to the maintenance %, if the checkbox is on, and you are at steady state with nothing more
+   to adjust by hand.
 
 ## Start with the defaults
 
@@ -78,8 +118,8 @@ SWG Run Start/Stop) and Time Zone.
   reading is a less certain place to start from, and FC a little high is the safer miss, so the SWG % that reaches the target is
   worked out for the target plus this many ppm for each day since the last test. It changes only that % (not the
   maintenance %, the target date or the projection).
-* **Return to the maintenance % when the target period ends** (off until you turn it on): the only thing AutoSwg
-  does by itself, and only a convenience. A target period often ends between your FC tests, and the % you applied
+* **Return to the maintenance % when the target period ends** (off until you turn it on): one of the two things AutoSwg
+  does by itself (the other is Away protection, below), and only a convenience. A target period often ends between your FC tests, and the % you applied
   to reach the target would keep pushing FC past it (or leave it short) until you next test. With this checked, the
   SWG % goes back to the steady level on its own when each target period you start ends, to keep you from
   undershooting or overshooting your target in between. Turn it on once you are comfortable with how it behaves for
@@ -115,10 +155,8 @@ section of `poolConfig.json` (stop njsPC before editing it).
 * Only the pool SWG % is managed, not the spa's.
 * Only SWG output and liquid chlorine are credited. Other chlorine products (cal-hypo, dichlor, trichlor) are
   not, so projections run low after a dose of those.
-* **Before a trip:** log an FC test the day you leave. With no new reading for 3 days or more, AutoSwg never
-  runs the SWG below the maintenance % (it would otherwise hold it at 0% waiting for FC to glide down, and keep
-  moving that date out), so a long absence runs at about the level that matches consumption. Running a little
-  high is the safer miss. The card says when this applies.
+* **Vacations:** see "Vacation: before, during and after" above. In short, log an FC test and raise the target the day you leave,
+  and test and set the target back when you return.
 
 ---
 

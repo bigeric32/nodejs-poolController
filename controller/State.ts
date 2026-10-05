@@ -4060,6 +4060,11 @@ export class AutoSwgState extends EqState {
     public set heartbeatAt(val: string) { this.setDataVal('heartbeatAt', val); }
     public get outages(): any[] { return this.data.outages; }
     public set outages(val: any[]) { this.setDataVal('outages', val); }
+    // Away protection, as of the last save of the settings: its status (see AutoSwg.awayStatus) and return date, for the dashboard.
+    public get awayStatus(): string { return this.data.awayStatus; }
+    public set awayStatus(val: string) { this.setDataVal('awayStatus', val); }
+    public get awayUntil(): string { return this.data.awayUntil; }
+    public set awayUntil(val: string) { this.setDataVal('awayUntil', val); }
     public get alerts(): any[] { return this.data.alerts; }
     public set alerts(val: any[]) { this.setDataVal('alerts', val); }
     public get stormStartPct(): number { return this.data.stormStartPct; }
