@@ -1,18 +1,26 @@
 # autoswg-check
 
+AutoSwg was built to make it easier to move the target FC up and down as you prepare for and return from a vacation,
+and to see what was possible with a pool's own data, while embracing the Trouble Free Pool methods and not diverging
+from them. This folder is the quick guide, the method and evidence page, and a way to check the calculation on
+any pool.
+
 A standalone, standard-library-only Python script (3.8+) that checks the AutoSwg algorithm against a
 pool's PoolMath history, without installing njsPC. Give it a PoolMath share code (or a saved JSON
 file) and it re-runs a port of njsPC's calculation over the pool's FC readings, SWG entries and
 liquid chlorine additions to answer:
 
-* **How well would the algorithm have predicted each FC reading?** (projection accuracy)
+* **How well would the algorithm have predicted each FC reading?** (projection accuracy: the average error, the bias
+  with its uncertainty, how often the next-test range held, and how often the miss was more than 1 ppm either way)
 * **Which settings would have predicted better?** Averaging window, daylight weighting, liquid
-  chlorine credit and anomaly tolerance, each scored on the same readings with a 90% bootstrap
+  chlorine credit, anomaly tolerance and the water temperature adjustment, each scored on the same readings with a 90% bootstrap
   range, so a setting is called better or worse only when the evidence supports it (what-if sweep).
 * **What does the pool's consumption look like by month, and where does its SWG record start?**
   (dataset summary)
 * **Which FC rises can't the SWG output and logged additions explain?** (anomalies)
 * **Do the SWG entries agree with one cell rating, and with njsPC's setting?** (capacity)
+
+See [METHOD_AND_EVIDENCE.md](METHOD_AND_EVIDENCE.md) for the formulas, how they are scored and what was measured.
 
 It is a port of `controller/AutoSwgService.ts`, not the same code. Run it on a pool you also have in
 njsPC and compare with the app's **Projection Accuracy** and **What-If Sweep** dialogs; if the numbers

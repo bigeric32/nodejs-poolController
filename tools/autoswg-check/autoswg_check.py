@@ -175,6 +175,7 @@ class Dataset:
         tests = sorted([l for l in logs if l['type'] == 'testlog'], key=ts)
         self.fc = [(ts(l), l['fc']) for l in tests if isinstance(l.get('fc'), (int, float))]
         self.cya = [(ts(l), l['cya']) for l in tests if isinstance(l.get('cya'), (int, float))]
+        self.temps = [(ts(l), l['waterTemp']) for l in tests if isinstance(l.get('waterTemp'), (int, float))]   # water temperature logged with a test
         self.swg = sorted([(ts(l), l['amount'], l['runTime'], l['percent']) for l in logs
                            if l['type'] == 'chemlog' and l.get('chemical') == POOLMATH_SWG_CHEMICAL
                            and 'amount' in l and 'runTime' in l and 'percent' in l], key=lambda x: x[0])
@@ -213,6 +214,7 @@ class Params:
         self.weight = 0.5               # weight on the modelled FC change since the last reading (1 = all of it); the app's default
         self.taper_start = 3.0           # days: full weight until the last reading is this old ...
         self.taper_end = 8.0             # ... falling to 0 at this many days (0 = no taper); the app's default
+        self.temp_adjust = False         # adjust the burn for the water temperature when the burn clearly follows it (the app's burnTempAdjust)
         self.swg_start = 8 * 60          # run window start, minutes after local midnight
         self.tz = timezone.utc
         self.today = datetime.now(timezone.utc)
@@ -260,6 +262,15 @@ def sun_minutes(date, lat, lon, tz):
 
 
 SWG_FIT_TOLERANCE = 0.15
+
+# The range shown for where the next FC test is likely to read: the projection plus or minus how far the same weighting
+# has missed the readings that followed it over the last 90 days, a little wider for an older last reading (the app's
+# FC_RANGE_* constants).
+RANGE_LOOKBACK_DAYS = 90
+RANGE_MIN_INTERVALS = 6
+RANGE_DEFAULT_SD = 1.8
+RANGE_GROWTH_PPM_PER_DAY = 0.1
+RANGE_Z = 1.97
 
 
 def swg_entries(ds):
@@ -405,7 +416,7 @@ class Calc:
             consumed = self.generated_between(swg, t1, t2) + added(t1, t2) - (f2 - f1)
             d = self.day_eq(t1, t2)
             odd = ds.touches_excluded(t1, t2)
-            ivs.append((t1, t2, consumed / d if d > 0 else 0.0, consumed, odd or (p.tolerance > 0 and consumed < -p.tolerance)))
+            ivs.append((t1, t2, consumed / d if d > 0 else 0.0, consumed, odd or (p.tolerance > 0 and consumed < -p.tolerance), f2 - f1, added(t1, t2), d))
         window_start = as_of - timedelta(days=p.window_days)
         in_window = [e for e in fc if window_start <= e[0] <= as_of]
         if len(in_window) < MIN_FC_READINGS_IN_WINDOW and len(fc) >= MIN_FC_READINGS_IN_WINDOW:
@@ -438,6 +449,39 @@ class Calc:
         if cov == 0 and uncovered:       # nothing but pre-record intervals: the app reports this as an error
             return None
         avg = wt / cov if cov > 0 else 0.0
+        if p.temp_adjust:
+            # a line fitted to the window's interval burn rates against the water temperature (the temperature last logged at or
+            # before each end), used only when clear: 8+ intervals, a slope 2+ standard errors from zero, at most 30% of the burn
+            def temp_at(t):
+                v = None
+                for tt, val in ds.temps:
+                    if tt <= t:
+                        v = val
+                    else:
+                        break
+                return v
+            pts = []
+            for iv in ivs:
+                o = overlap(iv)
+                if o <= 0 or iv[0] < first_swg or iv[4]:
+                    continue
+                a, b = temp_at(iv[0]), temp_at(iv[1])
+                if a is not None and b is not None:
+                    pts.append(((a + b) / 2.0, iv[2], o))
+            t_now = temp_at(as_of)
+            if len(pts) >= 8 and t_now is not None:
+                wsum = sum(w for _, _, w in pts)
+                mx = sum(x * w for x, _, w in pts) / wsum
+                my = sum(y * w for _, y, w in pts) / wsum
+                sxx = sum(w * (x - mx) ** 2 for x, _, w in pts)
+                sxy = sum(w * (x - mx) * (y - my) for x, y, w in pts)
+                if sxx > 0:
+                    slope = sxy / sxx
+                    resid = sum(w * (y - my - slope * (x - mx)) ** 2 for x, y, w in pts) / wsum
+                    se = math.sqrt(resid / sxx) * math.sqrt(len(pts) / max(1, len(pts) - 2))
+                    if se > 0 and abs(slope / se) >= 2:
+                        cap = 0.3 * avg
+                        avg += max(-cap, min(cap, slope * (t_now - mx)))
         last_t, last_v = fc[-1]
         elapsed_eq = self.day_eq(last_t, as_of)
         gen_since = self.generated_since(swg, last_t, as_of)
@@ -445,8 +489,19 @@ class Calc:
         model_change = gen_since - avg * elapsed_eq
         elapsed_days = (as_of - last_t).total_seconds() / DAY
         projected = last_v + projection_weight(p.weight, elapsed_days, p.taper_start, p.taper_end) * model_change + add_since
+        # the range: how far the same weighting missed each interval between two readings in the last 90 days (no replay needed)
+        sq, n = 0.0, 0
+        for iv in ivs:
+            gap = (iv[1] - iv[0]).total_seconds() / DAY
+            if iv[0] < last_t - timedelta(days=RANGE_LOOKBACK_DAYS) or iv[0] < first_swg or iv[4] or gap < 0.1 or gap > 14:
+                continue
+            miss = projection_weight(p.weight, gap, p.taper_start, p.taper_end) * ((iv[3] - iv[6] + iv[5]) - avg * iv[7]) + iv[6] - iv[5]
+            sq += miss * miss
+            n += 1
+        base_sd = math.sqrt(sq / n) if n >= RANGE_MIN_INTERVALS else RANGE_DEFAULT_SD
+        range_sd = math.sqrt(base_sd ** 2 + (RANGE_GROWTH_PPM_PER_DAY * elapsed_days) ** 2)
         return {'projected': projected, 'avg': avg, 'last_ts': last_t, 'suspects': suspects,
-                'prev': last_v, 'model_change': model_change, 'added': add_since}
+                'prev': last_v, 'model_change': model_change, 'added': add_since, 'range_sd': range_sd}
 
 
 # --------------------------------------------------------------------------- scoring
@@ -538,6 +593,12 @@ def report_accuracy(ds, p, args, csv_dir):
         e = [abs(x) for k, (x, _) in errs.items() if lo <= (ds.fc[k][0] - ds.fc[k - 1][0]).total_seconds() / DAY < hi]
         if e:
             print('  %-13s MAE %.2f ppm (%d)' % (label, mean(e), len(e)))
+    # What the error numbers leave out: how certain the bias is, how often the range held, and how often the miss was a costly one.
+    ee = [e for e, _ in errs.values()]
+    bias_se = math.sqrt(sum((x - s['bias']) ** 2 for x in ee) / len(ee) / (len(ee) - 1)) if len(ee) > 1 else float('nan')
+    held = sum(1 for e, r in errs.values() if abs(e) <= RANGE_Z * r['range_sd'])
+    print('bias %+.2f +/- %.2f (smaller than about twice that cannot be told from none) | the next-test range held %.0f%% (meant to be about 90%%) | FC measured more than 1 ppm below the projection %.0f%%, more than 1 ppm above %.0f%%' % (
+        s['bias'], bias_se, 100.0 * held / len(ee), 100.0 * sum(1 for x in ee if x > 1) / len(ee), 100.0 * sum(1 for x in ee if x < -1) / len(ee)))
     # the no-model baseline, and what each weighting of the modelled change would have scored
     prevs = [(r['prev'], r['model_change'], r['added'], ds.fc[k][1]) for k, (e, r) in errs.items()]
     unchanged = mean([abs(pv - m) for pv, mc, ad, m in prevs])
@@ -580,10 +641,12 @@ def report_whatif(ds, p, args, csv_dir):
     for ts, te in ((3, 8), (4, 10), (2, 6)):
         variants.append(('Taper off %d to %d days' % (ts, te), p.copy(taper_start=float(ts), taper_end=float(te))))
         variants.append(('Weighting 50%% + taper %d to %d days' % (ts, te), p.copy(weight=0.5, taper_start=float(ts), taper_end=float(te))))
+    if len(ds.temps) >= 8:
+        variants.append(('Water temperature adjustment %s' % ('off' if p.temp_adjust else 'on'), p.copy(temp_adjust=not p.temp_adjust)))
     for t in (0, 1, 3):
         if t != p.tolerance:
             variants.append(('FC anomaly check off' if t == 0 else 'FC anomaly tolerance %d ppm' % t, p.copy(tolerance=float(t))))
-    key = lambda q: (q.window_days, q.credit, q.tolerance, q.weight, q.taper_start, q.taper_end, q.daylight)
+    key = lambda q: (q.window_days, q.credit, q.tolerance, q.weight, q.taper_start, q.taper_end, q.daylight, q.temp_adjust)
     variants = [variants[0]] + [v for v in variants[1:] if key(v[1]) != key(p)]    # skip variants identical to the current settings
     results = [run_errors(ds, v[1], ks) for v in variants]
     common = [k for k in ks if all(k in r for r in results)]
