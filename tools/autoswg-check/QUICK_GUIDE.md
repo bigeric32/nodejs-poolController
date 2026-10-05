@@ -50,9 +50,11 @@ SWG Run Start/Stop) and Time Zone.
 * **Days to Target (above / below)**: how quickly to correct when FC is above or below the target. Above is
   gentle, since consumption does most of the work. Below is quicker, so you recover sooner.
 * **Return to the maintenance % when the target period ends** (off until you turn it on): the only thing AutoSwg
-  does by itself. Once you are comfortable with how it behaves for your pool, check it, and the SWG % goes back
-  to the steady level on its own when each target period you start ends. Applying anything yourself, or changing
-  the SWG % by hand, cancels the pending return.
+  does by itself, and only a convenience. A target period often ends between your FC tests, and the % you applied
+  to reach the target would keep pushing FC past it (or leave it short) until you next test. With this checked, the
+  SWG % goes back to the steady level on its own when each target period you start ends, to keep you from
+  undershooting or overshooting your target in between. Turn it on once you are comfortable with how it behaves for
+  your pool. Applying anything yourself, or changing the SWG % by hand, cancels the pending return.
 
 **Tuning options (leave alone at first):** these decide how much to trust the history.
 * **Averaging Window** (21 days): how many days are used to estimate daily usage.
