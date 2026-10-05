@@ -94,7 +94,8 @@ agreed.
 
 **Getting started.** Run in manual mode: use Check Now, read each recommendation and apply it yourself.
 Once you have some history, tune with it (the Tune button below) and keep applying each recommendation
-yourself. Automatic applying and automatic PoolMath checks are not available in this release.
+yourself. The only thing AutoSwg does on its own is the optional return to the maintenance % at the end of a target
+period you started; see the quick guide.
 
 dashPanel has the same two reports for your own pool, under **Settings > Chemistry > AutoSwg > Tuning
 options** (click "Tuning options" to expand it). This script gives you the same numbers for any pool, and

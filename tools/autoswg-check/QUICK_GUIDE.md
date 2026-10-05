@@ -2,10 +2,12 @@
 
 ## What it is for
 
-You choose an FC target for your pool. AutoSwg reads your PoolMath log, works out how much chlorine your pool
-really uses, and recommends the SWG % that keeps FC near the target. When weather, bather load or sunlight
-change that usage, the next check adjusts the % to follow it. Your part is to set the target once, keep the
-PoolMath log up to date, and apply the recommendation.
+AutoSwg is a local, data-based helper for keeping your pool's FC near a target you set. It runs on your own
+controller. It reads your PoolMath log, works out how much chlorine your pool really uses, and recommends the SWG %
+that keeps FC near the target. It also keeps extra detail locally (every recommendation and apply with the numbers
+behind it, your SWG % changes, and a longer archive of your PoolMath history) and uses that to tune the
+calculation to you and your pool's own behavior. When weather, bather load or sunlight change that usage, the
+next check adjusts the % to follow it. You choose the target, you review each recommendation, and you press Apply.
 
 ## What it needs from you
 
@@ -28,8 +30,8 @@ week is workable and daily is ideal, and more readings make the recommendation s
 
 1. Press **Check Now**. It shows a recommended SWG % and the reasons for it.
 2. Press **Apply** to send it to the chlorinator.
-3. After the target period, the % steps back to the **maintenance %** (if "Step to maintenance %" is on), the
-   level that just holds FC steady.
+3. After the target period, the % returns to the **maintenance %**, the level that just holds FC steady, if
+   "Return to the maintenance %" is checked (it is off until you turn it on).
 
 ## Start with the defaults
 
@@ -47,7 +49,10 @@ SWG Run Start/Stop) and Time Zone.
 * **Target FC**: the FC you want to hold.
 * **Days to Target (above / below)**: how quickly to correct when FC is above or below the target. Above is
   gentle, since consumption does most of the work. Below is quicker, so you recover sooner.
-* **Step to maintenance %**: return to the steady level once the target period ends.
+* **Return to the maintenance % when the target period ends** (off until you turn it on): the only thing AutoSwg
+  does by itself. Once you are comfortable with how it behaves for your pool, check it, and the SWG % goes back
+  to the steady level on its own when each target period you start ends. Applying anything yourself, or changing
+  the SWG % by hand, cancels the pending return.
 
 **Tuning options (leave alone at first):** these decide how much to trust the history.
 * **Averaging Window** (21 days): how many days are used to estimate daily usage.
@@ -62,14 +67,12 @@ the defaults look good. Apply it, then leave it alone for about 10 new FC readin
 Tuning in a loop only makes the numbers look better. **How to Tune** has the details. The reports are
 read-only.
 
-**When the tuning options and the automation appear.** They are hidden until there is enough history to judge the
-calculation: at least 15 FC readings the reports can score, over at least 42 days with SWG history behind them (about two
-months at two tests a week, sooner if you test more often). A note on the page shows how far along it is. The automation
-(**Auto-Apply Recommendations** and the automatic check) appears only after that and after you run **Tune** and accept its result:
-apply its recommendation, or press **Accept** on "Your settings look good". Both stay off until you turn them on.
+**When the tuning options appear.** They are hidden until there is enough history to judge the calculation: at least 15
+FC readings the reports can score, over at least 42 days with SWG history behind them (about two months at two tests a
+week, sooner if you test more often). A note on the page shows how far along it is.
 
 *Advanced:* the three minimums are `gateMinFcReadings` (15), `gateMinSwgEntries` (1) and `gateMinDays` (42) in the `autoSwg`
-section of `poolConfig.json` (stop njsPC before editing it), and `gateOff: true` makes everything always available.
+section of `poolConfig.json` (stop njsPC before editing it).
 
 ## Good habits and limits
 

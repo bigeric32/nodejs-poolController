@@ -87,9 +87,9 @@ export function getAutoSwgReadiness(cfg: AutoSwg, fresh: boolean = false): AutoS
 }
 
 // What the settings screen needs: the progress toward unlocking tuning, whether a Tune has been accepted, and what is available.
-export function autoSwgGateInfo(cfg: AutoSwg): AutoSwgReadiness & { tuningAvailable: boolean; tuneAccepted: boolean; automationAvailable: boolean } {
+export function autoSwgGateInfo(cfg: AutoSwg): AutoSwgReadiness & { tuningAvailable: boolean; tuneAccepted: boolean; automationAvailable: boolean; advanced: boolean } {
     const r = getAutoSwgReadiness(cfg, true);
-    return Object.assign({}, r, { tuningAvailable: cfg.tuningAvailable, tuneAccepted: typeof cfg.tuneAcceptedAt === 'string' && cfg.tuneAcceptedAt.length > 0, automationAvailable: cfg.automationAvailable });
+    return Object.assign({}, r, { advanced: cfg.mode === 'advanced', tuningAvailable: cfg.tuningAvailable, tuneAccepted: typeof cfg.tuneAcceptedAt === 'string' && cfg.tuneAcceptedAt.length > 0, automationAvailable: cfg.automationAvailable });
 }
 
 setAutoSwgReadinessProvider(cfg => getAutoSwgReadiness(cfg));
