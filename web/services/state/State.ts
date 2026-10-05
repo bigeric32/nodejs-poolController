@@ -366,6 +366,9 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
         storm: storm,
         outages: stormOutages,
     }, undefined, toLocalSwgEntries(readAutoSwgHistory()), refreshAutoSwgArchiveFromPage);
+    // Away protection ends by itself when an FC reading logged in PoolMath after it was turned on shows up: the test you take when you are back, or any test
+    // while you are away. Everything it was holding back (Auto-Apply and the rest) acts again from here, on a fresh reading.
+    endAwayOnNewReading(result.mostRecentFc);
     // A Refresh works from fresh PoolMath data; if the data it read (readings, additions, SWG entries)
     // is exactly what the last apply used -- the newest FC reading is the very one it was based on,
     // and nothing was added, edited or deleted -- there is nothing new and re-running would only restate
@@ -577,13 +580,13 @@ function clearAutoSwgAutoCheck() {
 // applyIfAutoApplyEnabled(), called after every manual Check Now/Refresh & Adjust too.
 // Called at startup and again whenever AutoSwg config is saved, so toggling either flag on
 // takes effect immediately rather than needing a restart.
-export function armAutoSwgAutoCheck(minDelayMs: number = 0) {
+export function armAutoSwgAutoCheck(minDelayMs: number = 0, firstRunMs?: number) {
     clearAutoSwgAutoCheck();
     let cfg = sys.autoSwg;
     let wasDue = state.autoSwg.nextAutoCheckAt;
     state.autoSwg.nextAutoCheckAt = undefined;
     state.autoSwg.awayStatus = cfg.awayStatus;
-    state.autoSwg.awayUntil = cfg.awayUntil;
+    state.autoSwg.awayStartedAt = cfg.awayActive ? cfg.awayStartedAt : undefined;
     // The periodic check runs for the automatic mode's Auto-Apply and automatic check, or while Away protection is on.
     if (!cfg.enabled || !((cfg.autoCheckEnabled && cfg.autoApplyEnabled) || cfg.awayActive) || !cfg.shareCode || cfg.chlorinatorId < 0) {
         if (wasDue) state.autoSwg.emitEquipmentChange();
@@ -598,6 +601,8 @@ export function armAutoSwgAutoCheck(minDelayMs: number = 0) {
         try { delay = nextScheduledCheck(new Date(), cfg.autoCheckStartTime, hours, cfg.timezone, floorMs).getTime() - Date.now(); }
         catch (err) { logger.warn(`AutoSwg: ignoring unusable automatic check start time '${cfg.autoCheckStartTime}' (${err.message}); counting ${hours}h from now instead.`); }
     }
+    // Turning Away protection on starts its first check soon, so the target you just set takes effect (within its limits) rather than a day later.
+    if (typeof firstRunMs === 'number') delay = firstRunMs;
     state.autoSwg.nextAutoCheckAt = new Date(Date.now() + delay).toISOString();
     logger.info(`AutoSwg: next automatic check at ${formatLocalDateTime(new Date(state.autoSwg.nextAutoCheckAt), cfg.timezone)} ${cfg.timezone}.`);
     state.autoSwg.emitEquipmentChange();
@@ -761,6 +766,24 @@ function autoSwgSaltAdditions(): SaltAddition[] {
 // Once an hour, record the chlorinator's own salt reading (AutoSwgSaltHistory keeps it): a fall in salt is the best sign the pool was diluted by
 // rain or a water change. It is local data only and changes no calculation; the timer is checked every ten minutes and the history keeps at most
 // one sample an hour. Nothing is recorded when the chlorinator is not configured for AutoSwg, ignores its salt reading, or reports none.
+// Away protection ends by itself when an FC reading logged in PoolMath after it was turned on shows up (see runAutoSwgRecommendation). Called after
+// every read of PoolMath: each check and the daily top-up.
+function endAwayOnNewReading(reading?: { value: number; ts: string }) {
+    let cfg = sys.autoSwg;
+    if (!cfg.awayEnabled || !cfg.awayStartedAt || !reading) return;
+    let readingAt = new Date(reading.ts).getTime(), startedAt = new Date(cfg.awayStartedAt).getTime();
+    if (isNaN(readingAt) || isNaN(startedAt) || readingAt <= startedAt) return;
+    let before = snapshotAutoSwgSettings(cfg);
+    cfg.awayEnabled = false;
+    cfg.awayEndedNote = `Away protection ended by itself: a new FC reading (${reading.value} ppm, ${formatLocalDateTime(new Date(reading.ts), cfg.timezone)}) was logged in PoolMath after it was turned on. Your other settings apply again.`;
+    try { logAutoSwgSettingChanges(before, snapshotAutoSwgSettings(cfg), 'away-ended'); } catch (err) { logger.warn(`AutoSwg: could not log the end of Away protection: ${err.message}`); }
+    logger.info(`AutoSwg: ${cfg.awayEndedNote}`);
+    state.autoSwg.awayStatus = cfg.awayStatus;
+    state.autoSwg.awayStartedAt = undefined;
+    armAutoSwgAutoCheck();
+    state.autoSwg.emitEquipmentChange();
+}
+
 // The ways the SWG can fail to hold FC that no recommendation can fix (a bad chlorinator status or no output in the run window, an automatic check that
 // stopped, a step that did not happen) become alerts in the AutoSwg area of the dashboard, checked with each salt sample. See AutoSwgWatch.ts.
 const autoSwgWatch = new AutoSwgWatch();
@@ -785,7 +808,7 @@ function detectAutoSwgOutage() {
 function watchAutoSwg() {
     try {
         let cfg = sys.autoSwg;
-        if (state.autoSwg.awayStatus !== cfg.awayStatus || state.autoSwg.awayUntil !== cfg.awayUntil) { state.autoSwg.awayStatus = cfg.awayStatus; state.autoSwg.awayUntil = cfg.awayUntil; state.autoSwg.emitEquipmentChange(); }
+        if (state.autoSwg.awayStatus !== cfg.awayStatus) { state.autoSwg.awayStatus = cfg.awayStatus; state.autoSwg.awayStartedAt = cfg.awayActive ? cfg.awayStartedAt : undefined; state.autoSwg.emitEquipmentChange(); }
         let put = (alerts: any[]) => {
             if (JSON.stringify(alerts) !== JSON.stringify(state.autoSwg.alerts || [])) { state.autoSwg.alerts = alerts; state.autoSwg.emitEquipmentChange(); }
         };
@@ -846,6 +869,12 @@ async function runAutoSwgArchiveTopUp(): Promise<void> {
             if (autoSwgArchiveRunning) next = AUTO_SWG_TOPUP_NOT_READY_MS;
             else {
                 let r = await topUpPoolMathArchive(cfg.shareCode, cfg.poolName || undefined);
+                // Whatever the mode, PoolMath is read at least once a day here; a new test ends Away protection.
+                if (typeof r !== 'undefined') {
+                    let newest: { value: number; ts: Date } | undefined;
+                    for (const f of archivedFcReadings()) if (!newest || f.ts.getTime() > newest.ts.getTime()) newest = f;
+                    if (newest) endAwayOnNewReading({ value: newest.value, ts: newest.ts.toISOString() });
+                }
                 if (typeof r === 'undefined') next = AUTO_SWG_TOPUP_NOT_READY_MS;   // the full pull has not happened yet
                 else if (r.saltAdded || r.testsEnriched || r.testsAdded || r.removed) logger.info(`AutoSwg: PoolMath archive top-up: ${r.saltAdded} salt addition${r.saltAdded === 1 ? '' : 's'}, ${r.testsEnriched} test${r.testsEnriched === 1 ? '' : 's'} filled in, ${r.testsAdded} test${r.testsAdded === 1 ? '' : 's'} added, ${r.removed} removed.`);
             }

@@ -1030,6 +1030,7 @@ export class ConfigRoute {
                 let tuningKeys = ['windowDays', 'daytimeLossSharePct', 'creditChlorineAdditions', 'fcAnomalyTolerancePpm', 'projectionWeight', 'projectionTaperStartDays', 'projectionTaperEndDays', 'burnTempAdjust'];
                 let before = tuningKeys.map(k => (sys.autoSwg as any)[k]);
                 let settingsBefore = snapshotAutoSwgSettings(sys.autoSwg);
+                let awayWasActive = sys.autoSwg.awayActive;
                 sys.autoSwg.set(req.body);
                 // Keep a record of what changed (target, days to target, tuning ...) in the AutoSwg history, so the
                 // calculation's results can be lined up against the settings in force at the time. A failure here
@@ -1052,7 +1053,8 @@ export class ConfigRoute {
                 // than needing a restart.
                 // "Your settings look good" has nothing to apply: accepting that result is what counts as accepting the Tune.
                 if (req.body && req.body.tuneAccepted === true && sys.autoSwg.tuningAvailable) sys.autoSwg.tuneAcceptedAt = new Date().toISOString();
-                armAutoSwgAutoCheck();
+                // Saving with Away protection newly on is what starts it: its first check runs a minute later, so the target just set takes effect.
+                armAutoSwgAutoCheck(0, !awayWasActive && sys.autoSwg.awayActive ? 60 * 1000 : undefined);
                 // If the share code or pool changed, pull its history soon (a no-op otherwise).
                 armAutoSwgArchiveSync(60 * 1000);
                 return res.status(200).send(Object.assign({}, sys.autoSwg.get(true), { automationAvailable: sys.autoSwg.automationAvailable, gate: autoSwgGateInfo(sys.autoSwg), awayStatus: sys.autoSwg.awayStatus }));
