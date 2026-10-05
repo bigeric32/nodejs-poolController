@@ -55,7 +55,7 @@ export const AUTO_SWG_LOGGED_SETTINGS = [
     'targetFc', 'targetDaysAbove', 'targetDaysBelow', 'newTargetDateThresholdPpm', 'autoStepEnabled',
     'autoApplyEnabled', 'autoCheckEnabled', 'autoCheckHours', 'autoCheckStartTime', 'autoApplyWarnThresholdPct',
     'windowDays', 'daytimeLossSharePct', 'creditChlorineAdditions', 'fcAnomalyTolerancePpm',
-    'projectionWeight', 'projectionTaperStartDays', 'projectionTaperEndDays',
+    'projectionWeight', 'projectionTaperStartDays', 'projectionTaperEndDays', 'overshootPpmPerDay', 'burnTempAdjust',
     'shareCode', 'poolName'
 ];
 // Logged as "changed" only: the values are private, but a different pool's data changes everything after it.

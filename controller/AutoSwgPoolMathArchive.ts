@@ -294,6 +294,14 @@ export function archivedCyaReadings(): { ts: Date; value: number }[] {
         .sort((a, b) => a.ts.getTime() - b.ts.getTime());
 }
 
+// The archived water temperatures logged with a test (in the units PoolMath logged them in), oldest first.
+export function archivedWaterTemps(): { ts: Date; value: number }[] {
+    return readPoolMathArchive().entries
+        .filter(e => e.type === 'testlog' && typeof e.waterTemp === 'number')
+        .map(e => ({ ts: new Date(e.ts), value: e.waterTemp }))
+        .sort((a, b) => a.ts.getTime() - b.ts.getTime());
+}
+
 // The archived FC test readings, oldest first, for merging into the combined history view.
 export function archivedFcReadings(): { ts: Date; value: number }[] {
     return readPoolMathArchive().entries

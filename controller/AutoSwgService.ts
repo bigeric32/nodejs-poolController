@@ -60,6 +60,28 @@ const ANOMALY_TOLERANCE_PPM = 2;
 // can be before the calculation warns.
 const SWG_RATING_TOLERANCE = 0.15;
 
+// The range shown for what the next FC test is likely to read (AutoSwgResult.projectedFcRange). Its spread is how far the
+// projection has missed the FC readings that followed it over the last FC_RANGE_LOOKBACK_DAYS (the same weighting applied to each
+// interval between two readings, which needs no replay), so it includes the noise of the test itself -- on the pool this was
+// built on, that noise is most of the miss, and the miss barely grows with the gap between tests. A small term grows the spread
+// with the age of the last reading. FC_RANGE_Z gives about 90% on that pool's history (the Projection Accuracy report shows how often
+// the range held on yours). With fewer than FC_RANGE_MIN_INTERVALS intervals to measure it from, FC_RANGE_DEFAULT_SD is used.
+const FC_RANGE_LOOKBACK_DAYS = 90;
+const FC_RANGE_MIN_INTERVALS = 6;
+const FC_RANGE_DEFAULT_SD = 1.8;
+const FC_RANGE_GROWTH_PPM_PER_DAY = 0.1;
+const FC_RANGE_Z = 1.97;
+
+// The most the target is ever raised by (see AutoSwgParams.overshootPpmPerDay and AutoSwgResult.targetMarginPpm).
+const OVERSHOOT_MARGIN_CAP_PPM = 1;
+
+// The water temperature adjustment of the burn rate (params.burnTempAdjust): a line fitted to the interval burn rates in the
+// window against the water temperature, used only with this many intervals that have a temperature at both ends and a slope this
+// many standard errors from zero, and never moving the burn by more than this fraction of itself.
+const BURN_TEMP_MIN_INTERVALS = 8;
+const BURN_TEMP_MIN_T = 2;
+const BURN_TEMP_MAX_ADJUST = 0.3;
+
 // Short non-cryptographic fingerprint of a string (djb2), used to tell whether the data a
 // calculation read has changed.
 function hashString(s: string): string {
@@ -125,6 +147,12 @@ export interface AutoSwgParams {
     // (default 3), then falling to 0 at projectionTaperEndDays (default 0 = no taper).
     projectionTaperStartDays?: number;
     projectionTaperEndDays?: number;
+    // Aim this many ppm above the target for each day since the last FC reading (never more than OVERSHOOT_MARGIN_CAP_PPM), when working
+    // out the % that reaches it: an old reading is a less certain starting point, and FC a little high is the safer miss. 0 = aim at the
+    // target itself. It does not change the maintenance %, the target date or the projection.
+    overshootPpmPerDay?: number;
+    // Adjust the burn rate for the water temperature (see BURN_TEMP_MIN_INTERVALS). Off unless set; the what-if sweep scores it.
+    burnTempAdjust?: boolean;
     sunriseTime?: string;
     sunsetTime?: string;
     // Share (percent) of a day's FC consumption that happens in daylight. 0 or omitted =
@@ -145,6 +173,10 @@ export interface AutoSwgResult {
     fcModelChange: number;           // the modelled FC change since the last reading, before weighting (generated minus consumed)
     fcAdded: number;                 // liquid chlorine added since the last reading (ppm)
     projectionWeight: number;       // the weight applied to the modelled change
+    // Where the next FC test is likely to read (about 90%): the projection plus or minus how far it has recently missed. See FC_RANGE_Z.
+    projectedFcRange: { low: number; high: number; sd: number; basis: 'history' | 'default'; intervals: number };
+    targetMarginPpm: number;         // how far above the target the % for the target was aimed (0 = at the target itself); see AutoSwgParams.overshootPpmPerDay
+    burnTempNote?: string;           // set when the water temperature adjustment was asked for: what it did or why it did nothing
     // What recommendedPctForTarget was actually aimed at: a new target (today's configured
     // FC, reached in the above/below window that applied) or, if `refreshed`, the
     // in-flight one (its original FC and deadline, unchanged).
@@ -325,6 +357,7 @@ interface ParsedCards {
     swgEvents: SwgEvent[];
     cyaEvents: FcEvent[];
     ccEvents: FcEvent[];
+    tempEvents: FcEvent[];      // water temperature logged with a test (value is the temperature, in the units it was logged in)
 }
 
 // What a read of the share page found, for refreshing the history archive (see
@@ -354,6 +387,7 @@ function parseCards(html: string, poolHeading?: string): ParsedCards {
     const swgEvents: SwgEvent[] = [];
     const cyaEvents: FcEvent[] = [];
     const ccEvents: FcEvent[] = [];
+    const tempEvents: FcEvent[] = [];
     const chlorineAdditions: ChlorineAddition[] = [];
 
     for (const card of cards) {
@@ -396,6 +430,7 @@ function parseCards(html: string, poolHeading?: string): ParsedCards {
             if (labelText === 'FC') fcEvents.push({ ts, value });
             else if (labelText === 'CYA') cyaEvents.push({ ts, value });
             else if (labelText === 'CC') ccEvents.push({ ts, value });
+            else if (/^(WATER )?TEMP/.test(labelText)) tempEvents.push({ ts, value });
         }
     }
 
@@ -414,6 +449,7 @@ function parseCards(html: string, poolHeading?: string): ParsedCards {
         swgEvents: sortDedupe(swgEvents),
         cyaEvents: sortDedupe(cyaEvents),
         ccEvents: sortDedupe(ccEvents),
+        tempEvents: sortDedupe(tempEvents),
         chlorineAdditions: sortDedupe(chlorineAdditions),
     };
 }
@@ -444,6 +480,7 @@ function parseWithArchive(html: string, heading: string | undefined, archive?: A
         swgEvents: [...base.swgEvents, ...archive.swg.filter(a => !near(base.swgEvents, a.ts.getTime())).map(a => ({ ts: a.ts, ppmPerDay: a.ppmPerDay, hrs: a.hrs, pct: a.pct, source: 'poolmath' as SwgSource }))].sort(byTime),
         cyaEvents: [...base.cyaEvents, ...archive.cya.filter(a => !near(base.cyaEvents, a.ts.getTime()))].sort(byTime),
         ccEvents: base.ccEvents,
+        tempEvents: [...base.tempEvents, ...(archive.temp || []).filter(a => !near(base.tempEvents, a.ts.getTime()))].sort(byTime),
         chlorineAdditions: [...base.chlorineAdditions, ...archive.chlorine.filter(a => !near(base.chlorineAdditions, a.ts.getTime()))].sort(byTime),
     };
     mergeCache = { base, archive, merged };
@@ -775,6 +812,7 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     const fcEvents = upTo(parsedCards.fcEvents);
     const poolMathSwgEvents = upTo(parsedCards.swgEvents);
     const cyaEvents = upTo(parsedCards.cyaEvents);
+    const tempEvents = upTo(parsedCards.tempEvents);
     if (typeof asOfMs !== 'undefined') localSwgEntries = localSwgEntries.filter(e => new Date(e.ts).getTime() <= asOfMs);
     if (onPageParsed) {
         try { onPageParsed(pageReadings(parsedCards)); }
@@ -842,16 +880,17 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     // zero -- so an interval that starts there would show a stretch with no chlorine generation. It is left
     // out of the average (the bad number would otherwise pass straight through to the burn rate).
     const firstSwgMs = swgEvents[0].ts.getTime();
-    const intervals: { t1: Date; t2: Date; perDay: number; consumed: number; rise: number; suspect: boolean; uncovered: boolean }[] = [];
+    const intervals: { t1: Date; t2: Date; perDay: number; consumed: number; rise: number; gen: number; added: number; days: number; suspect: boolean; uncovered: boolean }[] = [];
     for (let i = 0; i < fcEvents.length - 1; i++) {
         const [t1, fc1] = [fcEvents[i].ts, fcEvents[i].value];
         const [t2, fc2] = [fcEvents[i + 1].ts, fcEvents[i + 1].value];
         if (t2.getTime() <= t1.getTime()) continue;
         const gen = generatedBetween(swgEvents, t1, t2);
         const rawDelta = fc2 - fc1;
-        const consumed = gen + addedBetween(t1, t2) - rawDelta;
+        const added = addedBetween(t1, t2);
+        const consumed = gen + added - rawDelta;
         const days = dayEquivalents(t1, t2);
-        intervals.push({ t1, t2, perDay: days > 0 ? consumed / days : 0, consumed, rise: rawDelta, suspect: anomalyTolerance > 0 && consumed < -anomalyTolerance, uncovered: t1.getTime() < firstSwgMs });
+        intervals.push({ t1, t2, perDay: days > 0 ? consumed / days : 0, consumed, rise: rawDelta, gen, added, days, suspect: anomalyTolerance > 0 && consumed < -anomalyTolerance, uncovered: t1.getTime() < firstSwgMs });
     }
 
     const rightNow = params.asOf ? new Date(params.asOf) : new Date();
@@ -897,7 +936,7 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     // Average over the time actually spanned by consecutive FC readings. The
     // stretch since the last reading has no measured consumption, so dividing by
     // the whole window would understate the rate.
-    const avgPerDay = coveredDays > 0 ? weightedTotal / coveredDays : 0;
+    let avgPerDay = coveredDays > 0 ? weightedTotal / coveredDays : 0;
     // Captured verbatim (not just re-derived from avgConsumptionPpmPerDay) so a
     // dashboard tile can show exactly this sentence without duplicating the
     // windowDays/fcEvents.length/swgEvents.length formatting logic itself.
@@ -927,6 +966,52 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     if (daylight) rationale.push(`Daylight weighting: day length ${daylight.dayHours.toFixed(1)}h (${params.sunriseTime}-${params.sunsetTime} ${params.timezone}); ${(daylight.share * 100).toFixed(0)}% of a day's FC consumption counted as daytime (${daylight.auto ? 'parabolic estimate from the day length' : 'configured'}). Whole 24h blocks count as one day; only the partial block is weighted.`);
     if (swgMerge.localUsed > 0) {
         rationale.push(`SWG entries: ${swgMerge.localUsed} from the local SWG % change log, ${poolMathSwgEvents.length - swgMerge.replaced} from PoolMath; ${swgMerge.replaced} PoolMath ${swgMerge.replaced === 1 ? 'entry' : 'entries'} within 1h of a local entry ignored in favor of the local one.`);
+    }
+
+    // Water temperature adjustment of the burn (off unless asked for): chlorine is used faster in warmer water, so a line is fitted to
+    // the window's interval burn rates against the water temperature and the burn is moved along it to the latest temperature. It is
+    // used only when the line is clear (BURN_TEMP_MIN_T standard errors from zero, on at least BURN_TEMP_MIN_INTERVALS intervals) and
+    // is limited to BURN_TEMP_MAX_ADJUST of the burn. On the pool it was tried on, the temperature barely moved within a window and
+    // the adjustment did not improve the projection, which is why it is off; the what-if sweep scores it for yours.
+    let burnTempNote: string | undefined;
+    if (params.burnTempAdjust === true) {
+        const tempAt = (t: Date): number | undefined => {
+            let v: number | undefined;
+            for (const e of tempEvents) { if (e.ts.getTime() <= t.getTime()) v = e.value; else break; }
+            return v;
+        };
+        const pts: { x: number; y: number; w: number }[] = [];
+        for (const iv of intervals) {
+            const o = overlapOf(iv);
+            if (o <= 0 || iv.uncovered || iv.suspect) continue;
+            const a = tempAt(iv.t1), b = tempAt(iv.t2);
+            if (typeof a === 'number' && typeof b === 'number') pts.push({ x: (a + b) / 2, y: iv.perDay, w: o });
+        }
+        const tNow = tempAt(rightNow);
+        if (pts.length < BURN_TEMP_MIN_INTERVALS || typeof tNow !== 'number') {
+            burnTempNote = `Water temperature adjustment: not applied, only ${pts.length} interval${pts.length === 1 ? '' : 's'} in the averaging window ${pts.length === 1 ? 'has' : 'have'} a water temperature logged at both ends (${BURN_TEMP_MIN_INTERVALS} needed${typeof tNow !== 'number' ? ', and no current temperature is known' : ''}).`;
+        }
+        else {
+            const wSum = pts.reduce((a, p) => a + p.w, 0);
+            const mx = pts.reduce((a, p) => a + p.x * p.w, 0) / wSum, my = pts.reduce((a, p) => a + p.y * p.w, 0) / wSum;
+            const sxx = pts.reduce((a, p) => a + p.w * (p.x - mx) * (p.x - mx), 0);
+            const sxy = pts.reduce((a, p) => a + p.w * (p.x - mx) * (p.y - my), 0);
+            if (!(sxx > 0)) burnTempNote = 'Water temperature adjustment: not applied, the water temperature did not change within the averaging window.';
+            else {
+                const slope = sxy / sxx;
+                const resid = pts.reduce((a, p) => a + p.w * Math.pow(p.y - my - slope * (p.x - mx), 2), 0) / wSum;
+                const se = Math.sqrt(resid / sxx) * Math.sqrt(pts.length / Math.max(1, pts.length - 2));
+                const t = se > 0 ? slope / se : 0;
+                if (Math.abs(t) < BURN_TEMP_MIN_T) burnTempNote = `Water temperature adjustment: not applied, the burn does not follow the water temperature clearly enough in the averaging window (${slope >= 0 ? '+' : ''}${slope.toFixed(3)} ppm/day per degree, ${Math.abs(t).toFixed(1)} standard errors from zero; ${BURN_TEMP_MIN_T} needed).`;
+                else {
+                    const cap = BURN_TEMP_MAX_ADJUST * avgPerDay;
+                    const adj = Math.max(-cap, Math.min(cap, slope * (tNow - mx)));
+                    avgPerDay += adj;
+                    burnTempNote = `Water temperature adjustment: the burn was moved ${adj >= 0 ? '+' : ''}${adj.toFixed(2)} ppm/day for a water temperature of ${tNow} against ${mx.toFixed(1)} on average in the window (${slope >= 0 ? '+' : ''}${slope.toFixed(3)} ppm/day per degree, ${Math.abs(t).toFixed(1)} standard errors from zero).`;
+                }
+            }
+        }
+        rationale.push(burnTempNote);
     }
 
     // SWG capacity. swgLbsPerDay is the manufacturer's rated output at 100% duty
@@ -969,6 +1054,28 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         staleFcNote = `The last FC reading is ${elapsedDays.toFixed(1)} days old, so the projected FC (${projectedCurrentFc.toFixed(2)} ppm) is mostly extrapolation from the average consumption -- log a fresh FC test in PoolMath for a more reliable result.`;
         rationale.push(`NOTE: ${staleFcNote}`);
     }
+
+    // Where the next FC test is likely to read: the projection plus or minus how far the same weighting has recently missed the readings
+    // that followed it (for each interval between two readings in the last FC_RANGE_LOOKBACK_DAYS, the projection from the first to the
+    // second, which needs no replay), grown a little with the age of the last reading. Intervals left out of the average (before the SWG
+    // record, or flagged as suspect) are left out here too.
+    const rangeTaperStart = typeof params.projectionTaperStartDays === 'number' ? params.projectionTaperStartDays : 3;
+    const rangeTaperEnd = typeof params.projectionTaperEndDays === 'number' ? params.projectionTaperEndDays : 0;
+    let rangeSumSq = 0, rangeCount = 0;
+    for (const iv of intervals) {
+        const gap = (iv.t2.getTime() - iv.t1.getTime()) / 86400000;
+        if (iv.t1.getTime() < lastFc.ts.getTime() - FC_RANGE_LOOKBACK_DAYS * 86400000 || iv.uncovered || iv.suspect || gap < 0.1 || gap > 14) continue;
+        const miss = projectionWeight(baseWeight, gap, rangeTaperStart, rangeTaperEnd) * (iv.gen - avgPerDay * iv.days) + iv.added - iv.rise;
+        rangeSumSq += miss * miss;
+        rangeCount++;
+    }
+    const rangeBaseSd = rangeCount >= FC_RANGE_MIN_INTERVALS ? Math.sqrt(rangeSumSq / rangeCount) : FC_RANGE_DEFAULT_SD;
+    const rangeSd = Math.sqrt(rangeBaseSd * rangeBaseSd + Math.pow(FC_RANGE_GROWTH_PPM_PER_DAY * elapsedDays, 2));
+    const projectedFcRange = {
+        low: Math.max(0, projectedCurrentFc - FC_RANGE_Z * rangeSd), high: projectedCurrentFc + FC_RANGE_Z * rangeSd, sd: rangeSd,
+        basis: (rangeCount >= FC_RANGE_MIN_INTERVALS ? 'history' : 'default') as 'history' | 'default', intervals: rangeCount
+    };
+    rationale.push(`Where the next FC test is likely to read (about 90%): ${projectedFcRange.low.toFixed(1)} to ${projectedFcRange.high.toFixed(1)} ppm, the projection plus or minus ${(FC_RANGE_Z * rangeSd).toFixed(1)} ppm. ${projectedFcRange.basis === 'history' ? `That is how far the projection has missed the tests that followed it over the last ${FC_RANGE_LOOKBACK_DAYS} days (${rangeCount} intervals), most of it the noise of the FC test itself.` : `There are too few intervals in the last ${FC_RANGE_LOOKBACK_DAYS} days to measure that, so a typical value was used.`}`);
 
     // What to aim at. If there's an in-flight target and the projected FC is still within
     // its stray threshold of the configured target, stay on course for it: same FC, same
@@ -1030,7 +1137,11 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
 
     // Duty cycle needed to reach targetFc in targetDays.
     const targetHours = targetDays * 24;
-    const neededPpm = (targetFc - projectedCurrentFc) + (avgPerDay * targetDays);
+    // FC a little high is the safer miss, and an old reading is a less certain place to start from, so the target is raised by a margin that
+    // grows with the age of the last reading (see AutoSwgParams.overshootPpmPerDay). Only the % that reaches the target uses it.
+    const targetMarginPpm = typeof params.overshootPpmPerDay === 'number' && params.overshootPpmPerDay > 0 ? Math.min(OVERSHOOT_MARGIN_CAP_PPM, params.overshootPpmPerDay * elapsedDays) : 0;
+    if (targetMarginPpm >= 0.05) rationale.push(`Aiming ${targetMarginPpm.toFixed(2)} ppm above the ${targetFc} ppm target, because the last FC reading is ${elapsedDays.toFixed(1)} days old (${params.overshootPpmPerDay} ppm per day, at most ${OVERSHOOT_MARGIN_CAP_PPM} ppm).`);
+    const neededPpm = (targetFc + targetMarginPpm - projectedCurrentFc) + (avgPerDay * targetDays);
     const producibleAtFull = maxDailyPpmAtFull * targetDays;
     let recommendedPctForTarget = recommendedPct;
     let targetWarning: string | undefined;
@@ -1084,6 +1195,9 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         fcModelChange: modelChange,
         fcAdded: addedSinceReading,
         projectionWeight: effectiveWeight,
+        projectedFcRange: { low: Math.round(projectedFcRange.low * 100) / 100, high: Math.round(projectedFcRange.high * 100) / 100, sd: Math.round(projectedFcRange.sd * 100) / 100, basis: projectedFcRange.basis, intervals: projectedFcRange.intervals },
+        targetMarginPpm: Math.round(targetMarginPpm * 100) / 100,
+        burnTempNote: burnTempNote,
         targetFcUsed: targetFc,
         targetDateUsed: targetDate.toISOString(),
         targetDaysUsed: targetDays,
@@ -1156,6 +1270,7 @@ export interface ArchivedHistory {
     swg: { ts: Date; ppmPerDay: number; hrs: number; pct: number }[];
     cya: { ts: Date; value: number }[];
     chlorine: ChlorineAddition[];
+    temp?: { ts: Date; value: number }[];   // water temperature logged with a test, for the optional burn adjustment
 }
 
 // The SWG % and FC history exactly as a calculation would see it: FC readings
@@ -1236,6 +1351,8 @@ export interface ProjectionAccuracyRow {
     previous: number;                  // the FC at the previous reading
     modelChange: number;               // the modelled change since then, before weighting
     added: number;                     // liquid chlorine logged since then (ppm)
+    rangeLow?: number;                 // where the next test was expected to read (about 90%), as projected at the time
+    rangeHigh?: number;
 }
 
 // A target an apply aimed at, and the FC measured nearest its deadline.
@@ -1254,6 +1371,11 @@ export interface WeightingChoice { weight: number; taperStart: number; taperEnd:
 export interface ProjectionAccuracy {
     rows: ProjectionAccuracyRow[];     // oldest first
     summary: { count: number; meanAbsError?: number; rmse?: number; bias?: number; within1?: number; within2?: number;
+        // What the error numbers leave out. biasSe is the standard error of bias (a bias smaller than about twice it is not distinguishable
+        // from none). coveragePct is how often the measured FC fell inside the range shown with each projection (the range is meant to hold
+        // about 90%). fellShortPct and ranHighPct are how often the measured FC was more than 1 ppm below / above the projection: the costly
+        // miss for a pool that would rather run high than low, and its opposite.
+        biasSe?: number; coveragePct?: number; fellShortPct?: number; ranHighPct?: number;
         byGap: { label: string; count: number; meanAbsError?: number }[];
         unchangedMae?: number;         // error of the no-model baseline "FC is what it was at the last reading"
         skill?: number;                // 1 - meanAbsError / unchangedMae (positive = better than the baseline)
@@ -1294,6 +1416,7 @@ export async function buildProjectionAccuracy(params: AutoSwgParams, options: { 
                 measured: fc[k].value, projected: r.projectedCurrentFc, error: Math.round((r.projectedCurrentFc - fc[k].value) * 100) / 100,
                 avgConsumptionPpmPerDay: r.avgConsumptionPpmPerDay,
                 previous: fc[k - 1].value, modelChange: r.fcModelChange, added: r.fcAdded,
+                rangeLow: r.projectedFcRange.low, rangeHigh: r.projectedFcRange.high,
             });
         }
         catch (err) { skipped++; } // too little history before this reading
@@ -1301,6 +1424,7 @@ export async function buildProjectionAccuracy(params: AutoSwgParams, options: { 
     const mean = (xs: number[]) => xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : undefined;
     const round2 = (v: number | undefined) => typeof v === 'number' ? Math.round(v * 100) / 100 : undefined;
     const abs = rows.map(r => Math.abs(r.error));
+    const meanError = (mean(rows.map(r => r.error)) || 0) as number;
     const bucket = (label: string, lo: number, hi: number) => {
         const e = rows.filter(r => r.days >= lo && r.days < hi).map(r => Math.abs(r.error));
         return { label, count: e.length, meanAbsError: round2(mean(e)) };
@@ -1310,6 +1434,10 @@ export async function buildProjectionAccuracy(params: AutoSwgParams, options: { 
         meanAbsError: round2(mean(abs)),
         rmse: rows.length ? round2(Math.sqrt(mean(rows.map(r => r.error * r.error)))) : undefined,
         bias: round2(mean(rows.map(r => r.error))),
+        biasSe: rows.length > 1 ? round2(Math.sqrt(mean(rows.map(r => Math.pow(r.error - meanError, 2))) / (rows.length - 1))) : undefined,
+        coveragePct: rows.length ? Math.round(100 * rows.filter(r => typeof r.rangeLow === 'number' && r.measured >= r.rangeLow && r.measured <= r.rangeHigh).length / rows.length) : undefined,
+        fellShortPct: rows.length ? Math.round(100 * rows.filter(r => r.measured < r.projected - 1).length / rows.length) : undefined,
+        ranHighPct: rows.length ? Math.round(100 * rows.filter(r => r.measured > r.projected + 1).length / rows.length) : undefined,
         within1: rows.length ? Math.round(100 * abs.filter(e => e <= 1).length / rows.length) : undefined,
         within2: rows.length ? Math.round(100 * abs.filter(e => e <= 2).length / rows.length) : undefined,
         byGap: [bucket('under 2 days', 0, 2), bucket('2 to 5 days', 2, 5), bucket('5 to 14 days', 5, 15)],
@@ -1430,7 +1558,7 @@ export async function buildWhatIfSweep(params: AutoSwgParams, options: { lookbac
     const variants: { key: string; label: string; params: AutoSwgParams }[] = [{ key: 'current', label: 'Current settings', params }];
     // A variant identical to the current settings (now that the defaults are a 50% weighting with a 3 to 8 day taper, a
     // couple of the candidates are) would only add a row that says nothing changes, so it is left out.
-    const TUNING = ['windowDays', 'creditChlorineAdditions', 'fcAnomalyTolerancePpm', 'projectionWeight', 'projectionTaperStartDays', 'projectionTaperEndDays', 'sunriseTime', 'sunsetTime'];
+    const TUNING = ['windowDays', 'creditChlorineAdditions', 'fcAnomalyTolerancePpm', 'projectionWeight', 'projectionTaperStartDays', 'projectionTaperEndDays', 'burnTempAdjust', 'sunriseTime', 'sunsetTime'];
     const add = (key: string, label: string, p: AutoSwgParams) => {
         if (TUNING.every(k => (p as any)[k] === (params as any)[k])) return;
         variants.push({ key, label, params: p });
@@ -1445,6 +1573,8 @@ export async function buildWhatIfSweep(params: AutoSwgParams, options: { lookbac
         add(`taper${ts}_${te}`, `Taper off ${ts} to ${te} days`, Object.assign({}, params, { projectionTaperStartDays: ts, projectionTaperEndDays: te }));
         add(`taper${ts}_${te}_50`, `Weighting 50% + taper ${ts} to ${te} days`, Object.assign({}, params, { projectionWeight: 0.5, projectionTaperStartDays: ts, projectionTaperEndDays: te }));
     }
+    // The water temperature adjustment, once there are temperatures logged with the tests to fit it to.
+    if (parsedPage.tempEvents.length >= BURN_TEMP_MIN_INTERVALS) add('burnTemp', params.burnTempAdjust === true ? 'Water temperature adjustment off' : 'Water temperature adjustment on', Object.assign({}, params, { burnTempAdjust: params.burnTempAdjust !== true }));
     const curTol = typeof params.fcAnomalyTolerancePpm === 'number' ? params.fcAnomalyTolerancePpm : ANOMALY_TOLERANCE_PPM;
     for (const t of [0, 1, 3]) if (t !== curTol) add(`tol${t}`, t === 0 ? 'FC anomaly check off' : `FC anomaly tolerance ${t} ppm`, Object.assign({}, params, { fcAnomalyTolerancePpm: t }));
 
@@ -1479,7 +1609,7 @@ export async function buildWhatIfSweep(params: AutoSwgParams, options: { lookbac
     const baseAbs = common.map(k => Math.abs(errors[0].get(k)));
     // The settings a variant changes, by their config names, so a result can be applied as is. A taper
     // change always carries both of its days.
-    const SETTABLE = ['windowDays', 'creditChlorineAdditions', 'fcAnomalyTolerancePpm', 'projectionWeight', 'projectionTaperStartDays', 'projectionTaperEndDays'];
+    const SETTABLE = ['windowDays', 'creditChlorineAdditions', 'fcAnomalyTolerancePpm', 'projectionWeight', 'projectionTaperStartDays', 'projectionTaperEndDays', 'burnTempAdjust'];
     const settingsOf = (p: AutoSwgParams): { [setting: string]: number | boolean } | undefined => {
         const diff: { [setting: string]: number | boolean } = {};
         for (const k of SETTABLE) if ((p as any)[k] !== (params as any)[k] && typeof (p as any)[k] !== 'undefined') diff[k] = (p as any)[k];

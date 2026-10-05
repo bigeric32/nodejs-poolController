@@ -2482,6 +2482,12 @@ export class AutoSwg extends EqItem {
         // falling to 0 at the end (days). End 0 = no taper. The model hurts across long gaps, hence 3 to 8 days.
         if (typeof this.data.projectionTaperStartDays === 'undefined') this.data.projectionTaperStartDays = 3;
         if (typeof this.data.projectionTaperEndDays === 'undefined') this.data.projectionTaperEndDays = 8;
+        // Aim this many ppm above the target for each day since the last FC reading (never more than 1 ppm) when working out the % that
+        // reaches it: an old reading is a less certain place to start from, and FC a little high is the safer miss. 0 = aim at the target.
+        if (typeof this.data.overshootPpmPerDay === 'undefined') this.data.overshootPpmPerDay = 0.15;
+        // Adjust the burn rate for the water temperature when the burn clearly follows it (see AutoSwgService). Off: on the pool it was
+        // tried on it did not improve the projection; the what-if sweep scores it for yours.
+        if (typeof this.data.burnTempAdjust === 'undefined') this.data.burnTempAdjust = false;
     }
     public get enabled(): boolean { return this.data.enabled; }
     public set enabled(val: boolean) { this.setDataVal('enabled', val); }
@@ -2536,6 +2542,10 @@ export class AutoSwg extends EqItem {
     public set projectionTaperStartDays(val: number) { this.setDataVal('projectionTaperStartDays', val); }
     public get projectionTaperEndDays(): number { return this.data.projectionTaperEndDays; }
     public set projectionTaperEndDays(val: number) { this.setDataVal('projectionTaperEndDays', val); }
+    public get overshootPpmPerDay(): number { return this.data.overshootPpmPerDay; }
+    public set overshootPpmPerDay(val: number) { this.setDataVal('overshootPpmPerDay', val); }
+    public get burnTempAdjust(): boolean { return this.data.burnTempAdjust; }
+    public set burnTempAdjust(val: boolean) { this.setDataVal('burnTempAdjust', val); }
     public get projectionWeight(): number { return this.data.projectionWeight; }
     public set projectionWeight(val: number) { this.setDataVal('projectionWeight', val); }
     public get fcAnomalyTolerancePpm(): number { return this.data.fcAnomalyTolerancePpm; }

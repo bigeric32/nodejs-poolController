@@ -32,7 +32,7 @@ import { buildCombinedHistory, buildProjectionAccuracy, buildTune, buildWhatIfSw
 import type { AutoSwgParams, PageReadings } from "../../../controller/AutoSwgService";
 import { appendTuneHistory, readTuneHistory } from "../../../controller/AutoSwgTuneHistory";
 import { appendAutoSwgHistory, readAutoSwgHistory, toLocalSwgEntries, AutoSwgApplyTrigger, AUTO_SWG_ALGORITHM_VERSION } from "../../../controller/AutoSwgHistory";
-import { archivedChlorineAdditions, archivedCyaReadings, archivedFcReadings, archivedSwgEvents, isPoolMathArchiveCurrent, poolMathArchiveSummary, refreshPoolMathArchiveFromPage, syncPoolMathArchive } from "../../../controller/AutoSwgPoolMathArchive";
+import { archivedChlorineAdditions, archivedCyaReadings, archivedFcReadings, archivedSwgEvents, archivedWaterTemps, isPoolMathArchiveCurrent, poolMathArchiveSummary, refreshPoolMathArchiveFromPage, syncPoolMathArchive } from "../../../controller/AutoSwgPoolMathArchive";
 
 // 'HH:MM' wall-clock time of `dt` in `timeZone`.
 function formatHHMMInZone(dt: Date, timeZone: string): string {
@@ -285,7 +285,7 @@ function autoSwgSettingsKey(): string {
     catch (err) { /* the typed-in window is the fallback */ }
     return [
         cfg.targetFc, cfg.targetDaysAbove, cfg.targetDaysBelow, cfg.newTargetDateThresholdPpm,
-        cfg.windowDays, cfg.gallons, cfg.swgLbsPerDay, cfg.timezone, cfg.daytimeLossSharePct, cfg.creditChlorineAdditions, cfg.fcAnomalyTolerancePpm, cfg.projectionWeight, cfg.projectionTaperStartDays, cfg.projectionTaperEndDays,
+        cfg.windowDays, cfg.gallons, cfg.swgLbsPerDay, cfg.timezone, cfg.daytimeLossSharePct, cfg.creditChlorineAdditions, cfg.fcAnomalyTolerancePpm, cfg.projectionWeight, cfg.projectionTaperStartDays, cfg.projectionTaperEndDays, cfg.overshootPpmPerDay, cfg.burnTempAdjust,
         cfg.shareCode, cfg.poolName, cfg.scheduleId, windowKeyTime(start), windowKeyTime(stop)
     ].join('|');
 }
@@ -335,6 +335,8 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
         projectionWeight: cfg.projectionWeight,
         projectionTaperStartDays: cfg.projectionTaperStartDays,
         projectionTaperEndDays: cfg.projectionTaperEndDays,
+        overshootPpmPerDay: cfg.overshootPpmPerDay,
+        burnTempAdjust: cfg.burnTempAdjust,
     }, undefined, toLocalSwgEntries(readAutoSwgHistory()), refreshAutoSwgArchiveFromPage);
     // A Refresh works from fresh PoolMath data; if the data it read (readings, additions, SWG entries)
     // is exactly what the last apply used -- the newest FC reading is the very one it was based on,
@@ -388,6 +390,9 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
         targetStrayPpm: result.targetStrayPpm,
         targetThresholdPpm: result.targetThresholdPpm,
         targetDateExtended: result.targetDateExtended,
+        projectedFcRange: result.projectedFcRange,
+        targetMarginPpm: result.targetMarginPpm,
+        burnTempNote: result.burnTempNote,
     };
     state.autoSwg.rationale = result.rationale;
     state.autoSwg.error = undefined;
@@ -593,7 +598,7 @@ function refreshAutoSwgArchiveFromPage(page: PageReadings) {
 // The PoolMath archive as the reports use it, alongside what the share page lists (empty until the archive has
 // been pulled for this share code, in which case the reports see the page alone).
 function autoSwgArchiveForReports() {
-    return { fc: archivedFcReadings(), swg: archivedSwgEvents(), cya: archivedCyaReadings(), chlorine: archivedChlorineAdditions() };
+    return { fc: archivedFcReadings(), swg: archivedSwgEvents(), cya: archivedCyaReadings(), chlorine: archivedChlorineAdditions(), temp: archivedWaterTemps() };
 }
 
 // The inputs the reports (projection accuracy, what-if sweep, tune) give the calculation: the same ones a normal
@@ -621,6 +626,8 @@ function autoSwgReportParams(cfg: typeof sys.autoSwg): AutoSwgParams {
         projectionWeight: cfg.projectionWeight,
         projectionTaperStartDays: cfg.projectionTaperStartDays,
         projectionTaperEndDays: cfg.projectionTaperEndDays,
+        overshootPpmPerDay: cfg.overshootPpmPerDay,
+        burnTempAdjust: cfg.burnTempAdjust,
     };
 }
 
@@ -1331,7 +1338,7 @@ export class StateRoute {
                 try {
                     appendTuneHistory({
                         ts: cfg.lastTuneAt,
-                        settings: { windowDays: cfg.windowDays, daytimeLossSharePct: cfg.daytimeLossSharePct, creditChlorineAdditions: cfg.creditChlorineAdditions, fcAnomalyTolerancePpm: cfg.fcAnomalyTolerancePpm, projectionWeight: cfg.projectionWeight, projectionTaperStartDays: cfg.projectionTaperStartDays, projectionTaperEndDays: cfg.projectionTaperEndDays },
+                        settings: { windowDays: cfg.windowDays, daytimeLossSharePct: cfg.daytimeLossSharePct, creditChlorineAdditions: cfg.creditChlorineAdditions, fcAnomalyTolerancePpm: cfg.fcAnomalyTolerancePpm, projectionWeight: cfg.projectionWeight, projectionTaperStartDays: cfg.projectionTaperStartDays, projectionTaperEndDays: cfg.projectionTaperEndDays, burnTempAdjust: cfg.burnTempAdjust },
                         readings: tune.readings, history: tune.history, meanAbsError: tune.meanAbsError, unchangedMae: tune.unchangedMae, skill: tune.skill,
                         status: tune.status,
                         recommendation: tune.recommendation ? { kind: tune.recommendation.kind, label: tune.recommendation.label, settings: tune.recommendation.settings, expectedMae: tune.recommendation.expectedMae, change: tune.recommendation.change, low: tune.recommendation.low, high: tune.recommendation.high } : undefined,
