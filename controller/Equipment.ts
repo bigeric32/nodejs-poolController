@@ -2387,6 +2387,8 @@ export class Alerts extends EqItem {
 // Auto-Apply Recommendations and the automatic PoolMath check change the chlorinator with nobody reviewing the number, and the tuning
 // tools only say something once there is enough history to judge. Both stay hidden until there is: see AutoSwgReadiness.ts, which
 // registers the function that decides here. Everything else, including Check Now, Apply and the step to the maintenance %, is unaffected.
+// The AutoSwg modes, lowest first. USE AT YOUR OWN RISK for every one above standard (see the comment where AutoSwg's defaults are set).
+const AUTO_SWG_MODES = ['standard', 'advanced', 'automatic', 'developer'];
 let autoSwgReadinessProvider: ((cfg: AutoSwg) => { ready: boolean }) | undefined;
 export function setAutoSwgReadinessProvider(fn: (cfg: AutoSwg) => { ready: boolean }) { autoSwgReadinessProvider = fn; }
 export class AutoSwg extends EqItem {
@@ -2437,9 +2439,17 @@ export class AutoSwg extends EqItem {
         // nobody reviewing it would otherwise just overwrite whatever unapplied preview the
         // user is looking at on the calculation screen.
         if (typeof this.data.autoCheckEnabled === 'undefined') this.data.autoCheckEnabled = false;
-        // 'standard' (the default) or 'advanced'. Advanced makes the unattended features (Auto-Apply and the automatic PoolMath check) available,
-        // still only once there is enough history and a Tune has been accepted (see AutoSwgReadiness.ts). It is not on the settings screen: set
-        // it in poolConfig.json or through the config API. A pool that already had either unattended feature turned on stays in advanced.
+        // 'standard' (the default), 'advanced', 'automatic' or 'developer'. Advanced makes the unattended features (Auto-Apply and the automatic
+        // PoolMath check) available, still only once there is enough history and a Tune has been accepted (see AutoSwgReadiness.ts). Automatic is
+        // advanced plus auto tune and auto tune apply (see AutoSwgAutoTune.ts). Developer is everything automatic has, with the history gate and
+        // the accepted-Tune requirement not applying, so every feature is available on any pool (the auto tune guards still apply, as configured).
+        // It is not on the settings screen: set it in poolConfig.json or through the config API. A pool that already had either unattended feature
+        // turned on stays in advanced.
+        //
+        // USE AT YOUR OWN RISK: every mode above standard (advanced, automatic and developer) changes the chlorinator and the AutoSwg settings
+        // without anyone reviewing the change first. They are not documented in the guide, the README or the release notes on purpose, and they
+        // are meant for the author and for people who have read this code. The default, standard, never changes anything on its own except the
+        // optional return to the maintenance % (autoStepEnabled).
         if (typeof this.data.mode === 'undefined') this.data.mode = (this.data.autoApplyEnabled === true || this.data.autoCheckEnabled === true) ? 'advanced' : 'standard';
         // The thresholds for unlocking the tuning tools (see AutoSwgReadiness.ts). They are not on the settings screen; change them here
         // (poolConfig.json) or through the config API. gateOff true makes the tuning tools always available.
@@ -2447,6 +2457,22 @@ export class AutoSwg extends EqItem {
         if (typeof this.data.gateMinSwgEntries === 'undefined') this.data.gateMinSwgEntries = 1;
         if (typeof this.data.gateMinDays === 'undefined') this.data.gateMinDays = 42;
         if (typeof this.data.gateOff === 'undefined') this.data.gateOff = false;
+        // The automatic mode adds auto tune to the advanced mode's unattended features (see AutoSwgAutoTune.ts). Both checkboxes are off until
+        // turned on. autoTuneAfterFcReadings is how many new FC readings must have arrived since the last Tune before one runs by itself, and
+        // autoTuneApplyAfterManual is how many Tune recommendations you must have applied yourself before it may apply any. The autoTuneGuard*
+        // settings decide whether the data and history are good enough for an automatic apply (0 turns a check off); they are not on the
+        // settings screen -- change them in poolConfig.json or through the config API.
+        if (typeof this.data.autoTuneEnabled === 'undefined') this.data.autoTuneEnabled = false;
+        if (typeof this.data.autoTuneAfterFcReadings === 'undefined') this.data.autoTuneAfterFcReadings = 10;
+        if (typeof this.data.autoTuneApplyEnabled === 'undefined') this.data.autoTuneApplyEnabled = false;
+        if (typeof this.data.autoTuneApplyAfterManual === 'undefined') this.data.autoTuneApplyAfterManual = 2;
+        if (typeof this.data.autoTuneApplyConfirmRuns === 'undefined') this.data.autoTuneApplyConfirmRuns = 2;   // the same recommendation on this many auto tunes in a row
+        if (typeof this.data.autoTuneGuardMinReadings === 'undefined') this.data.autoTuneGuardMinReadings = 30;  // scored readings behind the Tune
+        if (typeof this.data.autoTuneGuardMinDays === 'undefined') this.data.autoTuneGuardMinDays = 90;          // days of FC and SWG history
+        if (typeof this.data.autoTuneGuardMinGainPpm === 'undefined') this.data.autoTuneGuardMinGainPpm = 0.05;  // expected drop in mean absolute error
+        if (typeof this.data.autoTuneGuardMaxFcAgeDays === 'undefined') this.data.autoTuneGuardMaxFcAgeDays = 14;  // newest FC reading
+        if (typeof this.data.autoTuneGuardMinSkill === 'undefined') this.data.autoTuneGuardMinSkill = 0;         // the calculation must beat "FC unchanged"
+        if (typeof this.data.tuneManualApplies === 'undefined') this.data.tuneManualApplies = 0;                 // Tune recommendations applied from the Tune dialog
         // Automation also needs a Tune that was run and accepted (applied, or accepted as "your settings look good"). A Tune that was
         // applied before this existed counts.
         if (typeof this.data.tuneAcceptedAt === 'undefined' && typeof this.data.lastTuneAppliedAt !== 'undefined') this.data.tuneAcceptedAt = this.data.lastTuneAppliedAt;
@@ -2566,8 +2592,13 @@ export class AutoSwg extends EqItem {
     // pushing FC past targetFc indefinitely.
     public get autoStepEnabled(): boolean { return this.data.autoStepEnabled; }
     public set autoStepEnabled(val: boolean) { this.setDataVal('autoStepEnabled', val); }
-    public get mode(): string { return this.data.mode === 'advanced' ? 'advanced' : 'standard'; }
-    public set mode(val: string) { this.setDataVal('mode', val === 'advanced' ? 'advanced' : 'standard'); }
+    // 'standard', 'advanced' (Auto-Apply and the automatic check), 'automatic' (advanced plus auto tune) or 'developer' (automatic with the history gate
+    // and the accepted-Tune requirement not applying); anything else is standard. USE AT YOUR OWN RISK for every mode above standard: see the comment
+    // where the default is set.
+    public get mode(): string { return AUTO_SWG_MODES.indexOf(this.data.mode) > 0 ? this.data.mode : 'standard'; }
+    public set mode(val: string) { this.setDataVal('mode', AUTO_SWG_MODES.indexOf(val) > 0 ? val : 'standard'); }
+    // The modes from the automatic one up have auto tune; developer is the one that skips the history gate and the accepted Tune.
+    public get developerMode(): boolean { return this.mode === 'developer'; }
     public get gateMinFcReadings(): number { return this.data.gateMinFcReadings; }
     public set gateMinFcReadings(val: number) { this.setDataVal('gateMinFcReadings', val); }
     public get gateMinSwgEntries(): number { return this.data.gateMinSwgEntries; }
@@ -2580,17 +2611,42 @@ export class AutoSwg extends EqItem {
     public set gateOff(val: boolean) { this.setDataVal('gateOff', utils.makeBool(val)); }
     // True once there is enough FC and SWG history to judge the calculation (or the gate is off): the tuning tools are then shown.
     public get tuningAvailable(): boolean {
-        if (this.gateOff) return true;
+        if (this.gateOff || this.developerMode) return true;
         try { return typeof autoSwgReadinessProvider === 'function' && autoSwgReadinessProvider(this).ready === true; }
         catch (err) { return false; }
     }
     // The unattended features (Auto-Apply and the automatic check) need the advanced mode and, on top of the history the tuning tools need,
     // a Tune that was run and accepted.
     public get automationAvailable(): boolean {
-        if (this.mode !== 'advanced') return false;
-        if (this.gateOff) return true;
+        if (this.mode === 'standard') return false;
+        if (this.gateOff || this.developerMode) return true;
         return this.tuningAvailable && typeof this.tuneAcceptedAt === 'string' && this.tuneAcceptedAt.length > 0;
     }
+    // Auto tune needs the automatic mode on top of what the other unattended features need; applying its recommendations needs auto tune.
+    public get autoTuneAvailable(): boolean { return (this.mode === 'automatic' || this.developerMode) && this.automationAvailable; }
+    public get autoTuneEnabled(): boolean { return this.autoTuneAvailable ? utils.makeBool(this.data.autoTuneEnabled) : false; }
+    public set autoTuneEnabled(val: boolean) { this.setDataVal('autoTuneEnabled', this.autoTuneAvailable ? utils.makeBool(val) : false); }
+    public get autoTuneApplyEnabled(): boolean { return this.autoTuneEnabled ? utils.makeBool(this.data.autoTuneApplyEnabled) : false; }
+    // Stored whenever auto tune is available, so a save that sets both checkboxes at once keeps both (the getter still needs auto tune on).
+    public set autoTuneApplyEnabled(val: boolean) { this.setDataVal('autoTuneApplyEnabled', this.autoTuneAvailable ? utils.makeBool(val) : false); }
+    public get autoTuneAfterFcReadings(): number { return this.data.autoTuneAfterFcReadings; }
+    public set autoTuneAfterFcReadings(val: number) { this.setDataVal('autoTuneAfterFcReadings', val); }
+    public get autoTuneApplyAfterManual(): number { return this.data.autoTuneApplyAfterManual; }
+    public set autoTuneApplyAfterManual(val: number) { this.setDataVal('autoTuneApplyAfterManual', val); }
+    public get autoTuneApplyConfirmRuns(): number { return this.data.autoTuneApplyConfirmRuns; }
+    public set autoTuneApplyConfirmRuns(val: number) { this.setDataVal('autoTuneApplyConfirmRuns', val); }
+    public get autoTuneGuardMinReadings(): number { return this.data.autoTuneGuardMinReadings; }
+    public set autoTuneGuardMinReadings(val: number) { this.setDataVal('autoTuneGuardMinReadings', val); }
+    public get autoTuneGuardMinDays(): number { return this.data.autoTuneGuardMinDays; }
+    public set autoTuneGuardMinDays(val: number) { this.setDataVal('autoTuneGuardMinDays', val); }
+    public get autoTuneGuardMinGainPpm(): number { return this.data.autoTuneGuardMinGainPpm; }
+    public set autoTuneGuardMinGainPpm(val: number) { this.setDataVal('autoTuneGuardMinGainPpm', val); }
+    public get autoTuneGuardMaxFcAgeDays(): number { return this.data.autoTuneGuardMaxFcAgeDays; }
+    public set autoTuneGuardMaxFcAgeDays(val: number) { this.setDataVal('autoTuneGuardMaxFcAgeDays', val); }
+    public get autoTuneGuardMinSkill(): number { return this.data.autoTuneGuardMinSkill; }
+    public set autoTuneGuardMinSkill(val: number) { this.setDataVal('autoTuneGuardMinSkill', val); }
+    public get tuneManualApplies(): number { return this.data.tuneManualApplies; }
+    public set tuneManualApplies(val: number) { this.setDataVal('tuneManualApplies', val); }
     public get autoApplyEnabled(): boolean { return this.automationAvailable ? this.data.autoApplyEnabled : false; }
     public set autoApplyEnabled(val: boolean) { this.setDataVal('autoApplyEnabled', this.automationAvailable ? val : false); }
     public get autoCheckEnabled(): boolean { return this.automationAvailable ? this.data.autoCheckEnabled : false; }

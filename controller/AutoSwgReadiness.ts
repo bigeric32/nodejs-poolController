@@ -30,6 +30,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 // gateMinDays; gateOff makes everything always available).
 
 import { AutoSwg, setAutoSwgReadinessProvider } from './Equipment';
+import { manualTuneApplies } from './AutoSwgAutoTune';
 import { archivedFcReadings, archivedSwgEvents } from './AutoSwgPoolMathArchive';
 import { readAutoSwgHistory, toLocalSwgEntries } from './AutoSwgHistory';
 
@@ -87,9 +88,10 @@ export function getAutoSwgReadiness(cfg: AutoSwg, fresh: boolean = false): AutoS
 }
 
 // What the settings screen needs: the progress toward unlocking tuning, whether a Tune has been accepted, and what is available.
-export function autoSwgGateInfo(cfg: AutoSwg): AutoSwgReadiness & { tuningAvailable: boolean; tuneAccepted: boolean; automationAvailable: boolean; advanced: boolean } {
+export function autoSwgGateInfo(cfg: AutoSwg): AutoSwgReadiness & { tuningAvailable: boolean; tuneAccepted: boolean; automationAvailable: boolean; advanced: boolean; automatic: boolean; autoTuneAvailable: boolean; manualTuneApplies: number; manualTuneAppliesNeeded: number } {
     const r = getAutoSwgReadiness(cfg, true);
-    return Object.assign({}, r, { advanced: cfg.mode === 'advanced', tuningAvailable: cfg.tuningAvailable, tuneAccepted: typeof cfg.tuneAcceptedAt === 'string' && cfg.tuneAcceptedAt.length > 0, automationAvailable: cfg.automationAvailable });
+    // advanced is true in the automatic and developer modes too: they include everything advanced does, and developer has everything automatic has.
+    return Object.assign({}, r, { advanced: cfg.mode !== 'standard', automatic: cfg.mode === 'automatic' || cfg.mode === 'developer', autoTuneAvailable: cfg.autoTuneAvailable, manualTuneApplies: manualTuneApplies(cfg), manualTuneAppliesNeeded: cfg.autoTuneApplyAfterManual, tuningAvailable: cfg.tuningAvailable, tuneAccepted: typeof cfg.tuneAcceptedAt === 'string' && cfg.tuneAcceptedAt.length > 0, automationAvailable: cfg.automationAvailable });
 }
 
 setAutoSwgReadinessProvider(cfg => getAutoSwgReadiness(cfg));

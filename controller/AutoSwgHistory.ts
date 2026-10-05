@@ -56,6 +56,7 @@ export const AUTO_SWG_LOGGED_SETTINGS = [
     'autoApplyEnabled', 'autoCheckEnabled', 'autoCheckHours', 'autoCheckStartTime', 'autoApplyWarnThresholdPct',
     'windowDays', 'daytimeLossSharePct', 'creditChlorineAdditions', 'fcAnomalyTolerancePpm',
     'projectionWeight', 'projectionTaperStartDays', 'projectionTaperEndDays', 'overshootPpmPerDay', 'burnTempAdjust',
+    'mode', 'autoTuneEnabled', 'autoTuneAfterFcReadings', 'autoTuneApplyEnabled', 'autoTuneApplyAfterManual',
     'shareCode', 'poolName'
 ];
 // Logged as "changed" only: the values are private, but a different pool's data changes everything after it.
@@ -64,7 +65,7 @@ const AUTO_SWG_MASKED_SETTINGS = ['shareCode', 'poolName'];
 export interface AutoSwgHistoryRecord {
     source: 'auto' | 'manual' | 'settings'; // 'auto' = applied via AutoSwg; 'manual' = changed some other way; 'settings' = AutoSwg settings were changed (see `changes`)
     changes?: AutoSwgSettingChange[]; // settings only: what changed
-    via?: 'tune';             // settings only: the change was applied from the Tune dialog
+    via?: 'tune' | 'auto-tune'; // settings only: the change was applied from the Tune dialog, or by auto tune
     algorithm?: number;       // AUTO_SWG_ALGORITHM_VERSION when this was written (absent on older records)
     trigger?: AutoSwgApplyTrigger; // auto only: what caused it (absent on records written before this was kept)
     // auto only: what this apply did with the target date. 'kept' = refreshed against the original deadline; 'new' = a new
@@ -130,7 +131,7 @@ export function snapshotAutoSwgSettings(cfg: any): { [setting: string]: any } {
 
 // Logs the settings that differ between two snapshots as one 'settings' record. Nothing is written when none differ
 // (saving the same values again is not a change).
-export function logAutoSwgSettingChanges(before: { [setting: string]: any }, after: { [setting: string]: any }, via?: 'tune'): void {
+export function logAutoSwgSettingChanges(before: { [setting: string]: any }, after: { [setting: string]: any }, via?: 'tune' | 'auto-tune'): void {
     const changes: AutoSwgSettingChange[] = [];
     for (const k of AUTO_SWG_LOGGED_SETTINGS) {
         if (JSON.stringify(before[k]) === JSON.stringify(after[k])) continue;

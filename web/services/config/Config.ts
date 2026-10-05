@@ -1042,8 +1042,10 @@ export class ConfigRoute {
                     sys.autoSwg.lastTuneAppliedAt = sys.autoSwg.lastTuneAt = new Date().toISOString();
                     // Applying a Tune recommendation accepts the Tune: with enough history, automation can then be turned on.
                     sys.autoSwg.tuneAcceptedAt = sys.autoSwg.lastTuneAppliedAt;
-                    try { markLastTuneApplied(sys.autoSwg.lastTuneAppliedAt); }
+                    try { markLastTuneApplied(sys.autoSwg.lastTuneAppliedAt, 'manual'); }
                     catch (err) { logger.warn(`AutoSwg: could not mark the last Tune as applied: ${err.message}`); }
+                    // Auto tune may apply recommendations only after you have applied a number of them yourself (see AutoSwgAutoTune.ts).
+                    sys.autoSwg.tuneManualApplies = (typeof sys.autoSwg.tuneManualApplies === 'number' ? sys.autoSwg.tuneManualApplies : 0) + 1;
                 }
                 // Re-arm fully-automatic mode's periodic check against the just-saved config,
                 // so enabling it (or changing the interval) takes effect immediately rather
