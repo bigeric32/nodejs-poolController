@@ -79,19 +79,24 @@ week is workable and daily is ideal, and more readings make the recommendation s
   Alerts appear on the dashboard only: nothing is sent to a phone, so look at it, or reach it remotely if you have set that up.
 * A sharp fall in the chlorinator's salt reading is noted in the recommendation: the pool was probably diluted by rain or a
   water change, and some of the FC lost may not be consumption. On its own, nothing is adjusted for it.
-* **Away protection (optional, off until you turn it on for a trip).** In the settings, under "Vacation: Away protection", check
-  the box and enter your return date. Until the end of that day AutoSwg checks PoolMath every 12 hours by itself and may raise the
-  SWG % to make up for FC lost to a sharp fall in the salt reading (dilution) or to an outage (njsPC was not running, so the
-  equipment was off). It can only add chlorine, and only within limits: the % stays between the maintenance % and the maintenance %
-  plus the "At most" points you set (20 by default), it never goes below the maintenance %, it acts only when your last test is 3
-  days old or more, one event acts for at most 3 days, and it needs "Return to the maintenance %" so each boost ends by itself. A
-  note on the card says it is on. It does nothing after the return date, and your first test after you are back takes over. This
-  is the one case, besides the return to the maintenance %, where AutoSwg changes the SWG % without you pressing Apply, and it
-  only does so while you have turned it on.
+* **Away protection (optional, off until you turn it on for a trip).** In the settings, under "Vacation: Away protection",
+  set your vacation **Target FC**, check the box and **save the settings**: saving starts it. Log your last FC test before
+  you save, because a test logged afterward ends it (see below). While it is on, AutoSwg checks PoolMath every 12 hours by
+  itself and may raise the SWG % to make up for FC lost to a sharp fall in the salt reading (dilution) or to an outage (njsPC
+  was not running, so the equipment was off). It can only add chlorine, and only within limits: the % stays between the
+  maintenance % and the maintenance % plus the "At most" points you set (20 by default), it never goes below the
+  maintenance %, it acts only when your last test is 3 days old or more, one event acts for at most 3 days, and it needs
+  "Return to the maintenance %" so each boost ends by itself. Away protection takes over from Auto-Apply, the automatic check
+  and auto tune while it is on: their settings are kept and shown grayed out, but they do not act. **It ends when you uncheck
+  it and save, or by itself when a new FC reading is logged in PoolMath after you turned it on**, so if you forget to turn it
+  off, your first test when you are back does it, and your other settings then apply again. A note on the card says when it is
+  on. This is the one case, besides the return to the maintenance %, where AutoSwg changes the SWG % without you pressing
+  Apply, and it only does so while you have turned it on.
 * None of this tests FC for you. Heavy rain, debris or an equipment failure can still lower it; the raised target is your margin.
 
 **When you are back: recovery to steady state**
-1. Test FC and log it.
+1. Test FC and log it. This ends Away protection, if you left it on, the next time AutoSwg reads PoolMath (a check, or
+   the read it does at least once a day in every mode). Press Check Now to have it happen right away.
 2. Set **Target FC** back to your usual level and press Check Now, then Apply.
 3. If FC is above the target, the SWG is cut back (to 0% if need be) and consumption brings FC down over **Days to Target (FC
    above target)**, the gentle direction. If it is below, the SWG pushes up over **Days to Target (FC below target)**. When
