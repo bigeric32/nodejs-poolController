@@ -128,3 +128,17 @@ class SaltHistory {
     }
 }
 export const saltHistory = new SaltHistory();
+
+// The storm response acts on one event for at most stormMaxDays, and a new event cannot start for STORM_LOCKOUT_DAYS after one did (the length of the lookback
+// a salt drop stays visible for) unless the drop has become STORM_DEEPER_PCT deeper. Without that, a drop that stays visible for three weeks could keep
+// starting new events, each raising the SWG again. `startedAt` and `startPct` are what was recorded when the last event started.
+export const STORM_LOCKOUT_DAYS = 21;
+export const STORM_DEEPER_PCT = 0.05;
+export function stormEventStatus(startedAt: string | undefined, startPct: number | undefined, dropPct: number, maxDays: number, now: number = Date.now()): { apply: boolean; newEvent: boolean } {
+    const started = startedAt ? new Date(startedAt).getTime() : NaN;
+    if (isNaN(started)) return { apply: true, newEvent: true };
+    const since = now - started;
+    const deeper = typeof startPct === 'number' && dropPct >= startPct + STORM_DEEPER_PCT;
+    if (since > STORM_LOCKOUT_DAYS * DAY_MS || deeper) return { apply: true, newEvent: true };
+    return { apply: since <= maxDays * DAY_MS, newEvent: false };
+}
