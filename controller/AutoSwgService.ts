@@ -1321,8 +1321,16 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
             const window = `${Math.round(targetDays * 10) / 10} day${Math.round(targetDays * 10) / 10 === 1 ? '' : 's'}`;
             const netGainPerDay = maxDailyPpmAtFull - avgPerDay;
             const gap = targetFc - projectedCurrentFc;
-            if (netGainPerDay > 0 && gap > 0) targetWarning = `Even at 100%, the SWG can't bring FC from a projected ${projectedCurrentFc.toFixed(2)} ppm up to the ${targetFc} ppm target within ${window} -- at 100% it would take about ${(gap / netGainPerDay).toFixed(1)} days. The recommendation is capped at 100%.`;
-            else targetWarning = `Even at 100%, the SWG (${maxDailyPpmAtFull.toFixed(2)} ppm/day) can't outpace the ${avgPerDay.toFixed(2)} ppm/day of consumption, so FC will not reach the ${targetFc} ppm target within ${window}, or at all, at this rate. The recommendation is capped at 100%.`;
+            // Before changing the target: how many SWG hours a day would reach it at 100%. The SWG makes the same amount in each hour it runs, so the hours
+            // needed scale with what is needed per day. The SWG runs when its schedule does (and the pump with it), so the suggestion is to extend that run window.
+            let extendHint = '';
+            if (swgHours > 0 && targetDays > 0 && neededPpm > 0) {
+                const hoursNeeded = (neededPpm / targetDays) / (maxDailyPpmAtFull / swgHours);
+                if (hoursNeeded <= 24) extendHint = ` Before changing the target, consider extending the SWG run window (the schedule it runs on): about ${(Math.ceil(hoursNeeded * 2) / 2).toFixed(1)} hours a day at 100% would reach it within ${window}, against ${swgHours.toFixed(1)} hours now.`;
+                else extendHint = ` Even running 24 hours a day at 100% would not reach it within ${window}, so lengthen Days to Target or lower the target.`;
+            }
+            if (netGainPerDay > 0 && gap > 0) targetWarning = `Even at 100%, the SWG can't bring FC from a projected ${projectedCurrentFc.toFixed(2)} ppm up to the ${targetFc} ppm target within ${window} -- at 100% it would take about ${(gap / netGainPerDay).toFixed(1)} days. The recommendation is capped at 100%.${extendHint}`;
+            else targetWarning = `Even at 100%, the SWG (${maxDailyPpmAtFull.toFixed(2)} ppm/day) can't outpace the ${avgPerDay.toFixed(2)} ppm/day of consumption, so FC will not reach the ${targetFc} ppm target within ${window}, or at all, at this rate. The recommendation is capped at 100%.${extendHint}`;
             rationale.push(`WARNING: ${targetWarning}`);
         }
     }
