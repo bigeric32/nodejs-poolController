@@ -321,7 +321,7 @@ function autoSwgSettingsKey(): string {
     try { const win = resolveAutoSwgRunWindow(cfg); start = win.swgStartTime; stop = win.swgStopTime; }
     catch (err) { /* the typed-in window is the fallback */ }
     return [
-        cfg.targetFc, cfg.targetDaysAbove, cfg.targetDaysBelow, cfg.newTargetDateThresholdPpm,
+        cfg.targetFc, cfg.targetPeriodsAbove, cfg.targetPeriodsBelow, cfg.newTargetDateThresholdPpm,
         cfg.windowDays, cfg.gallons, cfg.swgLbsPerDay, cfg.timezone, cfg.daytimeLossSharePct, cfg.creditChlorineAdditions, cfg.fcAnomalyTolerancePpm, cfg.projectionWeight, cfg.projectionTaperStartDays, cfg.projectionTaperEndDays, cfg.overshootPpmPerDay, cfg.protectOvernightLow, cfg.nightBurnRatio, cfg.burnTempAdjust, cfg.stormResponseEnabled, cfg.stormMaxExtraPct, cfg.awayStatus,
         cfg.shareCode, cfg.poolName, cfg.scheduleId, windowKeyTime(start), windowKeyTime(stop)
     ].join('|');
@@ -385,8 +385,8 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
         timezone: cfg.timezone,
         windowDays: cfg.windowDays,
         targetFc: cfg.targetFc,
-        targetDaysAbove: cfg.targetDaysAbove,
-        targetDaysBelow: cfg.targetDaysBelow,
+        targetPeriodsAbove: cfg.targetPeriodsAbove,
+        targetPeriodsBelow: cfg.targetPeriodsBelow,
         inFlight: inFlight,
         sunriseTime: sunTimes.sunrise,
         sunsetTime: sunTimes.sunset,
@@ -713,8 +713,8 @@ function autoSwgReportParams(cfg: typeof sys.autoSwg): AutoSwgParams {
         timezone: cfg.timezone,
         windowDays: cfg.windowDays,
         targetFc: cfg.targetFc,
-        targetDaysAbove: cfg.targetDaysAbove,
-        targetDaysBelow: cfg.targetDaysBelow,
+        targetPeriodsAbove: cfg.targetPeriodsAbove,
+        targetPeriodsBelow: cfg.targetPeriodsBelow,
         sunriseTime: sunTimes.sunrise,
         sunsetTime: sunTimes.sunset,
         daytimeSharePct: cfg.daytimeLossSharePct,

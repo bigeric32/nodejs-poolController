@@ -118,13 +118,12 @@ export interface AutoSwgParams {
     swgStopTime: string;  // e.g. '19:00' or '7pm'
     timezone: string;     // IANA zone name, e.g. 'America/New_York'
     windowDays: number;   // running-average window, e.g. 14
-    // The configured target for a NEW target: reach targetFc in targetDaysAbove days if the
-    // projected current FC is above it, or targetDaysBelow days if it's at or below it --
-    // coming down from above and building back up from below are different jobs and
-    // needn't take the same time.
+    // The configured target for a NEW target: reach targetFc by the time the SWG has run targetPeriodsAbove run periods (one period is one run window of the SWG,
+    // counted in on-time only, so the off hours in between do not count) if the projected current FC is above it, or targetPeriodsBelow periods if it's at or below it --
+    // coming down from above and building back up from below are different jobs and needn't take the same time. Half periods are allowed (0.5 at least).
     targetFc: number;
-    targetDaysAbove: number;
-    targetDaysBelow: number;
+    targetPeriodsAbove: number;
+    targetPeriodsBelow: number;
     // An already-committed target (a previous apply's FC and deadline) to stay on course
     // for instead of starting a new one, as long as the projected FC is within strayPpm of
     // targetFc. Infinity always stays on course (an explicit refresh); a finite value lets
@@ -629,6 +628,20 @@ function localMinutesOfDay(instant: Date, timeZone: string): number {
     const parts: any = {};
     for (const p of dtf.formatToParts(instant)) parts[p.type] = p.value;
     return (parseInt(parts.hour, 10) % 24) * 60 + parseInt(parts.minute, 10);
+}
+
+// The first instant by which the SWG will have been on for `onHours` hours after `from`, counting only the run window (the off hours in between add nothing).
+// A run period is one run window, so N periods are N x the window length. Found by bisection: the hours between two instants only grow with the later one.
+function deadlineAfterRunHours(from: Date, onHours: number, start: TimeOfDay, stop: TimeOfDay, timeZone: string): Date {
+    const a = start.hour * 60 + start.minute + start.second / 60, b = stop.hour * 60 + stop.minute + stop.second / 60;
+    const lenHours = (b > a ? b - a : b + 1440 - a) / 60;
+    if (!(lenHours > 0) || !(onHours > 0)) return new Date(from.getTime() + Math.max(0, onHours) * 3600000);
+    let lo = 0, hi = (onHours / lenHours + 2) * 1440;     // minutes: always enough, since every day holds one window
+    for (let i = 0; i < 60; i++) {
+        const mid = (lo + hi) / 2;
+        if (runWindowHoursBetween(from, new Date(from.getTime() + mid * 60000), start, stop, timeZone) >= onHours - 1e-6) hi = mid; else lo = mid;
+    }
+    return new Date(from.getTime() + Math.ceil(hi - 1e-4) * 60000);   // to the whole minute, so a deadline at the end of a window reads 17:06, not 17:05:59
 }
 
 // The next time the SWG's run window opens, strictly after `instant` (to the minute).
@@ -1239,10 +1252,12 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     else {
         const above = projectedCurrentFc > params.targetFc;
         if (inFlight) rationale.push(`Projected current FC is ${strayedBy.toFixed(2)} ppm ${above ? 'above' : 'below'} the ${params.targetFc} ppm target, more than the ${inFlight.strayPpm} ppm new-target-date threshold: starting a new target date instead of refreshing the old one.`);
-        const configuredDays = above ? params.targetDaysAbove : params.targetDaysBelow;
-        targetDays = typeof configuredDays === 'number' && isFinite(configuredDays) ? Math.max(0.25, configuredDays) : 1;   // a quarter day at least
-        targetDate = new Date(rightNow.getTime() + targetDays * 86400000);
-        rationale.push(`Projected current FC is ${above ? 'above' : 'at or below'} the ${params.targetFc} ppm target: using the ${targetDays}-day window for FC ${above ? 'above' : 'below'} target.`);
+        const configuredPeriods = above ? params.targetPeriodsAbove : params.targetPeriodsBelow;
+        const periods = typeof configuredPeriods === 'number' && isFinite(configuredPeriods) ? Math.max(0.5, configuredPeriods) : 1;   // half a run period at least
+        // N run periods: the deadline is when the SWG's own on-time since now adds up to N run windows (a window already running counts for what is left of it)
+        targetDate = swgHours > 0 ? deadlineAfterRunHours(rightNow, periods * swgHours, swgStart, swgStop, params.timezone) : new Date(rightNow.getTime() + periods * 86400000);
+        targetDays = (targetDate.getTime() - rightNow.getTime()) / 86400000;
+        rationale.push(`Projected current FC is ${above ? 'above' : 'at or below'} the ${params.targetFc} ppm target: using the ${periods}-run-period window for FC ${above ? 'above' : 'below'} target, which ends ${formatLocalDateTime(targetDate, params.timezone)} (when the SWG has been on for ${periods} run window${periods === 1 ? '' : 's'}).`);
     }
 
     // FC that starts well ABOVE the target may not burn down to it by the deadline even with
@@ -1300,13 +1315,13 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     }
     const neededPpm = (targetFc + targetMarginPpm + troughAddPpm - projectedCurrentFc) + (avgPerDay * periodDayEquivalents);
     const producibleAtFull = swgHours > 0 ? (maxDailyPpmAtFull / swgHours) * runHoursInPeriod : 0;
-    if (Math.abs(targetDays - Math.round(targetDays)) > 0.01) {
-        rationale.push(`The target period is ${Math.round(targetHours * 10) / 10}h, and the SWG run window (${params.swgStartTime}-${params.swgStopTime}) is on for ${runHoursInPeriod.toFixed(1)}h of it; consumption over it is about ${periodDayEquivalents.toFixed(2)} days' worth.`);
-    }
+    // how many run periods the target period holds (a kept target counts what is left of it)
+    const periodsInTarget = swgHours > 0 ? runHoursInPeriod / swgHours : targetDays;
+    rationale.push(`The target period is ${Math.round(targetHours * 10) / 10}h on the clock and holds ${periodsInTarget.toFixed(2)} run period${Math.abs(periodsInTarget - 1) < 0.005 ? '' : 's'} (the SWG on for ${runHoursInPeriod.toFixed(1)}h, ${params.swgStartTime}-${params.swgStopTime}); consumption over it is about ${periodDayEquivalents.toFixed(2)} days' worth.`);
     let recommendedPctForTarget = recommendedPct;
     let targetWarning: string | undefined;
     if (!(producibleAtFull > 0) && neededPpm > 0) {
-        targetWarning = `No SWG run time falls inside this ${Math.round(targetHours * 10) / 10}-hour target period (the SWG runs ${params.swgStartTime}-${params.swgStopTime}), so it cannot add chlorine in it. Lengthen Days to Target so the period holds a run, or change the target.`;
+        targetWarning = `No SWG run time falls inside this ${Math.round(targetHours * 10) / 10}-hour target period (the SWG runs ${params.swgStartTime}-${params.swgStopTime}), so it cannot add chlorine in it. Lengthen the run periods to target so the period holds a run, or change the target.`;
         rationale.push(`WARNING: ${targetWarning}`);
     }
     if (producibleAtFull > 0) {
@@ -1318,11 +1333,19 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         // in the window -- say so, and how long it would really take, rather than leaving a
         // capped number that quietly reads like a plan that works.
         if (unclampedPct > 100.5) {
-            const window = `${Math.round(targetDays * 10) / 10} day${Math.round(targetDays * 10) / 10 === 1 ? '' : 's'}`;
+            const window = `${Math.round(periodsInTarget * 100) / 100} run period${Math.abs(periodsInTarget - 1) < 0.005 ? '' : 's'}`;
             const netGainPerDay = maxDailyPpmAtFull - avgPerDay;
             const gap = targetFc - projectedCurrentFc;
-            if (netGainPerDay > 0 && gap > 0) targetWarning = `Even at 100%, the SWG can't bring FC from a projected ${projectedCurrentFc.toFixed(2)} ppm up to the ${targetFc} ppm target within ${window} -- at 100% it would take about ${(gap / netGainPerDay).toFixed(1)} days. The recommendation is capped at 100%.`;
-            else targetWarning = `Even at 100%, the SWG (${maxDailyPpmAtFull.toFixed(2)} ppm/day) can't outpace the ${avgPerDay.toFixed(2)} ppm/day of consumption, so FC will not reach the ${targetFc} ppm target within ${window}, or at all, at this rate. The recommendation is capped at 100%.`;
+            // Before changing the target: how many SWG hours per run period would reach it at 100%. The SWG makes the same amount in each hour it runs, so the hours
+            // needed scale with what is needed. The SWG runs when its schedule does (and the pump with it), so the suggestion is to extend that run window.
+            let extendHint = '';
+            if (swgHours > 0 && periodsInTarget > 0 && neededPpm > 0) {
+                const hoursNeeded = (neededPpm / (maxDailyPpmAtFull / swgHours)) / periodsInTarget;
+                if (hoursNeeded <= 24) extendHint = ` Before changing the target, consider extending the SWG run window (the schedule it runs on): about ${(Math.ceil(hoursNeeded * 2) / 2).toFixed(1)} hours per run period at 100% would reach it within ${window}, against ${swgHours.toFixed(1)} hours now.`;
+                else extendHint = ` Even running 24 hours a day at 100% would not reach it within ${window}, so lengthen the run periods to target or lower the target.`;
+            }
+            if (netGainPerDay > 0 && gap > 0) targetWarning = `Even at 100%, the SWG can't bring FC from a projected ${projectedCurrentFc.toFixed(2)} ppm up to the ${targetFc} ppm target within ${window} -- at 100% it would take about ${(gap / netGainPerDay).toFixed(1)} run periods. The recommendation is capped at 100%.${extendHint}`;
+            else targetWarning = `Even at 100%, the SWG (${maxDailyPpmAtFull.toFixed(2)} ppm/day) can't outpace the ${avgPerDay.toFixed(2)} ppm/day of consumption, so FC will not reach the ${targetFc} ppm target within ${window}, or at all, at this rate. The recommendation is capped at 100%.${extendHint}`;
             rationale.push(`WARNING: ${targetWarning}`);
         }
     }
