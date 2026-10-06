@@ -3972,6 +3972,11 @@ export class AutoSwgState extends EqState {
     // left to warn about.
     public get lastAutoApplyLargeChange(): boolean { return this.data.lastAutoApplyLargeChange; }
     public set lastAutoApplyLargeChange(val: boolean) { this.setDataVal('lastAutoApplyLargeChange', val); }
+    // What the warning banner says about that change: the SWG % before it, and the warning threshold it was measured against.
+    public get lastAutoApplyPreviousPct(): number { return this.data.lastAutoApplyPreviousPct; }
+    public set lastAutoApplyPreviousPct(val: number) { this.setDataVal('lastAutoApplyPreviousPct', val); }
+    public get lastAutoApplyThresholdPct(): number { return this.data.lastAutoApplyThresholdPct; }
+    public set lastAutoApplyThresholdPct(val: number) { this.setDataVal('lastAutoApplyThresholdPct', val); }
     public get error(): string { return this.data.error; }
     public set error(val: string) { this.setDataVal('error', val); }
     // Pending automatic step (see AutoSwg.autoStepEnabled): when to change the setpoint,
