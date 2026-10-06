@@ -195,7 +195,9 @@ You do not need this section to use AutoSwg. It is for anyone who wants to know 
    Target window, so it sits above or below maintenance until the target is reached. If FC is far above target
    and even 0% would not bring it down in time, a new target's deadline is moved out to when consumption alone gets there.
    If FC is within the New Target Date Threshold of the target, the target is kept as it is and its deadline holds:
-   close enough counts, and the SWG steps to the maintenance % at that time.
+   close enough counts, and the SWG steps to the maintenance % at that time. If you have changed the **Target FC**
+   since the last apply, Refresh and Apply (and the automatic check) start a new target instead: a changed target is a
+   request for one.
    If even 100% cannot reach it, the report says how long it would take.
 5. **Refresh: Adjust %** re-works the % with fresh PoolMath data against the same target date. It does not
    restart the countdown.

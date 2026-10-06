@@ -306,6 +306,7 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
     if (!cfg.shareCode) throw new ServiceParameterError('AutoSwg is not configured: shareCode is required.', 'autoSwg', 'shareCode', cfg.shareCode);
     // The in-flight target (the last apply's FC and deadline), if there's one still ahead.
     let inFlight: { targetFc: number; targetDate: Date; strayPpm: number } | undefined;
+    let targetChangeNote: string | undefined;
     if (mode !== 'new') {
         let at = state.autoSwg.lastAppliedTargetDate ? new Date(state.autoSwg.lastAppliedTargetDate).getTime() : NaN;
         if (mode === 'refine') {
@@ -315,7 +316,13 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
             // quietly degrade to the maintenance % rather than say so.
             if (isNaN(at) || at <= Date.now()) throw new ServiceParameterError('The target date of the last AutoSwg apply has already passed, so there is nothing left to refine toward -- run Check Now to start a new target.', 'autoSwg', 'lastAppliedTargetDate', state.autoSwg.lastAppliedTargetDate);
         }
-        if (!isNaN(at) && at > Date.now() && typeof state.autoSwg.lastAppliedTargetFc === 'number') {
+        // A Target FC changed since the last apply is a request for a new target: staying on course for the old one would ignore what you just set (and
+        // the pending step would keep naming the old target). Refine is the explicit "stay on the in-flight target" and keeps it.
+        let lastTarget = state.autoSwg.lastAppliedTargetFc;
+        if (mode === 'auto' && typeof lastTarget === 'number' && Math.abs(cfg.targetFc - lastTarget) > 1e-9) {
+            targetChangeNote = `The Target FC was changed from ${lastTarget} to ${cfg.targetFc} ppm since the last apply, so this starts a new target instead of staying on course for the old one.`;
+        }
+        else if (!isNaN(at) && at > Date.now() && typeof state.autoSwg.lastAppliedTargetFc === 'number') {
             inFlight = { targetFc: state.autoSwg.lastAppliedTargetFc, targetDate: new Date(at), strayPpm: mode === 'refine' ? Infinity : cfg.newTargetDateThresholdPpm };
         }
     }
@@ -378,6 +385,7 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
     if (mode !== 'new' && inFlight && state.autoSwg.lastAppliedFcAt && result.mostRecentFc && result.mostRecentFc.ts === state.autoSwg.lastAppliedFcAt && state.autoSwg.lastAppliedSettingsKey === autoSwgSettingsKey() && state.autoSwg.lastAppliedDataKey === result.dataKey) {
         return `No new FC reading in PoolMath since ${formatLocalDateTime(new Date(result.mostRecentFc.ts), cfg.timezone)}; nothing to refresh.`;
     }
+    if (targetChangeNote) result.rationale.unshift(targetChangeNote);
     if (extraRationaleNote) result.rationale.unshift(extraRationaleNote);
     if (scheduleNote) result.rationale.unshift(scheduleNote);
     state.autoSwg.lastCheckedAt = new Date().toISOString();
