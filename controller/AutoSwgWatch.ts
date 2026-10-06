@@ -36,6 +36,7 @@ export interface AutoSwgWatchInput {
     checkError?: string;
     stepAt?: string;
     outages?: { from: string; to: string; minutes: number; rebooted?: boolean }[];   // times njsPC was not running (state.autoSwg.outages)
+    tempsUnchangedMs?: number;            // how long none of the air, water or solar temperatures has changed (only for sensors that report fractions)
 }
 
 // Chlorinator statuses (the chlorinatorStatus value map): 0 ok, 1 low flow, 2 low salt, 3 very low salt, 4 high current, 5 clean cell, 6 low voltage,
@@ -45,6 +46,7 @@ export const WATCH_STATUS_MIN = 30 * 60 * 1000;       // a bad status must last 
 export const WATCH_NO_OUTPUT_MIN = 45 * 60 * 1000;    // so must an output of zero while a % is set
 export const WATCH_STEP_OVERDUE_MS = 30 * 60 * 1000;
 export const WATCH_OUTAGE_SHOWN_MS = 7 * 86400000;    // an outage stays on the dashboard this long
+export const WATCH_TEMPS_FROZEN_MS = 15 * 60 * 1000;  // no air, water or solar temperature has changed for this long (sensors read to a fraction of a degree change every minute or so)
 
 // The minutes after local midnight in `timeZone`.
 export function minutesOfDayIn(timeZone: string, now: number): number {
@@ -92,6 +94,12 @@ export class AutoSwgWatch {
             if (!isNaN(at) && i.now - at > WATCH_STEP_OVERDUE_MS) {
                 found.push({ id: 'step-overdue', level: 'alarm', minMs: 0, text: `The step to the maintenance % that was due ${Math.round((i.now - at) / 60000)} minutes ago has not happened.` });
             }
+        }
+        // Sensors read to a fraction of a degree (REM) move every minute or so, so all of them reading exactly the same for this long means the
+        // readings stopped arriving (the feed from REM, or REM itself), not that nothing changed. Solar heating and the 24 hour average then work from old values.
+        if (typeof i.tempsUnchangedMs === 'number' && i.tempsUnchangedMs >= WATCH_TEMPS_FROZEN_MS) {
+            found.push({ id: 'temps-frozen', level: 'warning', minMs: 0, since: new Date(i.now - i.tempsUnchangedMs).toISOString(),
+                text: `None of the air, water or solar temperatures has changed for ${Math.round(i.tempsUnchangedMs / 60000)} minutes, so njsPC is probably not receiving new readings (check the sensor feed from REM). Solar heating and the 24 hour water average are working from old values.` });
         }
         for (const o of i.outages || []) {
             const to = new Date(o.to).getTime();
