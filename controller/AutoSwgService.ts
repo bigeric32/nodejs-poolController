@@ -615,6 +615,29 @@ function to24Hour(h: number, meridian: string): number {
 
 // Hours from `start` to `stop`, treating stop <= start as running past midnight
 // into the next day (e.g. start 10pm, stop 6am -> 8.0 hours).
+// Minutes after local midnight (in `timeZone`) at `instant`.
+function localMinutesOfDay(instant: Date, timeZone: string): number {
+    const dtf = new Intl.DateTimeFormat('en-US', { timeZone, hourCycle: 'h23', hour: 'numeric', minute: 'numeric' } as any);
+    const parts: any = {};
+    for (const p of dtf.formatToParts(instant)) parts[p.type] = p.value;
+    return (parseInt(parts.hour, 10) % 24) * 60 + parseInt(parts.minute, 10);
+}
+
+// How many hours of the SWG's daily run window fall between two instants. Every whole 24 hours holds one full run; the rest of the period holds only the part of
+// the run that lies inside it, so a half-day target period can hold the whole run, part of it, or none of it. (Daylight saving shifts are ignored.)
+function runWindowHoursBetween(from: Date, to: Date, start: TimeOfDay, stop: TimeOfDay, timeZone: string): number {
+    const a = start.hour * 60 + start.minute + start.second / 60;
+    const b = stop.hour * 60 + stop.minute + stop.second / 60;
+    const len = b > a ? b - a : b + 1440 - a;     // a window may run past midnight
+    const totalMin = Math.max(0, (to.getTime() - from.getTime()) / 60000);
+    const full = Math.floor(totalMin / 1440), rem = totalMin - full * 1440;
+    const s = localMinutesOfDay(from, timeZone), e = s + rem;
+    const overlap = (w0: number, w1: number) => Math.max(0, Math.min(e, w1) - Math.max(s, w0));
+    // the window as it falls the day before, the same day and the next day, so one that crosses midnight is counted on both sides of it
+    const mins = full * len + overlap(a - 1440, a - 1440 + len) + overlap(a, a + len) + overlap(a + 1440, a + 1440 + len);
+    return mins / 60;
+}
+
 function durationHours(start: TimeOfDay, stop: TimeOfDay): number {
     const startSecs = start.hour * 3600 + start.minute * 60 + start.second;
     const stopSecs = stop.hour * 3600 + stop.minute * 60 + stop.second;
@@ -1232,8 +1255,16 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     // grows with the age of the last reading (see AutoSwgParams.overshootPpmPerDay). Only the % that reaches the target uses it.
     const targetMarginPpm = typeof params.overshootPpmPerDay === 'number' && params.overshootPpmPerDay > 0 ? Math.min(OVERSHOOT_MARGIN_CAP_PPM, params.overshootPpmPerDay * elapsedDays) : 0;
     if (targetMarginPpm >= 0.05) rationale.push(`Aiming ${targetMarginPpm.toFixed(2)} ppm above the ${targetFc} ppm target, because the last FC reading is ${elapsedDays.toFixed(1)} days old (${params.overshootPpmPerDay} ppm per day, at most ${OVERSHOOT_MARGIN_CAP_PPM} ppm).`);
-    const neededPpm = (targetFc + targetMarginPpm - projectedCurrentFc) + (avgPerDay * targetDays);
-    const producibleAtFull = maxDailyPpmAtFull * targetDays;
+    // Consumption over the period in day equivalents (the night counts for less) and the SWG hours that really fall inside it. For whole days these are
+    // simply the days and the days of run windows; for a part of a day (a half-day target) they follow the clock, so a period that holds the whole run
+    // window plans differently from one that holds none of it.
+    const periodDayEquivalents = dayEquivalents(rightNow, targetDate);
+    const runHoursInPeriod = runWindowHoursBetween(rightNow, targetDate, swgStart, swgStop, params.timezone);
+    const neededPpm = (targetFc + targetMarginPpm - projectedCurrentFc) + (avgPerDay * periodDayEquivalents);
+    const producibleAtFull = swgHours > 0 ? (maxDailyPpmAtFull / swgHours) * runHoursInPeriod : 0;
+    if (Math.abs(targetDays - Math.round(targetDays)) > 0.01) {
+        rationale.push(`The target period is ${Math.round(targetHours * 10) / 10}h, and the SWG run window (${params.swgStartTime}-${params.swgStopTime}) is on for ${runHoursInPeriod.toFixed(1)}h of it; consumption over it is about ${periodDayEquivalents.toFixed(2)} days' worth.`);
+    }
     let recommendedPctForTarget = recommendedPct;
     let targetWarning: string | undefined;
     if (producibleAtFull > 0) {
