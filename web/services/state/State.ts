@@ -36,7 +36,7 @@ import type { TuneResult } from "../../../controller/AutoSwgService";
 import { evaluateAutoTuneApply } from "../../../controller/AutoSwgAutoTune";
 import { getAutoSwgReadiness } from "../../../controller/AutoSwgReadiness";
 import { saltHistory, stormEventStatus } from "../../../controller/AutoSwgSaltHistory";
-import { AutoSwgWatch, inRunWindow } from "../../../controller/AutoSwgWatch";
+import { AutoSwgWatch, inRunWindow, minutesOfDayIn } from "../../../controller/AutoSwgWatch";
 import { outputLog } from "../../../controller/AutoSwgOutputLog";
 import type { SaltAddition } from "../../../controller/AutoSwgSaltHistory";
 import { appendAutoSwgHistory, logAutoSwgSettingChanges, readAutoSwgHistory, snapshotAutoSwgSettings, toLocalSwgEntries, AutoSwgApplyTrigger, AUTO_SWG_ALGORITHM_VERSION } from "../../../controller/AutoSwgHistory";
@@ -64,6 +64,23 @@ function formatHHMMInZone(dt: Date, timeZone: string): string {
 // sunset. Prefer that live, already-calculated window so the capacity/duty-cycle math
 // tracks the real (seasonally shifting) window instead of drifting away from it; fall
 // back to the static minutes only if today's window hasn't been calculated yet.
+// When the step to the maintenance % should happen. At the end of the target period, unless that falls while the SWG is off (outside its run window): then
+// nothing could change at that moment, so the step is set for one minute after the SWG next starts, when the new % first matters and while it is running, and
+// the displayed time says so. A window that runs past midnight is left alone.
+function autoSwgStepTime(target: Date): Date {
+    try {
+        let cfg = sys.autoSwg, win = resolveAutoSwgRunWindow(cfg);
+        let toMin = (s: string) => { let m = /^(\d{1,2}):(\d{2})/.exec(s || ''); return m ? parseInt(m[1], 10) * 60 + parseInt(m[2], 10) : NaN; };
+        let a = toMin(win.swgStartTime), b = toMin(win.swgStopTime);
+        if (isNaN(a) || isNaN(b) || b <= a) return target;
+        let t = minutesOfDayIn(cfg.timezone, target.getTime());
+        if (t >= a && t < b) return target;
+        let wait = t < a ? (a + 1 - t) : (1440 - t + a + 1);
+        return new Date(target.getTime() + Math.max(wait, 0) * 60000);
+    }
+    catch (err) { return target; }
+}
+
 // The run window the calculation will use (a selected schedule's own window wins over the typed times) and how many ppm/day the SWG makes in it at its
 // 100% setting. For the settings page; it changes nothing.
 export function autoSwgRunWindowInfo() {
@@ -542,7 +559,7 @@ async function applyAutoSwgRecommendation(isAutoApply: boolean, pctOverride?: nu
     let maintenancePct = state.autoSwg.maintenancePct;
     let stepAtMs = state.autoSwg.lastAppliedTargetDate ? new Date(state.autoSwg.lastAppliedTargetDate).getTime() : NaN;
     if (sys.autoSwg.autoStepEnabled && typeof maintenancePct === 'number' && pct !== maintenancePct && !isNaN(stepAtMs) && stepAtMs > Date.now()) {
-        state.autoSwg.stepAt = state.autoSwg.lastAppliedTargetDate;
+        state.autoSwg.stepAt = autoSwgStepTime(new Date(stepAtMs)).toISOString();
         state.autoSwg.stepPct = maintenancePct;
         armAutoSwgStep();
     }

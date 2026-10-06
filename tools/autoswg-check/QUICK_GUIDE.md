@@ -139,7 +139,9 @@ SWG Run Start/Stop) and Time Zone.
   to reach the target would keep pushing FC past it (or leave it short) until you next test. With this checked, the
   SWG % goes back to the steady level on its own when each target period you start ends, to keep you from
   undershooting or overshooting your target in between. Turn it on once you are comfortable with how it behaves for
-  your pool. Applying anything yourself, or changing the SWG % by hand, cancels the pending return.
+  your pool. Applying anything yourself, or changing the SWG % by hand, cancels the pending return. If the end of the target period falls while the
+  SWG is off (before its run window starts or after it ends), nothing could change at that moment, so the return is set for one minute after the SWG next starts,
+  and the pending step shows that time.
 
 **Tuning options (leave alone at first):** these decide how much to trust the history.
 * **Averaging Window** (21 days): how many days are used to estimate daily usage.
