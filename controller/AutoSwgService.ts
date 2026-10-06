@@ -1208,13 +1208,13 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     // a kept target would slide out at every check while no one tests, and the step to the maintenance % would never arrive.
     if (burnShortOfTarget && refreshed) {
         const gapDays = avgPerDay > 0 ? (projectedCurrentFc - targetFc) / avgPerDay : undefined;
-        targetInfo = `FC is projected at ${projectedCurrentFc.toFixed(2)} ppm, above the ${targetFc} ppm target but within the ${inFlight && isFinite(inFlight.strayPpm) ? inFlight.strayPpm + ' ppm ' : ''}new-target-date threshold, so the deadline (${formatLocalDateTime(targetDate, params.timezone)} ${params.timezone}) holds${typeof gapDays !== 'undefined' ? `, although consumption alone (${avgPerDay.toFixed(2)} ppm/day) would take about ${gapDays.toFixed(1)} days to reach it` : ''}. The SWG isn't needed and is held at 0% until then, then steps to the maintenance %.`;
+        targetInfo = `FC is projected at ${projectedCurrentFc.toFixed(2)} ppm, ${(projectedCurrentFc - targetFc).toFixed(2)} ppm above the ${targetFc} ppm target but within the ${inFlight && isFinite(inFlight.strayPpm) ? inFlight.strayPpm + ' ppm ' : ''}new-target-date threshold, so the deadline (${formatLocalDateTime(targetDate, params.timezone)} ${params.timezone}) holds${typeof gapDays !== 'undefined' ? `, although consumption alone (${avgPerDay.toFixed(2)} ppm/day) would take about ${gapDays.toFixed(1)} days to reach it` : ''}. The SWG isn't needed and is held at 0% until then, then steps to the maintenance %.`;
         rationale.push(`NOTE: ${targetInfo}`);
     }
     else if (burnShortOfTarget) {
         const origWindow = `${Math.round(targetDays * 10) / 10} day${Math.round(targetDays * 10) / 10 === 1 ? '' : 's'}`;
         const origDate = targetDate;
-        const head = `FC is projected at ${projectedCurrentFc.toFixed(2)} ppm, above the ${targetFc} ppm target.`;
+        const head = `FC is projected at ${projectedCurrentFc.toFixed(2)} ppm, ${(projectedCurrentFc - targetFc).toFixed(2)} ppm above the ${targetFc} ppm target.`;
         if (avgPerDay > 0) {
             const daysToTarget = (projectedCurrentFc - targetFc) / avgPerDay;
             targetDays = daysToTarget;
