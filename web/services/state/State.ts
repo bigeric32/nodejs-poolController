@@ -517,6 +517,23 @@ async function applyAutoSwgRecommendation(isAutoApply: boolean, pctOverride?: nu
         if (state.autoSwg.lastAutoApplyLargeChange) logger.warn(`AutoSwg: automatically applied a ${movedBy.toFixed(1)}-point change (to ${pct}%), at or above the ${threshold}-point warning threshold.`);
     }
     else state.autoSwg.lastAutoApplyLargeChange = false; // a human reviewed this one
+    // If the applied % differs from maintenance (catching up from below, or backing
+    // off toward it from above), schedule a step to maintenance once the target
+    // period elapses -- runAutoSwgStep() figures out the direction when it runs.
+    // The step should fire at exactly the target date this apply is aiming for -- reuse
+    // lastAppliedTargetDate (just set above, either preserved from a refine or freshly
+    // computed from live config) rather than independently recomputing "the target window
+    // from right now" here, which would silently restart the countdown using whatever
+    // days happen to be configured NOW -- e.g. if they were edited in Settings after
+    // the original apply/refine chain started.
+    let maintenancePct = state.autoSwg.maintenancePct;
+    let stepAtMs = state.autoSwg.lastAppliedTargetDate ? new Date(state.autoSwg.lastAppliedTargetDate).getTime() : NaN;
+    if (sys.autoSwg.autoStepEnabled && typeof maintenancePct === 'number' && pct !== maintenancePct && !isNaN(stepAtMs) && stepAtMs > Date.now()) {
+        state.autoSwg.stepAt = state.autoSwg.lastAppliedTargetDate;
+        state.autoSwg.stepPct = maintenancePct;
+        armAutoSwgStep();
+    }
+    else clearAutoSwgStep();
     // Log the inputs and outputs behind this change. The setpoint is already
     // on the chlorinator, so a logging failure must not fail the request.
     try {
@@ -551,7 +568,7 @@ async function applyAutoSwgRecommendation(isAutoApply: boolean, pctOverride?: nu
             appliedAt: state.autoSwg.lastAppliedAt,
             appliedPct: pct,
             recommendedPct: state.autoSwg.recommendedPct,
-            previousPct: state.autoSwg.currentPct,
+            previousPct: typeof previousAppliedPct === 'number' ? previousAppliedPct : state.autoSwg.currentPct,
             ppmPerDay: typeof capacity === 'number' ? Math.round(capacity * pct) / 100 : undefined,
             hrs: details.swgRunHours,
             inputs: withoutPrivateInputs(details.inputs),
@@ -560,23 +577,6 @@ async function applyAutoSwgRecommendation(isAutoApply: boolean, pctOverride?: nu
     }
     catch (err) { logger.error(`AutoSwg: applied ${pct}% but could not write the history log: ${err.message}`); }
     state.autoSwg.pending = false;
-    // If the applied % differs from maintenance (catching up from below, or backing
-    // off toward it from above), schedule a step to maintenance once the target
-    // period elapses -- runAutoSwgStep() figures out the direction when it runs.
-    // The step should fire at exactly the target date this apply is aiming for -- reuse
-    // lastAppliedTargetDate (just set above, either preserved from a refine or freshly
-    // computed from live config) rather than independently recomputing "the target window
-    // from right now" here, which would silently restart the countdown using whatever
-    // days happen to be configured NOW -- e.g. if they were edited in Settings after
-    // the original apply/refine chain started.
-    let maintenancePct = state.autoSwg.maintenancePct;
-    let stepAtMs = state.autoSwg.lastAppliedTargetDate ? new Date(state.autoSwg.lastAppliedTargetDate).getTime() : NaN;
-    if (sys.autoSwg.autoStepEnabled && typeof maintenancePct === 'number' && pct !== maintenancePct && !isNaN(stepAtMs) && stepAtMs > Date.now()) {
-        state.autoSwg.stepAt = state.autoSwg.lastAppliedTargetDate;
-        state.autoSwg.stepPct = maintenancePct;
-        armAutoSwgStep();
-    }
-    else clearAutoSwgStep();
     state.autoSwg.emitEquipmentChange();
     return schlor;
 }
