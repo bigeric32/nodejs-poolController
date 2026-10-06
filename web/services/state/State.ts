@@ -818,6 +818,18 @@ function endAwayOnNewReading(reading?: { value: number; ts: string }) {
 // The ways the SWG can fail to hold FC that no recommendation can fix (a bad chlorinator status or no output in the run window, an automatic check that
 // stopped, a step that did not happen) become alerts in the AutoSwg area of the dashboard, checked with each salt sample. See AutoSwgWatch.ts.
 const autoSwgWatch = new AutoSwgWatch();
+// How long none of the air, water or solar temperatures has changed. Only sensors that report to a fraction of a degree are watched: a controller that
+// reports whole degrees can legitimately sit on one value for hours.
+let autoSwgTempSig = '';
+let autoSwgTempChangedAt = 0;
+function autoSwgTempsUnchangedMs(now: number): number | undefined {
+    let t = state.temps;
+    let vals = [t.air, t.solar, t.waterSensor1, t.waterSensor2, t.waterSensor3, t.waterSensor4].filter(v => typeof v === 'number' && !isNaN(v));
+    if (!vals.some(v => Math.abs(v - Math.round(v)) > 1e-6)) { autoSwgTempSig = ''; return undefined; }
+    let sig = vals.join('|');
+    if (sig !== autoSwgTempSig || !autoSwgTempChangedAt) { autoSwgTempSig = sig; autoSwgTempChangedAt = now; return 0; }
+    return now - autoSwgTempChangedAt;
+}
 // A gap of this long since njsPC last knew it was running (found at start-up) is an outage: the pool equipment it keeps on was off for the time.
 const AUTO_SWG_OUTAGE_MIN_MS = 25 * 60 * 1000;
 function detectAutoSwgOutage() {
@@ -864,6 +876,7 @@ function watchAutoSwg() {
             lastCheckedAt: state.autoSwg.lastCheckedAt,
             checkError: state.autoSwg.error,
             stepAt: state.autoSwg.stepAt,
+            tempsUnchangedMs: autoSwgTempsUnchangedMs(now),
             outages: state.autoSwg.outages || [],
         }));
     }
