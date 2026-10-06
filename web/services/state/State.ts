@@ -513,6 +513,8 @@ async function applyAutoSwgRecommendation(isAutoApply: boolean, pctOverride?: nu
         let threshold = sys.autoSwg.autoApplyWarnThresholdPct;
         let movedBy = typeof previousAppliedPct === 'number' ? Math.abs(pct - previousAppliedPct) : undefined;
         state.autoSwg.lastAutoApplyLargeChange = typeof movedBy === 'number' && typeof threshold === 'number' && movedBy >= threshold;
+        state.autoSwg.lastAutoApplyPreviousPct = previousAppliedPct;
+        state.autoSwg.lastAutoApplyThresholdPct = threshold;
         if (state.autoSwg.lastAutoApplyLargeChange) logger.warn(`AutoSwg: automatically applied a ${movedBy.toFixed(1)}-point change (to ${pct}%), at or above the ${threshold}-point warning threshold.`);
     }
     else state.autoSwg.lastAutoApplyLargeChange = false; // a human reviewed this one
