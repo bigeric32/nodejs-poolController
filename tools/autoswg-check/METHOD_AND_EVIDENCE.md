@@ -85,7 +85,7 @@ sensor is a manual test: sparse (every few days) and delayed, and each reading i
 runs when someone asks, and the only thing that acts by itself is the optional return to the maintenance %.
 
 * **Feedforward plus a glide.** The maintenance % is feedforward on the estimated disturbance. The recommended % is a
-  finite-time move to the setpoint: "Days to Target" is its gain, and a short window is a hard push. With sparse measurements that vary from reading to reading, a hard push amplifies that variation, so a longer window is the gentler choice.
+  finite-time move to the setpoint: "Run Periods to Target" is its gain, and a short window is a hard push. With sparse measurements that vary from reading to reading, a hard push amplifies that variation, so a longer window is the gentler choice.
 * **A deadband.** The new-target-date threshold is hysteresis: inside it the old plan is held instead of chasing each reading.
 * **A safe fallback.** When the last reading is stale the output is floored at the maintenance %. A long absence runs a little
   high, the safer miss, and not at 0% waiting for FC to glide down.

@@ -52,7 +52,7 @@ export const AUTO_SWG_ALGORITHM_VERSION = 2;
 // line up against the FC history when judging how the calculation did.
 export const AUTO_SWG_LOGGED_SETTINGS = [
     'enabled', 'chlorinatorId', 'gallons', 'swgLbsPerDay', 'swgStartTime', 'swgStopTime', 'scheduleId', 'timezone',
-    'targetFc', 'targetDaysAbove', 'targetDaysBelow', 'newTargetDateThresholdPpm', 'autoStepEnabled',
+    'targetFc', 'targetPeriodsAbove', 'targetPeriodsBelow', 'newTargetDateThresholdPpm', 'autoStepEnabled',
     'autoApplyEnabled', 'autoCheckEnabled', 'autoCheckHours', 'autoCheckStartTime', 'autoApplyWarnThresholdPct',
     'windowDays', 'daytimeLossSharePct', 'creditChlorineAdditions', 'fcAnomalyTolerancePpm',
     'projectionWeight', 'projectionTaperStartDays', 'projectionTaperEndDays', 'overshootPpmPerDay', 'protectOvernightLow', 'nightBurnRatio', 'burnTempAdjust',

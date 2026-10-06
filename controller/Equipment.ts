@@ -2417,8 +2417,12 @@ export class AutoSwg extends EqItem {
         // Days to take reaching targetFc, depending on which side of it the projected FC
         // is on: coming down from above is the slow, gentle direction, building back up
         // from below is the one to hurry. (Replaces the single targetDays this used to be.)
-        if (typeof this.data.targetDaysAbove === 'undefined') this.data.targetDaysAbove = 3;
-        if (typeof this.data.targetDaysBelow === 'undefined') this.data.targetDaysBelow = 1;
+        // Run periods to target: one period is one SWG run window, counted in on-time (see deadlineAfterRunHours in AutoSwgService). They used to be days
+        // (targetDaysAbove / targetDaysBelow); a saved number carries over as it is (1 day is 1 period).
+        if (typeof this.data.targetPeriodsAbove === 'undefined') this.data.targetPeriodsAbove = typeof this.data.targetDaysAbove === 'number' ? this.data.targetDaysAbove : 3;
+        if (typeof this.data.targetPeriodsBelow === 'undefined') this.data.targetPeriodsBelow = typeof this.data.targetDaysBelow === 'number' ? this.data.targetDaysBelow : 1;
+        delete this.data.targetDaysAbove;
+        delete this.data.targetDaysBelow;
         // Used by "Refresh and Apply" (and the periodic check) while Auto-Apply is on: if the
         // projected FC is more than this many ppm above or below targetFc it starts a new
         // target date (new deadline, in the above/below window above); otherwise it keeps the
@@ -2605,14 +2609,19 @@ export class AutoSwg extends EqItem {
     public set creditChlorineAdditions(val: boolean) { this.setDataVal('creditChlorineAdditions', val); }
     public get daytimeLossSharePct(): number { return this.data.daytimeLossSharePct; }
     public set daytimeLossSharePct(val: number) { this.setDataVal('daytimeLossSharePct', val); }
-    public get targetDaysAbove(): number { return this.data.targetDaysAbove; }
-    public set targetDaysAbove(val: number) { this.setDataVal('targetDaysAbove', this.clampDays(val, 3)); }
-    public get targetDaysBelow(): number { return this.data.targetDaysBelow; }
-    public set targetDaysBelow(val: number) { this.setDataVal('targetDaysBelow', this.clampDays(val, 1)); }
-    // Days to Target move in half-day steps and are never below a quarter day (or missing).
-    private clampDays(val: any, fallback: number): number {
+    public get targetPeriodsAbove(): number { return this.data.targetPeriodsAbove; }
+    public set targetPeriodsAbove(val: number) { this.setDataVal('targetPeriodsAbove', this.clampPeriods(val, 3)); }
+    public get targetPeriodsBelow(): number { return this.data.targetPeriodsBelow; }
+    public set targetPeriodsBelow(val: number) { this.setDataVal('targetPeriodsBelow', this.clampPeriods(val, 1)); }
+    // The old names, so a client that still sends or reads days keeps working: a day is a period.
+    public get targetDaysAbove(): number { return this.targetPeriodsAbove; }
+    public set targetDaysAbove(val: number) { this.targetPeriodsAbove = val; }
+    public get targetDaysBelow(): number { return this.targetPeriodsBelow; }
+    public set targetDaysBelow(val: number) { this.targetPeriodsBelow = val; }
+    // Run periods to target move in half steps and are never below half a period (or missing).
+    private clampPeriods(val: any, fallback: number): number {
         const n = typeof val === 'number' ? val : parseFloat(val);
-        return isFinite(n) ? Math.min(60, Math.max(0.25, n)) : fallback;
+        return isFinite(n) ? Math.min(60, Math.max(0.5, Math.round(n * 2) / 2)) : fallback;
     }
     public get newTargetDateThresholdPpm(): number { return this.data.newTargetDateThresholdPpm; }
     public set newTargetDateThresholdPpm(val: number) { this.setDataVal('newTargetDateThresholdPpm', val); }
