@@ -55,7 +55,7 @@ export const AUTO_SWG_LOGGED_SETTINGS = [
     'targetFc', 'targetDaysAbove', 'targetDaysBelow', 'newTargetDateThresholdPpm', 'autoStepEnabled',
     'autoApplyEnabled', 'autoCheckEnabled', 'autoCheckHours', 'autoCheckStartTime', 'autoApplyWarnThresholdPct',
     'windowDays', 'daytimeLossSharePct', 'creditChlorineAdditions', 'fcAnomalyTolerancePpm',
-    'projectionWeight', 'projectionTaperStartDays', 'projectionTaperEndDays', 'overshootPpmPerDay', 'burnTempAdjust',
+    'projectionWeight', 'projectionTaperStartDays', 'projectionTaperEndDays', 'overshootPpmPerDay', 'protectOvernightLow', 'nightBurnRatio', 'burnTempAdjust',
     'mode', 'autoTuneEnabled', 'autoTuneAfterFcReadings', 'autoTuneApplyEnabled', 'autoTuneApplyAfterManual',
     'stormResponseEnabled', 'stormMaxExtraPct', 'stormMaxDays', 'awayEnabled',
     'shareCode', 'poolName'

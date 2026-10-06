@@ -323,7 +323,7 @@ function autoSwgSettingsKey(): string {
     catch (err) { /* the typed-in window is the fallback */ }
     return [
         cfg.targetFc, cfg.targetDaysAbove, cfg.targetDaysBelow, cfg.newTargetDateThresholdPpm,
-        cfg.windowDays, cfg.gallons, cfg.swgLbsPerDay, cfg.timezone, cfg.daytimeLossSharePct, cfg.creditChlorineAdditions, cfg.fcAnomalyTolerancePpm, cfg.projectionWeight, cfg.projectionTaperStartDays, cfg.projectionTaperEndDays, cfg.overshootPpmPerDay, cfg.burnTempAdjust, cfg.stormResponseEnabled, cfg.stormMaxExtraPct, cfg.awayStatus,
+        cfg.windowDays, cfg.gallons, cfg.swgLbsPerDay, cfg.timezone, cfg.daytimeLossSharePct, cfg.creditChlorineAdditions, cfg.fcAnomalyTolerancePpm, cfg.projectionWeight, cfg.projectionTaperStartDays, cfg.projectionTaperEndDays, cfg.overshootPpmPerDay, cfg.protectOvernightLow, cfg.nightBurnRatio, cfg.burnTempAdjust, cfg.stormResponseEnabled, cfg.stormMaxExtraPct, cfg.awayStatus,
         cfg.shareCode, cfg.poolName, cfg.scheduleId, windowKeyTime(start), windowKeyTime(stop)
     ].join('|');
 }
@@ -392,12 +392,14 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
         sunriseTime: sunTimes.sunrise,
         sunsetTime: sunTimes.sunset,
         daytimeSharePct: cfg.daytimeLossSharePct,
+        nightBurnRatio: cfg.nightBurnRatio,
         creditChlorineAdditions: cfg.creditChlorineAdditions,
         fcAnomalyTolerancePpm: cfg.fcAnomalyTolerancePpm,
         projectionWeight: cfg.projectionWeight,
         projectionTaperStartDays: cfg.projectionTaperStartDays,
         projectionTaperEndDays: cfg.projectionTaperEndDays,
         overshootPpmPerDay: cfg.overshootPpmPerDay,
+        troughFloor: cfg.protectOvernightLow,
         burnTempAdjust: cfg.burnTempAdjust,
         saltDrop: saltDrop,
         storm: storm,
@@ -473,6 +475,9 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
         projectedFcBeforeStorm: result.projectedFcBeforeStorm,
         targetMarginPpm: result.targetMarginPpm,
         burnTempNote: result.burnTempNote,
+        runHoursInPeriod: result.runHoursInPeriod,
+        periodDayEquivalents: result.periodDayEquivalents,
+        troughAddPpm: result.troughAddPpm,
     };
     state.autoSwg.rationale = result.rationale;
     state.autoSwg.error = undefined;
@@ -714,12 +719,14 @@ function autoSwgReportParams(cfg: typeof sys.autoSwg): AutoSwgParams {
         sunriseTime: sunTimes.sunrise,
         sunsetTime: sunTimes.sunset,
         daytimeSharePct: cfg.daytimeLossSharePct,
+        nightBurnRatio: cfg.nightBurnRatio,
         creditChlorineAdditions: cfg.creditChlorineAdditions,
         fcAnomalyTolerancePpm: cfg.fcAnomalyTolerancePpm,
         projectionWeight: cfg.projectionWeight,
         projectionTaperStartDays: cfg.projectionTaperStartDays,
         projectionTaperEndDays: cfg.projectionTaperEndDays,
         overshootPpmPerDay: cfg.overshootPpmPerDay,
+        troughFloor: cfg.protectOvernightLow,
         burnTempAdjust: cfg.burnTempAdjust,
     };
 }
@@ -741,7 +748,7 @@ function recordAutoSwgTuneRun(cfg: typeof sys.autoSwg, tune: TuneResult, status:
         appendTuneHistory({
             ts: cfg.lastTuneAt,
             by: by,
-            settings: { windowDays: cfg.windowDays, daytimeLossSharePct: cfg.daytimeLossSharePct, creditChlorineAdditions: cfg.creditChlorineAdditions, fcAnomalyTolerancePpm: cfg.fcAnomalyTolerancePpm, projectionWeight: cfg.projectionWeight, projectionTaperStartDays: cfg.projectionTaperStartDays, projectionTaperEndDays: cfg.projectionTaperEndDays, burnTempAdjust: cfg.burnTempAdjust },
+            settings: { windowDays: cfg.windowDays, daytimeLossSharePct: cfg.daytimeLossSharePct, nightBurnRatio: cfg.nightBurnRatio, creditChlorineAdditions: cfg.creditChlorineAdditions, fcAnomalyTolerancePpm: cfg.fcAnomalyTolerancePpm, projectionWeight: cfg.projectionWeight, projectionTaperStartDays: cfg.projectionTaperStartDays, projectionTaperEndDays: cfg.projectionTaperEndDays, burnTempAdjust: cfg.burnTempAdjust },
             readings: tune.readings, history: tune.history, meanAbsError: tune.meanAbsError, unchangedMae: tune.unchangedMae, skill: tune.skill,
             status: tune.status,
             recommendation: tune.recommendation ? { kind: tune.recommendation.kind, label: tune.recommendation.label, settings: tune.recommendation.settings, expectedMae: tune.recommendation.expectedMae, change: tune.recommendation.change, low: tune.recommendation.low, high: tune.recommendation.high } : undefined,

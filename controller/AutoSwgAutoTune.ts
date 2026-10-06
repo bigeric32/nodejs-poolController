@@ -43,6 +43,7 @@ export const AUTO_TUNE_BOUNDS: { [setting: string]: { min: number; max: number; 
     projectionTaperEndDays: { min: 6, max: 14, allowZero: true },
     fcAnomalyTolerancePpm: { min: 1, max: 4 },
     burnTempAdjust: 'boolean',
+    nightBurnRatio: { min: 0.25, max: 1 },
 };
 
 // How many Tune recommendations have been applied by hand: the count kept in the config, or what the Tune history still holds if more.

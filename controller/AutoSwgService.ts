@@ -161,6 +161,11 @@ export interface AutoSwgParams {
     overshootPpmPerDay?: number;
     // Adjust the burn rate for the water temperature (see BURN_TEMP_MIN_INTERVALS). Off unless set; the what-if sweep scores it.
     burnTempAdjust?: boolean;
+    // Aim so FC stays at or above the target until the SWG starts again (the overnight low), not only at the deadline (default on). See troughAddPpm.
+    troughFloor?: boolean;
+    // How much chlorine the pool uses at night compared with the same hour of daylight (default 0.5, the usual figure for a well-kept pool). It sets the share of a
+    // day's consumption that falls in daylight, used to weight the part of a day between readings and the hours up to a deadline. Ignored when daytimeSharePct is set.
+    nightBurnRatio?: number;
     // A recent fall in the chlorinator's own salt reading (see AutoSwgSaltHistory.recentDrop). Only noted in the result (saltNote); the
     // calculation is not adjusted for it.
     saltDrop?: { fromPpm: number; toPpm: number; pct: number; fromAt: string; toAt: string; addedPpm?: number };
@@ -200,6 +205,9 @@ export interface AutoSwgResult {
     burnTempNote?: string;           // set when the water temperature adjustment was asked for: what it did or why it did nothing
     saltNote?: string;               // set when the chlorinator's salt reading fell noticeably (dilution by rain or a water change); informational, nothing is adjusted unless stormApplied
     stormApplied?: boolean;          // the projected FC was lowered for the dilution (the storm response acted) -- see AutoSwgParams.storm
+    runHoursInPeriod?: number;       // the SWG run-window hours that fall between now and the target date
+    periodDayEquivalents?: number;   // consumption between now and the target date, in days' worth (the night counts for less)
+    troughAddPpm?: number;           // ppm added to the aim at the deadline so FC does not fall below the target before the SWG next starts (0 when it was not needed)
     stormLossPpm?: number;           // how much FC the storm and outage correction took off the projection (0 when it did not act)
     projectedFcBeforeStorm?: number; // the projected FC without that correction, so the next FC test can be scored against both
     // What recommendedPctForTarget was actually aimed at: a new target (today's configured
@@ -623,6 +631,16 @@ function localMinutesOfDay(instant: Date, timeZone: string): number {
     return (parseInt(parts.hour, 10) % 24) * 60 + parseInt(parts.minute, 10);
 }
 
+// The next time the SWG's run window opens, strictly after `instant` (to the minute).
+function nextRunStartAfter(instant: Date, start: TimeOfDay, timeZone: string): Date {
+    const a = start.hour * 60 + start.minute;
+    const m = localMinutesOfDay(instant, timeZone);
+    const wait = a > m ? a - m : a - m + 1440;
+    return new Date(instant.getTime() + wait * 60000);
+}
+
+const TROUGH_MAX_ADD_PPM = 1;   // never aim more than this above the target to protect the overnight low
+
 // How many hours of the SWG's daily run window fall between two instants. Every whole 24 hours holds one full run; the rest of the period holds only the part of
 // the run that lies inside it, so a half-day target period can hold the whole run, part of it, or none of it. (Daylight saving shifts are ignored.)
 function runWindowHoursBetween(from: Date, to: Date, start: TimeOfDay, stop: TimeOfDay, timeZone: string): number {
@@ -796,6 +814,12 @@ function roundDutyCyclePct(pct: number): number {
 // at midnight, so with a day of `dayHours` (half-length h) the daylight area is
 // 2h - h^3/216 out of a 24h total of 16. ~0.56 for a 9.5h winter day, ~0.67 for 11.6h,
 // ~0.78 for a 14h summer day.
+// How much of a day's chlorine consumption falls in daylight, from how much less is used at night: with the night rate at `ratio` times the day rate, the day's
+// share is dayHours / (dayHours + ratio x nightHours). 0.5 is the usual figure for a well-kept pool (sunlight does most of the work); a pool's own history can
+// suggest another (Tune scores the alternatives).
+export const NIGHT_BURN_RATIO_DEFAULT = 0.5;
+export function ratioDaytimeShare(dayHours: number, ratio: number): number { return dayHours / (dayHours + ratio * (24 - dayHours)); }
+
 export function parabolicDaytimeShare(dayHours: number): number {
     const h = Math.max(0, Math.min(12, dayHours / 2));
     return (2 * h - (h * h * h) / 216) / 16;
@@ -899,7 +923,7 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     // Daylight weighting for the partial days between FC readings (see
     // consumptionDayEquivalents); undefined when sunrise/sunset aren't known, in which case
     // time is counted by the clock.
-    let daylight: { sunriseMin: number; sunsetMin: number; share: number; dayHours: number; auto: boolean } | undefined;
+    let daylight: { sunriseMin: number; sunsetMin: number; share: number; dayHours: number; auto: boolean; ratio: number } | undefined;
     if (params.sunriseTime && params.sunsetTime) {
         try {
             const sr = parseTimeOfDay(params.sunriseTime), ss = parseTimeOfDay(params.sunsetTime);
@@ -907,8 +931,9 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
             const dayMin = sunsetMin - sunriseMin;
             if (dayMin > 0 && dayMin < 1440) {
                 const auto = !(params.daytimeSharePct > 0);
-                const share = auto ? parabolicDaytimeShare(dayMin / 60) : Math.min(0.99, params.daytimeSharePct / 100);
-                daylight = { sunriseMin, sunsetMin, share, dayHours: dayMin / 60, auto };
+                const ratio = typeof params.nightBurnRatio === 'number' && params.nightBurnRatio > 0 ? params.nightBurnRatio : NIGHT_BURN_RATIO_DEFAULT;
+                const share = auto ? ratioDaytimeShare(dayMin / 60, ratio) : Math.min(0.99, params.daytimeSharePct / 100);
+                daylight = { sunriseMin, sunsetMin, share, dayHours: dayMin / 60, auto, ratio };
             }
         }
         catch (err) { logger.warn(`AutoSwg: ignoring unusable sunrise/sunset (${err.message}); counting time by the clock.`); }
@@ -1025,7 +1050,7 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         const inWindow = additions.filter(x => x.ts.getTime() >= windowStart.getTime());
         if (inWindow.length) rationale.push(`Liquid chlorine additions credited as FC added: ${inWindow.map(x => `${formatLocalDateTime(x.ts, params.timezone)} +${chlorineAdditionPpm(x, params.gallons).toFixed(2)} ppm`).join('; ')}.`);
     }
-    if (daylight) rationale.push(`Daylight weighting: day length ${daylight.dayHours.toFixed(1)}h (${params.sunriseTime}-${params.sunsetTime} ${params.timezone}); ${(daylight.share * 100).toFixed(0)}% of a day's FC consumption counted as daytime (${daylight.auto ? 'parabolic estimate from the day length' : 'configured'}). Whole 24h blocks count as one day; only the partial block is weighted.`);
+    if (daylight) rationale.push(`Daylight weighting: day length ${daylight.dayHours.toFixed(1)}h (${params.sunriseTime}-${params.sunsetTime} ${params.timezone}); ${(daylight.share * 100).toFixed(0)}% of a day's FC consumption counted as daytime (${daylight.auto ? `the night burn is taken as ${daylight.ratio} of the day rate` : 'configured'}). Whole 24h blocks count as one day; only the partial block is weighted.`);
     if (swgMerge.localUsed > 0) {
         rationale.push(`SWG entries: ${swgMerge.localUsed} from the local SWG % change log, ${poolMathSwgEvents.length - swgMerge.replaced} from PoolMath; ${swgMerge.replaced} PoolMath ${swgMerge.replaced === 1 ? 'entry' : 'entries'} within 1h of a local entry ignored in favor of the local one.`);
     }
@@ -1214,7 +1239,8 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     else {
         const above = projectedCurrentFc > params.targetFc;
         if (inFlight) rationale.push(`Projected current FC is ${strayedBy.toFixed(2)} ppm ${above ? 'above' : 'below'} the ${params.targetFc} ppm target, more than the ${inFlight.strayPpm} ppm new-target-date threshold: starting a new target date instead of refreshing the old one.`);
-        targetDays = above ? params.targetDaysAbove : params.targetDaysBelow;
+        const configuredDays = above ? params.targetDaysAbove : params.targetDaysBelow;
+        targetDays = typeof configuredDays === 'number' && isFinite(configuredDays) ? Math.max(0.25, configuredDays) : 1;   // a quarter day at least
         targetDate = new Date(rightNow.getTime() + targetDays * 86400000);
         rationale.push(`Projected current FC is ${above ? 'above' : 'at or below'} the ${params.targetFc} ppm target: using the ${targetDays}-day window for FC ${above ? 'above' : 'below'} target.`);
     }
@@ -1225,7 +1251,7 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     // just stays off until then). Never moves a deadline earlier.
     let targetInfo: string | undefined;
     let targetDateExtended = false;
-    const burnShortOfTarget = projectedCurrentFc - (avgPerDay * targetDays) > targetFc + 0.005;
+    const burnShortOfTarget = projectedCurrentFc - (avgPerDay * dayEquivalents(rightNow, targetDate)) > targetFc + 0.005;
     // A target that is being kept (the projected FC is within the new-target-date threshold of it) is kept as it is: close enough counts. Only
     // a target that was abandoned for a new one, because the FC strayed further than the threshold, has its date moved out; otherwise the date of
     // a kept target would slide out at every check while no one tests, and the step to the maintenance % would never arrive.
@@ -1260,13 +1286,29 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     // window plans differently from one that holds none of it.
     const periodDayEquivalents = dayEquivalents(rightNow, targetDate);
     const runHoursInPeriod = runWindowHoursBetween(rightNow, targetDate, swgStart, swgStop, params.timezone);
-    const neededPpm = (targetFc + targetMarginPpm - projectedCurrentFc) + (avgPerDay * periodDayEquivalents);
+    // The target is a floor, and FC is lowest just before the SWG starts. If the deadline falls where no SWG run lies between it and the next start (the evening,
+    // overnight or early morning), FC keeps falling after the deadline, so the aim at the deadline is raised by what that costs: the maintenance output until the
+    // next start, less the consumption until then (a deadline inside the run window gains from the rest of the run). Not used when the date was moved out (the SWG
+    // stays off until FC burns down to the target) or when it is turned off.
+    let troughAddPpm = 0;
+    if (params.troughFloor !== false && !targetDateExtended && swgHours > 0 && maxDailyPpmAtFull > 0) {
+        const nextStart = nextRunStartAfter(targetDate, swgStart, params.timezone);
+        const maintenancePerHour = (recommendedPct / 100) * (maxDailyPpmAtFull / swgHours);
+        const after = maintenancePerHour * runWindowHoursBetween(targetDate, nextStart, swgStart, swgStop, params.timezone) - avgPerDay * dayEquivalents(targetDate, nextStart);
+        if (after < 0) troughAddPpm = Math.min(TROUGH_MAX_ADD_PPM, -after);
+        if (troughAddPpm >= 0.05) rationale.push(`Aiming ${troughAddPpm.toFixed(2)} ppm higher at the ${formatLocalDateTime(targetDate, params.timezone)} deadline, so FC stays at or above the ${targetFc} ppm target until the SWG starts again at ${formatLocalDateTime(nextStart, params.timezone)} (that much is used between them).`);
+    }
+    const neededPpm = (targetFc + targetMarginPpm + troughAddPpm - projectedCurrentFc) + (avgPerDay * periodDayEquivalents);
     const producibleAtFull = swgHours > 0 ? (maxDailyPpmAtFull / swgHours) * runHoursInPeriod : 0;
     if (Math.abs(targetDays - Math.round(targetDays)) > 0.01) {
         rationale.push(`The target period is ${Math.round(targetHours * 10) / 10}h, and the SWG run window (${params.swgStartTime}-${params.swgStopTime}) is on for ${runHoursInPeriod.toFixed(1)}h of it; consumption over it is about ${periodDayEquivalents.toFixed(2)} days' worth.`);
     }
     let recommendedPctForTarget = recommendedPct;
     let targetWarning: string | undefined;
+    if (!(producibleAtFull > 0) && neededPpm > 0) {
+        targetWarning = `No SWG run time falls inside this ${Math.round(targetHours * 10) / 10}-hour target period (the SWG runs ${params.swgStartTime}-${params.swgStopTime}), so it cannot add chlorine in it. Lengthen Days to Target so the period holds a run, or change the target.`;
+        rationale.push(`WARNING: ${targetWarning}`);
+    }
     if (producibleAtFull > 0) {
         const unclampedPct = (neededPpm / producibleAtFull) * 100;
         recommendedPctForTarget = Math.max(0, Math.min(100, unclampedPct));
@@ -1308,7 +1350,7 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     // However far the storm response lowered the projected FC, it adds at most maxExtraPct points to the % the plan would have used without it. The
     // glide to a target you set, and the maintenance floor, are not limited by it.
     if (stormApplied && params.storm && stormLossPpm > 0 && producibleAtFull > 0) {
-        const neededWithoutStorm = (targetFc + targetMarginPpm - (projectedCurrentFc + stormLossPpm)) + (avgPerDay * targetDays);
+        const neededWithoutStorm = (targetFc + targetMarginPpm + troughAddPpm - (projectedCurrentFc + stormLossPpm)) + (avgPerDay * periodDayEquivalents);
         let withoutStorm = Math.max(0, Math.min(100, (neededWithoutStorm / producibleAtFull) * 100));
         if (staleFcNote && withoutStorm < recommendedPct) withoutStorm = recommendedPct;
         if (recommendedPctForTarget > withoutStorm + params.storm.maxExtraPct) {
@@ -1347,6 +1389,9 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         burnTempNote: burnTempNote,
         saltNote: saltNote,
         stormApplied: stormApplied,
+        runHoursInPeriod: Math.round(runHoursInPeriod * 100) / 100,
+        periodDayEquivalents: Math.round(periodDayEquivalents * 1000) / 1000,
+        troughAddPpm: Math.round(troughAddPpm * 100) / 100,
         stormLossPpm: Math.round(stormLossPpm * 100) / 100,
         projectedFcBeforeStorm: Math.round((projectedCurrentFc + stormLossPpm) * 100) / 100,
         targetFcUsed: targetFc,
@@ -1709,7 +1754,7 @@ export async function buildWhatIfSweep(params: AutoSwgParams, options: { lookbac
     const variants: { key: string; label: string; params: AutoSwgParams }[] = [{ key: 'current', label: 'Current settings', params }];
     // A variant identical to the current settings (now that the defaults are a 50% weighting with a 3 to 8 day taper, a
     // couple of the candidates are) would only add a row that says nothing changes, so it is left out.
-    const TUNING = ['windowDays', 'creditChlorineAdditions', 'fcAnomalyTolerancePpm', 'projectionWeight', 'projectionTaperStartDays', 'projectionTaperEndDays', 'burnTempAdjust', 'sunriseTime', 'sunsetTime'];
+    const TUNING = ['windowDays', 'creditChlorineAdditions', 'fcAnomalyTolerancePpm', 'projectionWeight', 'projectionTaperStartDays', 'projectionTaperEndDays', 'burnTempAdjust', 'nightBurnRatio', 'sunriseTime', 'sunsetTime'];
     const add = (key: string, label: string, p: AutoSwgParams) => {
         if (TUNING.every(k => (p as any)[k] === (params as any)[k])) return;
         variants.push({ key, label, params: p });
@@ -1728,6 +1773,12 @@ export async function buildWhatIfSweep(params: AutoSwgParams, options: { lookbac
     if (parsedPage.tempEvents.length >= BURN_TEMP_MIN_INTERVALS) add('burnTemp', params.burnTempAdjust === true ? 'Water temperature adjustment off' : 'Water temperature adjustment on', Object.assign({}, params, { burnTempAdjust: params.burnTempAdjust !== true }));
     const curTol = typeof params.fcAnomalyTolerancePpm === 'number' ? params.fcAnomalyTolerancePpm : ANOMALY_TOLERANCE_PPM;
     for (const t of [0, 1, 3]) if (t !== curTol) add(`tol${t}`, t === 0 ? 'FC anomaly check off' : `FC anomaly tolerance ${t} ppm`, Object.assign({}, params, { fcAnomalyTolerancePpm: t }));
+
+    // How much less is used at night than by day: the alternatives are scored on the same readings (see describeNightBurn for what Tune says about them).
+    const curNight = typeof params.nightBurnRatio === 'number' && params.nightBurnRatio > 0 ? params.nightBurnRatio : NIGHT_BURN_RATIO_DEFAULT;
+    if (params.sunriseTime && params.sunsetTime && !(params.daytimeSharePct > 0)) {
+        for (const r of [0.25, 0.5, 0.75, 1]) if (Math.abs(r - curNight) > 1e-9) add(`night${r}`, `Night burn ${r} of the day rate`, Object.assign({}, params, { nightBurnRatio: r }));
+    }
 
     // Readings worth scoring: a previous reading 0.1 to 14 days earlier, within the lookback.
     const candidates: number[] = [];
@@ -1760,7 +1811,7 @@ export async function buildWhatIfSweep(params: AutoSwgParams, options: { lookbac
     const baseAbs = common.map(k => Math.abs(errors[0].get(k)));
     // The settings a variant changes, by their config names, so a result can be applied as is. A taper
     // change always carries both of its days.
-    const SETTABLE = ['windowDays', 'creditChlorineAdditions', 'fcAnomalyTolerancePpm', 'projectionWeight', 'projectionTaperStartDays', 'projectionTaperEndDays', 'burnTempAdjust'];
+    const SETTABLE = ['windowDays', 'creditChlorineAdditions', 'fcAnomalyTolerancePpm', 'projectionWeight', 'projectionTaperStartDays', 'projectionTaperEndDays', 'burnTempAdjust', 'nightBurnRatio'];
     const settingsOf = (p: AutoSwgParams): { [setting: string]: number | boolean } | undefined => {
         const diff: { [setting: string]: number | boolean } = {};
         for (const k of SETTABLE) if ((p as any)[k] !== (params as any)[k] && typeof (p as any)[k] !== 'undefined') diff[k] = (p as any)[k];
@@ -1812,7 +1863,23 @@ export interface TuneResult {
     skill?: number;
     sinceChange?: { since: string; count: number; meanAbsError?: number; unchangedMae?: number; bias?: number };
     betterCount: number;                 // how many alternatives were clearly better
+    nightBurnNote?: string;              // what the history says about how much less chlorine is used at night (and when it cannot tell)
     recommendation?: TuneRecommendation;
+}
+
+// What the scored variants say about the night burn (how much less chlorine is used at night than by day). The history only constrains it through the readings
+// that span a night, and the difference between neighbouring values is small, so most often it cannot tell: that is said plainly, with the usual figure kept.
+function describeNightBurn(variants: WhatIfVariant[], current: number): string | undefined {
+    const ratioOf = (v: WhatIfVariant) => (v.settings as any).nightBurnRatio as number;
+    const rows = variants.filter(v => v.key.indexOf('night') === 0 && v.settings && typeof (v.settings as any).nightBurnRatio === 'number');
+    if (!rows.length) return undefined;
+    const better = rows.filter(v => v.verdict === 'better'), worse = rows.filter(v => v.verdict === 'worse'), same = rows.filter(v => v.verdict === 'no clear difference');
+    if (better.length) {
+        const best = better.slice().sort((a, b) => (a.meanAbsError as number) - (b.meanAbsError as number))[0];
+        return `Night burn: the history fits ${ratioOf(best)} of the day rate better than ${current} (a change of ${(best.diff as number).toFixed(2)} ppm in mean error, 90% range ${(best.diffLow as number).toFixed(2)} to ${(best.diffHigh as number).toFixed(2)}).`;
+    }
+    if (!same.length) return `Night burn: ${current} of the day rate fits the history better than every alternative tried (${worse.map(ratioOf).join(', ')}).`;
+    return `Night burn: the history cannot tell ${current} of the day rate from ${same.map(ratioOf).join(', ')}${worse.length ? ` (${worse.map(ratioOf).join(', ')} fit worse)` : ''}: the difference is within the 90% range of no change. Keeping ${current}, the usual figure for a well-kept pool.`;
 }
 
 // A guided version of the two reports: fetch the PoolMath page once, score the current settings and the
@@ -1839,6 +1906,7 @@ export async function buildTune(params: AutoSwgParams, options: { lookbackDays: 
         unchangedMae: accuracy.summary.unchangedMae, skill: accuracy.summary.skill, sinceChange: accuracy.summary.sinceChange,
         betterCount: 0,
     };
+    result.nightBurnNote = describeNightBurn(sweep.variants, typeof params.nightBurnRatio === 'number' && params.nightBurnRatio > 0 ? params.nightBurnRatio : NIGHT_BURN_RATIO_DEFAULT);
     if (sweep.count < 15 || !cur || typeof cur.meanAbsError !== 'number') { result.status = 'insufficient'; return result; }
     const better = sweep.variants.filter(v => v.verdict === 'better' && v.settings && Object.keys(v.settings).length > 0);
     result.betterCount = better.length;

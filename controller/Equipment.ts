@@ -2527,6 +2527,11 @@ export class AutoSwg extends EqItem {
         // Aim this many ppm above the target for each day since the last FC reading (never more than 1 ppm) when working out the % that
         // reaches it: an old reading is a less certain place to start from, and FC a little high is the safer miss. 0 = aim at the target.
         if (typeof this.data.overshootPpmPerDay === 'undefined') this.data.overshootPpmPerDay = 0.15;
+        // Aim so FC stays at the target through the night, until the SWG starts again, not only at the deadline (see troughAddPpm in AutoSwgService).
+        if (typeof this.data.protectOvernightLow === 'undefined') this.data.protectOvernightLow = true;
+        // How much chlorine is used at night compared with the same hour of daylight: 0.5, the usual figure for a well-kept pool. Tune can suggest another when the history
+        // supports it, and says so when it cannot tell.
+        if (typeof this.data.nightBurnRatio === 'undefined') this.data.nightBurnRatio = 0.5;
         // Adjust the burn rate for the water temperature when the burn clearly follows it (see AutoSwgService). Off: on the pool it was
         // tried on it did not improve the projection; the what-if sweep scores it for yours.
         if (typeof this.data.burnTempAdjust === 'undefined') this.data.burnTempAdjust = false;
@@ -2584,6 +2589,10 @@ export class AutoSwg extends EqItem {
     public set projectionTaperStartDays(val: number) { this.setDataVal('projectionTaperStartDays', val); }
     public get projectionTaperEndDays(): number { return this.data.projectionTaperEndDays; }
     public set projectionTaperEndDays(val: number) { this.setDataVal('projectionTaperEndDays', val); }
+    public get protectOvernightLow(): boolean { return utils.makeBool(this.data.protectOvernightLow); }
+    public set protectOvernightLow(val: boolean) { this.setDataVal('protectOvernightLow', utils.makeBool(val)); }
+    public get nightBurnRatio(): number { return this.data.nightBurnRatio; }
+    public set nightBurnRatio(val: number) { const n = typeof val === 'number' ? val : parseFloat(val as any); this.setDataVal('nightBurnRatio', isFinite(n) ? Math.min(1.5, Math.max(0.1, n)) : 0.5); }
     public get overshootPpmPerDay(): number { return this.data.overshootPpmPerDay; }
     public set overshootPpmPerDay(val: number) { this.setDataVal('overshootPpmPerDay', val); }
     public get burnTempAdjust(): boolean { return this.data.burnTempAdjust; }
@@ -2597,9 +2606,14 @@ export class AutoSwg extends EqItem {
     public get daytimeLossSharePct(): number { return this.data.daytimeLossSharePct; }
     public set daytimeLossSharePct(val: number) { this.setDataVal('daytimeLossSharePct', val); }
     public get targetDaysAbove(): number { return this.data.targetDaysAbove; }
-    public set targetDaysAbove(val: number) { this.setDataVal('targetDaysAbove', val); }
+    public set targetDaysAbove(val: number) { this.setDataVal('targetDaysAbove', this.clampDays(val, 3)); }
     public get targetDaysBelow(): number { return this.data.targetDaysBelow; }
-    public set targetDaysBelow(val: number) { this.setDataVal('targetDaysBelow', val); }
+    public set targetDaysBelow(val: number) { this.setDataVal('targetDaysBelow', this.clampDays(val, 1)); }
+    // Days to Target move in half-day steps and are never below a quarter day (or missing).
+    private clampDays(val: any, fallback: number): number {
+        const n = typeof val === 'number' ? val : parseFloat(val);
+        return isFinite(n) ? Math.min(60, Math.max(0.25, n)) : fallback;
+    }
     public get newTargetDateThresholdPpm(): number { return this.data.newTargetDateThresholdPpm; }
     public set newTargetDateThresholdPpm(val: number) { this.setDataVal('newTargetDateThresholdPpm', val); }
     // When true, applying a recommendation that differs from the maintenance duty cycle
