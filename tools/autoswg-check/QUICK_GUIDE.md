@@ -198,7 +198,9 @@ You do not need this section to use AutoSwg. It is for anyone who wants to know 
    close enough counts, and the SWG steps to the maintenance % at that time. If you have changed the **Target FC**
    since the last apply, Refresh and Apply (and the automatic check) start a new target instead: a changed target is a
    request for one.
-   If even 100% cannot reach it, the report says how long it would take.
+   If even 100% cannot reach it, the report says how long it would take, and suggests extending the SWG run window
+   (the schedule it runs on) by about how many hours a day would reach it, before you change the target; if even 24 hours
+   a day would not, it says to lengthen Days to Target or lower the target.
 5. **Refresh: Adjust %** re-works the % with fresh PoolMath data against the same target date. It does not
    restart the countdown.
 
