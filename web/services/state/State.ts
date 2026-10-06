@@ -616,8 +616,27 @@ export function armAutoSwgAutoCheck(minDelayMs: number = 0, firstRunMs?: number)
 // it immediately with no further confirmation if AutoSwg.autoApplyEnabled is on -- this is
 // what lets auto-apply be used standalone (manual-trigger only), independent of whether the
 // periodic autoCheckEnabled timer is running at all.
+// A check you asked for with a button (Check Now, Refresh, Refresh and Apply) that would move the SWG % by at least the warning threshold is not applied
+// until you confirm it: it is left as a pending result to review, with a note saying why, and Apply then applies it (as a reviewed change). The red
+// "automatic change exceeded threshold" banner is for changes nobody asked for, that is, the periodic automatic check.
+function largeChangeHold(): string | undefined {
+    let threshold = sys.autoSwg.autoApplyWarnThresholdPct, last = state.autoSwg.lastAppliedPct, pct = Math.round(state.autoSwg.recommendedPct);
+    if (typeof threshold !== 'number' || typeof last !== 'number' || isNaN(pct)) return undefined;
+    let movedBy = Math.abs(pct - last);
+    if (movedBy < threshold) return undefined;
+    return `NOTE: This would move the SWG from ${last}% to ${pct}%, ${movedBy} points, at or above the ${threshold}-point warning threshold. Because you asked for this check it was not applied: review the numbers below, then press Apply (or Cancel).`;
+}
+
 async function applyIfAutoApplyEnabled(skipped?: string, trigger?: AutoSwgApplyTrigger): Promise<void> {
-    if (!skipped && sys.autoSwg.autoApplyEnabled) await applyAutoSwgRecommendation(true, undefined, trigger);
+    if (!skipped && sys.autoSwg.autoApplyEnabled) {
+        let held = trigger && trigger !== 'automatic-check' ? largeChangeHold() : undefined;
+        if (held) {
+            state.autoSwg.rationale = [held].concat(state.autoSwg.rationale || []);
+            logger.info(`AutoSwg: ${held}`);
+            state.autoSwg.emitEquipmentChange();
+        }
+        else await applyAutoSwgRecommendation(true, undefined, trigger);
+    }
     // A PoolMath read is also when auto tune looks at whether enough new FC readings have arrived (not waited for).
     runAutoSwgAutoTune().catch(err => logger.error(`AutoSwg: auto tune failed: ${err.message}`));
 }
@@ -1752,6 +1771,12 @@ export class StateRoute {
                 return res.status(200).send({ chlorinator: schlor.get(true), autoSwg: state.autoSwg.get(true) });
             }
             catch (err) { next(err); }
+        });
+        // Dismisses the red "automatic change exceeded threshold" banner: you have seen the change an automatic check made. Nothing else changes.
+        app.put('/state/autoSwg/acknowledge', (req, res) => {
+            state.autoSwg.lastAutoApplyLargeChange = false;
+            state.autoSwg.emitEquipmentChange();
+            return res.status(200).send(state.autoSwg.get(true));
         });
         // Dismisses the current Check Now result without applying it. Clears every field
         // /recommend sets (see clearAutoSwgCalculation) rather than just `pending` -- otherwise
