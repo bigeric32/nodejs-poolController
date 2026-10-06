@@ -133,6 +133,12 @@ SWG Run Start/Stop) and Time Zone.
   (0.5, 1, 1.5 ...). A whole number of days holds that many full SWG run windows; a half-day period holds only the part of the run window that
   falls inside it (it may hold all of it, part of it or none), and the calculation counts exactly those hours, so you can see how the
   on and off window changes the plan.
+* **Keep FC at the target through the night** (on): FC is lowest just before the SWG starts in the morning, and the target is a floor.
+  If the deadline falls where no SWG run lies between it and the next start (the evening, overnight or early morning), FC would keep
+  falling after it, so the plan aims a little higher at the deadline (typically 0.1 to 0.4 ppm) and the note on the calculation says by
+  how much. It uses the same burn estimate, so it is as good as the day and night weighting. Turn it off to aim at the target only at
+  the deadline. If a target period holds no SWG run time at all (a half day that falls outside the run window), the calculation says so
+  and keeps the maintenance %, because the SWG cannot add chlorine in that time.
 * **Aim Above Target as the Last Test Ages** (0.15 ppm per day, at most 1 ppm; 0 = aim at the target itself): an old
   reading is a less certain place to start from, and FC a little high is the safer miss, so the SWG % that reaches the target is
   worked out for the target plus this many ppm for each day since the last test. It changes only that % (not the
@@ -151,6 +157,11 @@ SWG Run Start/Stop) and Time Zone.
 * **Projection Weighting** (50%), **Taper Weighting After** (3 days) and **Down to Zero At** (8 days): how much
   of the modelled change to apply between FC tests. The longer since your last test, the less it is trusted.
 * **FC Anomaly Tolerance** (2 ppm), **Credit liquid chlorine** (on) and **Daytime Share** (automatic).
+* **Night Burn vs Day** (0.5): how much chlorine your pool uses at night compared with the same hour of daylight. 0.5 is the usual
+  figure for a well-kept pool (sunlight does most of the work), and it sets how much of a day's consumption is counted in daylight
+  (about two thirds at 0.5). It matters for the part of a day between readings and for the overnight low. Tune scores 0.25, 0.75
+  and 1 on your own readings and applies another value only when the history clearly supports it; most often the readings cannot tell,
+  and Tune says so plainly and keeps 0.5. Daytime Share, when set, overrides it.
 * **Adjust the burn for the water temperature** (off): moves the burn along a line fitted to your own burn rates against
   the water temperature logged with your FC tests, only when that line is clear. It did not improve the projection on the
   pool it was tried on (the water temperature barely changes within a 21-day window), so it is off; What-If Sweep scores it
@@ -246,7 +257,7 @@ What-If Sweep includes a "Daylight weighting off" variant if you want to see wha
   this, usually means unlogged chlorine or a mistyped reading. That interval is left out of the average.
 * **Credit liquid chlorine (on).** Otherwise the rise from a dose is counted as SWG output and the burn comes
   out too low.
-* **Daytime Share (automatic).** Override only to test a theory.
+* **Daytime Share (automatic).** Override only to test a theory. It comes from **Night Burn vs Day** (0.5) unless you set it.
 
 ## What the tuning tools do
 
