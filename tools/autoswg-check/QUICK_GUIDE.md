@@ -129,7 +129,10 @@ SWG Run Start/Stop) and Time Zone.
 **What you want:**
 * **Target FC**: the FC you want to hold.
 * **Days to Target (above / below)**: how quickly to correct when FC is above or below the target. Above is
-  gentle, since consumption does most of the work. Below is quicker, so you recover sooner.
+  gentle, since consumption does most of the work. Below is quicker, so you recover sooner. They move in half-day steps
+  (0.5, 1, 1.5 ...). A whole number of days holds that many full SWG run windows; a half-day period holds only the part of the run window that
+  falls inside it (it may hold all of it, part of it or none), and the calculation counts exactly those hours, so you can see how the
+  on and off window changes the plan.
 * **Aim Above Target as the Last Test Ages** (0.15 ppm per day, at most 1 ppm; 0 = aim at the target itself): an old
   reading is a less certain place to start from, and FC a little high is the safer miss, so the SWG % that reaches the target is
   worked out for the target plus this many ppm for each day since the last test. It changes only that % (not the
