@@ -88,7 +88,7 @@ const OUTAGE_MIN_LOSS_PPM = 0.3;
 // many standard errors from zero, and never moving the burn by more than this fraction of itself.
 const BURN_TEMP_MIN_INTERVALS = 8;
 const BURN_TEMP_MIN_T = 2;
-const BURN_TEMP_MAX_ADJUST = 0.3;
+const BURN_TEMP_MAX_ADJUST = 0.15;   // the temperature adjustment may move the burn by at most this share of it (a fit on a few weeks can mistake sunny days for warm water)
 
 // Short non-cryptographic fingerprint of a string (djb2), used to tell whether the data a
 // calculation read has changed.
@@ -891,6 +891,20 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         catch (err) { logger.warn(`AutoSwg: ignoring unusable sunrise/sunset (${err.message}); counting time by the clock.`); }
     }
     const dayEquivalents = (a: Date, b: Date): number => daylight ? consumptionDayEquivalents(a, b, params.timezone, daylight) : (b.getTime() - a.getTime()) / 86400000;
+    // The clock time at which `days` days of consumption (day equivalents, so the night counts for less) will have passed after `from`: whole 24 hour blocks
+    // count as one day each, and the rest is found within the next block. Without daylight times it is plain clock days.
+    const dateAfterDayEquivalents = (from: Date, days: number): Date => {
+        if (!daylight) return new Date(from.getTime() + days * 86400000);
+        const whole = Math.floor(days), frac = days - whole;
+        const start = new Date(from.getTime() + whole * 86400000);
+        if (frac <= 1e-9) return start;
+        let lo = 0, hi = 86400000;
+        for (let i = 0; i < 40; i++) {
+            const mid = (lo + hi) / 2;
+            if (dayEquivalents(start, new Date(start.getTime() + mid)) < frac) lo = mid; else hi = mid;
+        }
+        return new Date(start.getTime() + hi);
+    };
 
     // Liquid chlorine added between two points counts as FC the SWG didn't make.
     const additions = upTo(parsedCards.chlorineAdditions);
@@ -1204,7 +1218,7 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         if (avgPerDay > 0) {
             const daysToTarget = (projectedCurrentFc - targetFc) / avgPerDay;
             targetDays = daysToTarget;
-            targetDate = new Date(rightNow.getTime() + daysToTarget * 86400000);
+            targetDate = dateAfterDayEquivalents(rightNow, daysToTarget);
             targetDateExtended = true;
             targetInfo = `${head} At the projected burn of ${avgPerDay.toFixed(2)} ppm/day it should reach the target in about ${daysToTarget.toFixed(1)} days, later than the ${origWindow} to the original deadline (${formatLocalDateTime(origDate, params.timezone)}) -- so the target date is moved to ${formatLocalDateTime(targetDate, params.timezone)}, and the SWG isn't needed and is held at 0% until then.`;
         }
