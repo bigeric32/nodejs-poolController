@@ -63,6 +63,18 @@ function formatHHMMInZone(dt: Date, timeZone: string): string {
 // sunset. Prefer that live, already-calculated window so the capacity/duty-cycle math
 // tracks the real (seasonally shifting) window instead of drifting away from it; fall
 // back to the static minutes only if today's window hasn't been calculated yet.
+// The run window the calculation will use (a selected schedule's own window wins over the typed times) and how many ppm/day the SWG makes in it at its
+// 100% setting. For the settings page; it changes nothing.
+export function autoSwgRunWindowInfo() {
+    try {
+        let cfg = sys.autoSwg;
+        let win = resolveAutoSwgRunWindow(cfg);
+        let cap = computeSwgCapacity({ gallons: cfg.gallons, swgLbsPerDay: cfg.swgLbsPerDay, swgStartTime: win.swgStartTime, swgStopTime: win.swgStopTime });
+        return { start: win.swgStartTime, stop: win.swgStopTime, hours: cap.hours, ppmPerDayAtFull: cap.ppmPerDayAtFull, note: win.scheduleNote };
+    }
+    catch (err) { return undefined; }
+}
+
 function resolveAutoSwgRunWindow(cfg: typeof sys.autoSwg): { swgStartTime: string; swgStopTime: string; scheduleNote?: string } {
     let swgStartTime = cfg.swgStartTime;
     let swgStopTime = cfg.swgStopTime;
