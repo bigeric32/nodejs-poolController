@@ -149,7 +149,8 @@ SWG Run Start/Stop) and Time Zone.
 * **Adjust the burn for the water temperature** (off): moves the burn along a line fitted to your own burn rates against
   the water temperature logged with your FC tests, only when that line is clear. It did not improve the projection on the
   pool it was tried on (the water temperature barely changes within a 21-day window), so it is off; What-If Sweep scores it
-  for yours once there are enough temperatures logged.
+  for yours once there are enough temperatures logged. Even when it is on, it moves the burn by at most 15% of the
+  average, because a fit over a few weeks can mistake sunny days for warm water.
 
 ## Tuning, when you are ready
 
