@@ -66,7 +66,7 @@ week is workable and daily is ideal, and more readings make the recommendation s
 
 **Before you leave**
 1. Log an FC test the day you leave. A recent reading is the best starting point for everything below.
-2. Raise **Target FC** by a ppm or two, with a short **Days to Target (FC below target)**, and press Check Now, then Apply.
+2. Raise **Target FC** by a ppm or two, with a short **Run Periods (days) to Target (FC below target)**, and press Check Now, then Apply.
    FC builds toward the higher target and then holds near it.
 
 **While you are away**
@@ -109,8 +109,8 @@ week is workable and daily is ideal, and more readings make the recommendation s
 1. Test FC and log it. This ends Away protection, if you left it on, the next time AutoSwg reads PoolMath (a check, or
    the read it does at least once a day in every mode). Press Check Now to have it happen right away.
 2. Set **Target FC** back to your usual level and press Check Now, then Apply.
-3. If FC is above the target, the SWG is cut back (to 0% if need be) and consumption brings FC down over **Days to Target (FC
-   above target)**, the gentle direction. If it is below, the SWG pushes up over **Days to Target (FC below target)**. When
+3. If FC is above the target, the SWG is cut back (to 0% if need be) and consumption brings FC down over **Run Periods (days) to Target (FC
+   above target)**, the gentle direction. If it is below, the SWG pushes up over **Run Periods (days) to Target (FC below target)**. When
    the period ends, the % returns to the maintenance %, if the checkbox is on, and you are at steady state with nothing more
    to adjust by hand.
 
@@ -128,17 +128,21 @@ SWG Run Start/Stop) and Time Zone.
 
 **What you want:**
 * **Target FC**: the FC you want to hold.
-* **Days to Target (above / below)**: how quickly to correct when FC is above or below the target. Above is
-  gentle, since consumption does most of the work. Below is quicker, so you recover sooner. They move in half-day steps
-  (0.5, 1, 1.5 ...). A whole number of days holds that many full SWG run windows; a half-day period holds only the part of the run window that
-  falls inside it (it may hold all of it, part of it or none), and the calculation counts exactly those hours, so you can see how the
-  on and off window changes the plan.
+* **Run Periods (days) to Target (above / below)**: how quickly to correct when FC is above or below the target, in SWG run periods.
+  One run period is one run window of the SWG (09:21 to 17:06 on a pool like the author's), counted in on-time only, so the off
+  hours in between add nothing. The deadline is the moment the SWG has been on for that many run windows from now, and the
+  plan counts exactly that production and the day and night consumption up to then. They move in half steps (0.5, 1, 1.5 ...) and
+  are never below 0.5, so a period always holds SWG run time. A window already running counts for what is left of it, which
+  means 1 period is about a day ahead when you check during the run, but only until the end of the run when you check before it
+  starts. Above is gentle, since consumption does most of the work. Below is quicker, so you recover sooner. A saved
+  "days" value carries over as it is (1 day is 1 period).
 * **Keep FC at the target through the night** (on): FC is lowest just before the SWG starts in the morning, and the target is a floor.
-  If the deadline falls where no SWG run lies between it and the next start (the evening, overnight or early morning), FC would keep
+  Because a run-period deadline usually falls at the end of a run, FC is at its highest then and falls overnight. If the deadline
+  falls where no SWG run lies between it and the next start (the evening, overnight or early morning), FC would keep
   falling after it, so the plan aims a little higher at the deadline (typically 0.1 to 0.4 ppm) and the note on the calculation says by
   how much. It uses the same burn estimate, so it is as good as the day and night weighting. Turn it off to aim at the target only at
-  the deadline. If a target period holds no SWG run time at all (a half day that falls outside the run window), the calculation says so
-  and keeps the maintenance %, because the SWG cannot add chlorine in that time.
+  the deadline. A target period that holds no SWG run time at all (only possible for a target already in progress) is reported, and the
+  calculation keeps the maintenance %, because the SWG cannot add chlorine in that time.
 * **Aim Above Target as the Last Test Ages** (0.15 ppm per day, at most 1 ppm; 0 = aim at the target itself): an old
   reading is a less certain place to start from, and FC a little high is the safer miss, so the SWG % that reaches the target is
   worked out for the target plus this many ppm for each day since the last test. It changes only that % (not the
@@ -216,8 +220,8 @@ You do not need this section to use AutoSwg. It is for anyone who wants to know 
    since the last apply, Refresh and Apply (and the automatic check) start a new target instead: a changed target is a
    request for one.
    If even 100% cannot reach it, the report says how long it would take, and suggests extending the SWG run window
-   (the schedule it runs on) by about how many hours a day would reach it, before you change the target; if even 24 hours
-   a day would not, it says to lengthen Days to Target or lower the target.
+   (the schedule it runs on) by about how many hours per run period would reach it, before you change the target; if even 24 hours
+   a day would not, it says to lengthen the run periods to target or lower the target.
 5. **Refresh: Adjust %** re-works the % with fresh PoolMath data against the same target date. It does not
    restart the countdown.
 
