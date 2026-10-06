@@ -75,8 +75,10 @@ week is workable and daily is ideal, and more readings make the recommendation s
 * The AutoSwg area of the dashboard shows an alert for things no recommendation can fix: the chlorinator reports a fault
   (low flow, low salt, clean cell, communication lost and so on) or no output while the SWG is set above 0% during its scheduled run
   window; a planned step to the maintenance % did not happen; njsPC was not running for 25 minutes or more, so the pool equipment
-  it controls was off (it says when the computer restarted, which points to a power loss, and shows once njsPC is running again).
-  Alerts appear on the dashboard only: nothing is sent to a phone, so look at it, or reach it remotely if you have set that up.
+  it controls was off (it says when the computer restarted, which points to a power loss, and shows once njsPC is running again);
+  or none of the air, water or solar temperatures has changed for 15 minutes or more (the readings stopped arriving, so solar
+  heating and the 24 hour water average are working from old values; this applies to sensors that report fractions of a degree,
+  such as REM's). Alerts appear on the dashboard only: nothing is sent to a phone, so look at it, or reach it remotely if you have set that up.
 * A sharp fall in the chlorinator's salt reading is noted in the recommendation: the pool was probably diluted by rain or a
   water change, and some of the FC lost may not be consumption. On its own, nothing is adjusted for it.
 * **Away protection (optional, off until you turn it on for a trip).** In the settings, under "Vacation: Away protection",
