@@ -1,23 +1,32 @@
 #!/bin/bash
 # Back up the pool configuration and data on this Pi into ~/pool-backups.
 #
-#   ~/pool-backup.sh           full backup: asks for a name, needs sudo for the system files. Includes the logs folders.
+#   ~/pool-backup.sh           full backup: asks for a name, needs sudo for the system files.
 #   ~/pool-backup.sh --daily   unattended data backup for cron: no prompt and no sudo (the data, configs and scripts you can read). Keeps the last 14,
 #                              and copies the newest one off the Pi when ~/.pool-backup.conf sets REMOTE (see below).
+#   --no-logs                  leaves the logs out of this one run (--logs puts them back)
+#
+# Both include the njsPC and REM logs folders (the solar logs, packet captures and so on) unless INCLUDE_LOGS=0.
 #
 # Restore a full backup in place with:  sudo tar -xpf FILE -C /
 #
 # ~/.pool-backup.conf (optional, plain shell lines):
 #   REMOTE=user@host:/folder/        where --daily also copies the newest archive (scp, with a key and no password prompt)
-#   INCLUDE_LOGS=0                   1 adds the njsPC and REM logs folders to a --daily archive too (the full backup always has them)
+#   INCLUDE_LOGS=0                   leaves the njsPC and REM logs folders out of every backup (the default, 1, includes them)
 #   KEEP_DAILY=14                    how many --daily archives to keep on the Pi
 set -u
 MODE=full
-[ "${1:-}" = "--daily" ] && MODE=daily
 REMOTE=""
-INCLUDE_LOGS=0
+INCLUDE_LOGS=1
 KEEP_DAILY=14
 [ -r "$HOME/.pool-backup.conf" ] && . "$HOME/.pool-backup.conf"
+for arg in "$@"; do
+  case "$arg" in
+    --daily) MODE=daily ;;
+    --no-logs) INCLUDE_LOGS=0 ;;
+    --logs) INCLUDE_LOGS=1 ;;
+  esac
+done
 
 DEST="$HOME/pool-backups"
 mkdir -p "$DEST" && chmod 700 "$DEST"
@@ -59,8 +68,8 @@ for f in "$HOME"/relayEquipmentManager/config.json*; do add "$f"; done
 for f in "$HOME"/nodejs-poolController-dashPanel/config.json*; do add "$f"; done
 for f in "$HOME"/pool-*.sh; do add "$f"; done
 add "$HOME/.pool-backup.conf"
-# The logs (the solar logs, packet captures and so on) can be large, so --daily leaves them out unless INCLUDE_LOGS=1
-if [ "$MODE" = "full" ] || [ "$INCLUDE_LOGS" = "1" ]; then
+# The logs (the solar logs, packet captures and so on) can be large: INCLUDE_LOGS=0 in ~/.pool-backup.conf, or --no-logs for one run, leaves them out
+if [ "$INCLUDE_LOGS" = "1" ]; then
   add "$HOME/nodejs-poolController/logs"
   add "$HOME/relayEquipmentManager/logs"
 fi
