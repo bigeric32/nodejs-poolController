@@ -4031,6 +4031,12 @@ export class AutoSwgState extends EqState {
     public set pendingTargetFc(val: number) { this.setDataVal('pendingTargetFc', val); }
     public get pendingTargetDate(): string { return this.data.pendingTargetDate; }
     public set pendingTargetDate(val: string) { this.setDataVal('pendingTargetDate', val); }
+    // The Run Periods to Target (above|below) this calculation used, and the ones of the last apply: changing either is a request for a new target,
+    // just as a changed Target FC is (see runAutoSwgRecommendation).
+    public get pendingPeriodsKey(): string { return this.data.pendingPeriodsKey; }
+    public set pendingPeriodsKey(val: string) { this.setDataVal('pendingPeriodsKey', val); }
+    public get lastAppliedPeriodsKey(): string { return this.data.lastAppliedPeriodsKey; }
+    public set lastAppliedPeriodsKey(val: string) { this.setDataVal('lastAppliedPeriodsKey', val); }
     // Set when even 100% SWG can't reach the target within the window (the recommended %
     // is capped at 100). targetWarning belongs to the current calculation preview and is
     // cleared with it; lastAppliedTargetWarning is what was in force when it was last applied,

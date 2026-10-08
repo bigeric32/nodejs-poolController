@@ -76,7 +76,9 @@ week is workable and daily is ideal, and more readings make the recommendation s
   (low flow, low salt, clean cell, communication lost and so on) or no output while the SWG is set above 0% during its scheduled run
   window; a planned step to the maintenance % did not happen; njsPC was not running for 25 minutes or more, so the pool equipment
   it controls was off (it says when the computer restarted, which points to a power loss, and shows once njsPC is running again);
-  or none of the air, water or solar temperatures has changed for 15 minutes or more (the readings stopped arriving, so solar
+  the chlorinator has not answered njsPC for 5 minutes or more while it should have power (at any hour: njsPC then cannot control it
+  and it runs at the % set on the unit itself; njsPC also resets the RS485 port by itself when its chlorinator polling stalls, and logs
+  a SEVERE error); or none of the air, water or solar temperatures has changed for 15 minutes or more (the readings stopped arriving, so solar
   heating and the 24 hour water average are working from old values; this applies to sensors that report fractions of a degree,
   such as REM's). Alerts appear on the dashboard only: nothing is sent to a phone, so look at it, or reach it remotely if you have set that up.
 * A sharp fall in the chlorinator's salt reading is noted in the recommendation: the pool was probably diluted by rain or a

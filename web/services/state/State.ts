@@ -348,8 +348,12 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
         // A Target FC changed since the last apply is a request for a new target: staying on course for the old one would ignore what you just set (and
         // the pending step would keep naming the old target). Refine is the explicit "stay on the in-flight target" and keeps it.
         let lastTarget = state.autoSwg.lastAppliedTargetFc;
+        let lastPeriods = state.autoSwg.lastAppliedPeriodsKey;
         if (mode === 'auto' && typeof lastTarget === 'number' && Math.abs(cfg.targetFc - lastTarget) > 1e-9) {
             targetChangeNote = `The Target FC was changed from ${lastTarget} to ${cfg.targetFc} ppm since the last apply, so this starts a new target instead of staying on course for the old one.`;
+        }
+        else if (mode === 'auto' && typeof lastPeriods === 'string' && lastPeriods !== `${cfg.targetPeriodsAbove}|${cfg.targetPeriodsBelow}`) {
+            targetChangeNote = `The Run Periods to Target were changed (above|below: ${lastPeriods.replace('|', ' | ')} to ${cfg.targetPeriodsAbove} | ${cfg.targetPeriodsBelow}) since the last apply, so this starts a new target instead of staying on course for the old one.`;
         }
         else if (!isNaN(at) && at > Date.now() && typeof state.autoSwg.lastAppliedTargetFc === 'number') {
             inFlight = { targetFc: state.autoSwg.lastAppliedTargetFc, targetDate: new Date(at), strayPpm: mode === 'refine' ? Infinity : cfg.newTargetDateThresholdPpm };
@@ -427,6 +431,7 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
     // pair rather than re-deriving anything from live config at apply time.
     state.autoSwg.pendingTargetFc = result.targetFcUsed;
     state.autoSwg.pendingTargetDate = result.targetDateUsed;
+    state.autoSwg.pendingPeriodsKey = `${cfg.targetPeriodsAbove}|${cfg.targetPeriodsBelow}`;
     state.autoSwg.targetWarning = result.targetWarning;
     state.autoSwg.targetInfo = result.targetInfo;
     state.autoSwg.staleFcNote = result.staleFcNote;
@@ -528,6 +533,7 @@ async function applyAutoSwgRecommendation(isAutoApply: boolean, pctOverride?: nu
     // none is invented -- so no refine is offered and no step is scheduled off it.
     state.autoSwg.lastAppliedTargetFc = typeof state.autoSwg.pendingTargetFc === 'number' ? state.autoSwg.pendingTargetFc : sys.autoSwg.targetFc;
     state.autoSwg.lastAppliedTargetDate = state.autoSwg.pendingTargetDate;
+    state.autoSwg.lastAppliedPeriodsKey = state.autoSwg.pendingPeriodsKey;
     state.autoSwg.lastAppliedTargetWarning = state.autoSwg.targetWarning;
     state.autoSwg.lastAppliedTargetInfo = state.autoSwg.targetInfo;
     state.autoSwg.lastAppliedStaleFcNote = state.autoSwg.staleFcNote;
@@ -899,6 +905,10 @@ function detectAutoSwgOutage() {
     }
     catch (err) { logger.warn(`AutoSwg: could not check for an outage: ${err.message}`); }
 }
+// Whether the chlorinator should have power: its body is running (the chlorinator is wired to the filter circuit, as njsPC's own poll assumes).
+function autoSwgChlorinatorPowered(body: number): boolean {
+    try { return sys.board.bodies.isBodyOn(body); } catch (err) { return false; }
+}
 function watchAutoSwg() {
     try {
         let cfg = sys.autoSwg;
@@ -921,7 +931,9 @@ function watchAutoSwg() {
         put(autoSwgWatch.evaluate({
             now: now,
             inRunWindow: inRunWindow(win.swgStartTime, win.swgStopTime, cfg.timezone, now),
-            chlorinator: schlor ? { status: schlor.status, statusDesc: statusDesc, currentOutput: schlor.currentOutput, setpoint: schlor.poolSetpoint } : undefined,
+            chlorinator: schlor ? { status: schlor.status, statusDesc: statusDesc, currentOutput: schlor.currentOutput, setpoint: schlor.poolSetpoint,
+                powered: chlorRecord && !chlorRecord.disabled && autoSwgChlorinatorPowered(chlorRecord.body),
+                commAgeSec: typeof schlor.lastComm === 'number' && schlor.lastComm > 0 ? Math.max(0, Math.round((now - schlor.lastComm) / 1000)) : undefined } : undefined,
             autoCheckEnabled: (cfg.autoCheckEnabled && cfg.autoApplyEnabled) || cfg.awayActive,
             autoCheckHours: cfg.autoCheckHours,
             lastCheckedAt: state.autoSwg.lastCheckedAt,
