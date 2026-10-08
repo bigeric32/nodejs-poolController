@@ -940,6 +940,7 @@ function watchAutoSwg() {
             checkError: state.autoSwg.error,
             stepAt: state.autoSwg.stepAt,
             tempsUnchangedMs: autoSwgTempsUnchangedMs(now),
+            runWindow: { start: win.swgStartTime, stop: win.swgStopTime, scheduleNote: win.scheduleNote },
             outages: state.autoSwg.outages || [],
         }));
     }
