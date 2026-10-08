@@ -904,9 +904,21 @@ function detectAutoSwgOutage() {
     }
     catch (err) { logger.warn(`AutoSwg: could not check for an outage: ${err.message}`); }
 }
-// Whether the chlorinator should have power: its body is running (the chlorinator is wired to the filter circuit, as njsPC's own poll assumes).
-function autoSwgChlorinatorPowered(body: number): boolean {
-    try { return sys.board.bodies.isBodyOn(body); } catch (err) { return false; }
+// Whether the chlorinator should have power right now. When AutoSwg follows a schedule, that schedule's circuit is the SWG's power relay, so its
+// state is the answer (the SWG is only powered inside its run window, and is silent the rest of the day by design). With no schedule to follow,
+// fall back to the body running, as njsPC's own poll assumes.
+function autoSwgChlorinatorPowered(cfg: typeof sys.autoSwg, body: number): boolean {
+    try {
+        if (cfg.scheduleId >= 0) {
+            const sched = sys.schedules.toArray().find(s => s.id === cfg.scheduleId);
+            if (sched && !sched.disabled) {
+                const c: any = state.circuits.getInterfaceById(sched.circuit);
+                if (c) return c.isOn === true;
+            }
+        }
+        return sys.board.bodies.isBodyOn(body);
+    }
+    catch (err) { return false; }
 }
 function watchAutoSwg() {
     try {
@@ -931,7 +943,7 @@ function watchAutoSwg() {
             now: now,
             inRunWindow: inRunWindow(win.swgStartTime, win.swgStopTime, cfg.timezone, now),
             chlorinator: schlor ? { status: schlor.status, statusDesc: statusDesc, currentOutput: schlor.currentOutput, setpoint: schlor.poolSetpoint,
-                powered: chlorRecord && !chlorRecord.disabled && autoSwgChlorinatorPowered(chlorRecord.body),
+                powered: chlorRecord && !chlorRecord.disabled && autoSwgChlorinatorPowered(cfg, chlorRecord.body),
                 commAgeSec: typeof schlor.lastComm === 'number' && schlor.lastComm > 0 ? Math.max(0, Math.round((now - schlor.lastComm) / 1000)) : undefined } : undefined,
             autoCheckEnabled: (cfg.autoCheckEnabled && cfg.autoApplyEnabled) || cfg.awayActive,
             autoCheckHours: cfg.autoCheckHours,
