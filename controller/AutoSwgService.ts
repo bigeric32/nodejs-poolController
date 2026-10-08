@@ -1329,6 +1329,11 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         recommendedPctForTarget = Math.max(0, Math.min(100, unclampedPct));
         if (neededPpm <= 0) rationale.push(`Already at/above ${targetFc} ppm target given ongoing consumption.`);
         else rationale.push(`Recommended SWG duty cycle to reach ${targetFc} ppm FC in ${Math.round(targetHours * 10) / 10}h: ${recommendedPctForTarget.toFixed(1)}%.`);
+        // The glide note above is written before the margin above the target is known; when that margin leaves a small % to run, say so instead of "0%".
+        if (typeof targetInfo === 'string' && roundDutyCyclePct(recommendedPctForTarget) > 0) {
+            const heldPct = roundDutyCyclePct(recommendedPctForTarget);
+            targetInfo = targetInfo.replace(/([Tt])he SWG isn't needed and is held at 0%/, (_m, t) => `${t}he SWG only has to cover the small margin above the target, so it is held at about ${heldPct}%`);
+        }
         // The % above is capped at 100, so if even that isn't enough the target can't be hit
         // in the window -- say so, and how long it would really take, rather than leaving a
         // capped number that quietly reads like a plan that works.
