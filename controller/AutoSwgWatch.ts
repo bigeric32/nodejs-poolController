@@ -37,6 +37,7 @@ export interface AutoSwgWatchInput {
     stepAt?: string;
     outages?: { from: string; to: string; minutes: number; rebooted?: boolean }[];   // times njsPC was not running (state.autoSwg.outages)
     tempsUnchangedMs?: number;            // how long none of the air, water or solar temperatures has changed (only for sensors that report fractions)
+    runWindow?: { start: string; stop: string; scheduleNote?: string };   // the daily SWG run window AutoSwg works from ('HH:MM'), and how it was found
 }
 
 // Chlorinator statuses (the chlorinatorStatus value map): 0 ok, 1 low flow, 2 low salt, 3 very low salt, 4 high current, 5 clean cell, 6 low voltage,
@@ -44,6 +45,8 @@ export interface AutoSwgWatchInput {
 const STATUS_WARNING_ONLY = [2, 5, 7];
 export const WATCH_STATUS_MIN = 30 * 60 * 1000;       // a bad status must last this long inside the run window
 export const WATCH_SILENT_MS = 5 * 60 * 1000;        // a chlorinator that should have power (its body is on) and has not answered for this long
+export const WATCH_WINDOW_MAX_H = 16;               // a daily SWG run window longer than this is almost certainly a mis-set schedule
+export const WATCH_WINDOW_MIN_H = 1;                // so is one shorter than this
 export const WATCH_NO_OUTPUT_MIN = 45 * 60 * 1000;    // so must an output of zero while a % is set
 export const WATCH_STEP_OVERDUE_MS = 30 * 60 * 1000;
 export const WATCH_OUTAGE_SHOWN_MS = 7 * 86400000;    // an outage stays on the dashboard this long
@@ -71,6 +74,25 @@ export class AutoSwgWatch {
     public evaluate(i: AutoSwgWatchInput): AutoSwgAlert[] {
         const found: { id: string; level: 'alarm' | 'warning'; text: string; minMs: number; since?: string }[] = [];
         const c = i.chlorinator;
+        // Every figure AutoSwg produces (daily capacity, run periods, deadlines) rests on the SWG run window, which it reads from the SWG schedule. A start
+        // or end set against the wrong sun event, or an offset the wrong way round, gives a window that is far too long or too short (a start after sunset
+        // with an end before it runs about 20 hours) and silently skews the calculation; a missing or disabled schedule means the typed-in times are used.
+        const w = i.runWindow;
+        if (w) {
+            const toMin = (s: string) => { const m = /^(\d{1,2}):(\d{2})/.exec(s || ''); return m ? parseInt(m[1], 10) * 60 + parseInt(m[2], 10) : NaN; };
+            const a = toMin(w.start), b = toMin(w.stop);
+            if (!isNaN(a) && !isNaN(b)) {
+                const hours = (b > a ? b - a : 1440 - a + b) / 60;
+                if (hours > WATCH_WINDOW_MAX_H || hours < WATCH_WINDOW_MIN_H) {
+                    found.push({ id: 'swg-window', level: 'warning', minMs: 0,
+                        text: `The SWG run window AutoSwg is using is ${w.start} to ${w.stop}, ${hours.toFixed(1)} hours a day, which does not look right. Check the SWG schedule's start and end (the sun event, such as sunrise for the start and sunset for the end, and the offsets). The run periods, daily capacity and deadlines all depend on this window.` });
+                }
+            }
+            if (w.scheduleNote && /^Configured schedule/.test(w.scheduleNote)) {
+                found.push({ id: 'swg-window-schedule', level: 'warning', minMs: 0,
+                    text: `AutoSwg cannot use the SWG schedule it is set to follow, so it is working from the typed-in run times ${w.start} to ${w.stop}: ${w.scheduleNote}` });
+            }
+        }
         // With power on to the SWG it must answer, whatever the time of day: njsPC then cannot control it and it falls back to the % set on the unit itself.
         // This is judged at any hour and quickly (the status alerts below wait 30 minutes and only look inside the run window).
         if (c && c.powered && typeof c.commAgeSec === 'number' && c.commAgeSec * 1000 >= WATCH_SILENT_MS) {
