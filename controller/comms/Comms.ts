@@ -845,6 +845,9 @@ export class RS485Port {
                     });
                     if (!this.mock) this.resetConnTimer();
                     this.emitPortStats();
+                    // A message queued while the port was closing or reopening (the inactivity reset) is still waiting and nothing else would send it:
+                    // its sender would wait forever, so start the queue again now that the port is open.
+                    setImmediate(() => { this.processPackets(); });
                 });
                 sp.on('close', (err) => {
                     this.isOpen = false;
