@@ -29,7 +29,7 @@ export interface AutoSwgAlert { id: string; level: 'alarm' | 'warning'; text: st
 export interface AutoSwgWatchInput {
     now: number;
     inRunWindow: boolean;                 // inside the SWG's run window, after the start-up allowance
-    chlorinator?: { status: number; statusDesc: string; currentOutput: number; setpoint: number };
+    chlorinator?: { status: number; statusDesc: string; currentOutput: number; setpoint: number; powered?: boolean; commAgeSec?: number };
     autoCheckEnabled: boolean;
     autoCheckHours: number;
     lastCheckedAt?: string;
@@ -43,6 +43,7 @@ export interface AutoSwgWatchInput {
 // 7 water temp low, 8 communication lost. The ones that stop chlorine being made are alarms; the ones that cut it down are warnings.
 const STATUS_WARNING_ONLY = [2, 5, 7];
 export const WATCH_STATUS_MIN = 30 * 60 * 1000;       // a bad status must last this long inside the run window
+export const WATCH_SILENT_MS = 5 * 60 * 1000;        // a chlorinator that should have power (its body is on) and has not answered for this long
 export const WATCH_NO_OUTPUT_MIN = 45 * 60 * 1000;    // so must an output of zero while a % is set
 export const WATCH_STEP_OVERDUE_MS = 30 * 60 * 1000;
 export const WATCH_OUTAGE_SHOWN_MS = 7 * 86400000;    // an outage stays on the dashboard this long
@@ -70,6 +71,12 @@ export class AutoSwgWatch {
     public evaluate(i: AutoSwgWatchInput): AutoSwgAlert[] {
         const found: { id: string; level: 'alarm' | 'warning'; text: string; minMs: number; since?: string }[] = [];
         const c = i.chlorinator;
+        // With power on to the SWG it must answer, whatever the time of day: njsPC then cannot control it and it falls back to the % set on the unit itself.
+        // This is judged at any hour and quickly (the status alerts below wait 30 minutes and only look inside the run window).
+        if (c && c.powered && typeof c.commAgeSec === 'number' && c.commAgeSec * 1000 >= WATCH_SILENT_MS) {
+            found.push({ id: 'swg-silent', level: 'alarm', minMs: 0, since: new Date(i.now - c.commAgeSec * 1000).toISOString(),
+                text: `The chlorinator has not answered njsPC for ${Math.round(c.commAgeSec / 60)} minutes while it should have power, so njsPC cannot control it and it may be running at the % set on the unit itself.` });
+        }
         if (i.inRunWindow && c) {
             if (c.status !== 0 && typeof c.status === 'number') {
                 found.push({ id: 'swg-status', level: STATUS_WARNING_ONLY.indexOf(c.status) >= 0 ? 'warning' : 'alarm', minMs: WATCH_STATUS_MIN,

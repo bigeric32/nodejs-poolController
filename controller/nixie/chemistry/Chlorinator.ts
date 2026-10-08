@@ -13,6 +13,9 @@ import { conn } from '../../comms/Comms';
 import { ncp } from '../Nixie';
 import { setTimeout } from 'timers/promises';
 
+// The longest one chlorinator poll cycle (take control, set output, ask for the model) is allowed to take: normal retries need about 10 s.
+const POLL_CYCLE_LIMIT_MS = 30000;
+
 export class NixieChlorinatorCollection extends NixieEquipmentCollection<NixieChlorinator> {
     public async deleteChlorinatorAsync(id: number) {
         try {
@@ -218,11 +221,30 @@ export class NixieChlorinator extends NixieEquipment {
                 try {
                     this.suspendPolling = true;
                     if (state.mode === 0) {
-                        if (!this.closing) await this.takeControlAsync();
-                        if (!this.closing) await setTimeout(300);
-                        if (!this.closing) await this.setOutputAsync();
-                        if (!this.closing) await setTimeout(300);
-                        if (!this.closing) await this.getModelAsync();
+                        // A poll cycle that never settles would stop all chlorinator traffic for good (the next poll is only scheduled after this one ends),
+                        // and the chlorinator then falls back to its own local setting.  So the cycle gets a limit; the next poll starts over with new messages.
+                        let guard: NodeJS.Timeout;
+                        try {
+                            await Promise.race([
+                                (async () => {
+                                    if (!this.closing) await this.takeControlAsync();
+                                    if (!this.closing) await setTimeout(300);
+                                    if (!this.closing) await this.setOutputAsync();
+                                    if (!this.closing) await setTimeout(300);
+                                    if (!this.closing) await this.getModelAsync();
+                                })(),
+                                new Promise<void>((_, reject) => { guard = setTimeoutSync(() => reject(new Error(`poll cycle did not finish in ${POLL_CYCLE_LIMIT_MS / 1000}s; restarting it`)), POLL_CYCLE_LIMIT_MS); })
+                            ]);
+                        }
+                        catch (err) {
+                            // The interface is not getting the messages through: reset the RS485 port so the next poll starts on a clean connection.
+                            // This is logged as an error and shown in the dashPanel messages whether or not the body is on: with the chlorinator relay on, it has power and must answer.
+                            logger.error(`SEVERE: Chlorinator ${this.chlor.name} communications stalled (${err.message}).  Resetting RS485 port ${this.chlor.portId || 0}.`);
+                            state.equipment.messages.setMessageByCode(`chlorinator:${this.chlor.id}:comms`, 'error', `Communication with ${this.chlor.name} stalled; the RS485 port was reset`);
+                            try { let port = conn.findPortById(this.chlor.portId || 0); if (typeof port !== 'undefined' && !port.closing) await port.openAsync(); }
+                            catch (rerr) { logger.error(`Chlorinator ${this.chlor.name}: could not reset RS485 port: ${rerr.message}`); }
+                        }
+                        finally { if (guard) clearTimeout(guard); }
                     }
                 } catch (err) {
                     // We only display an error here if the body is on.  The chlorinator should be powered down when it is not.
