@@ -70,6 +70,7 @@ export function inRunWindow(startTime: string, stopTime: string, timeZone: strin
 
 export class AutoSwgWatch {
     private since: { [id: string]: number } = {};
+    private poweredSince: number | undefined;
     // Evaluates the input and returns the alerts that hold now, each with when it was first seen (a condition that clears and comes back starts over).
     public evaluate(i: AutoSwgWatchInput): AutoSwgAlert[] {
         const found: { id: string; level: 'alarm' | 'warning'; text: string; minMs: number; since?: string }[] = [];
@@ -95,7 +96,11 @@ export class AutoSwgWatch {
         }
         // With power on to the SWG it must answer, whatever the time of day: njsPC then cannot control it and it falls back to the % set on the unit itself.
         // This is judged at any hour and quickly (the status alerts below wait 30 minutes and only look inside the run window).
-        if (c && c.powered && typeof c.commAgeSec === 'number' && c.commAgeSec * 1000 >= WATCH_SILENT_MS) {
+        // The SWG needs a little while to start up and answer after its power relay comes on, and was silent the whole time it was off, so the silence
+        // only counts once it has had power for this long as well.
+        if (c && c.powered) { if (typeof this.poweredSince === 'undefined') this.poweredSince = i.now; }
+        else this.poweredSince = undefined;
+        if (c && c.powered && typeof this.poweredSince === 'number' && i.now - this.poweredSince >= WATCH_SILENT_MS && typeof c.commAgeSec === 'number' && c.commAgeSec * 1000 >= WATCH_SILENT_MS) {
             found.push({ id: 'swg-silent', level: 'alarm', minMs: 0, since: new Date(i.now - c.commAgeSec * 1000).toISOString(),
                 text: `The chlorinator has not answered njsPC for ${Math.round(c.commAgeSec / 60)} minutes while it should have power, so njsPC cannot control it and it may be running at the % set on the unit itself.` });
         }
