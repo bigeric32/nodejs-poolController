@@ -22,7 +22,7 @@ NJSPC="$HOME/nodejs-poolController"
 REM="$HOME/relayEquipmentManager"
 PM2LOGS="$HOME/.pm2/logs"
 
-echo "Pool Pi post-boot check, $(date '+%Y-%m-%d %H:%M:%S'), up $(uptime -p 2>/dev/null)"
+echo "Pool Pi post-boot check, $(date '+%Y-%m-%d %H:%M:%S'), $(uptime -p 2>/dev/null)"
 [ -r /proc/device-tree/model ] && note "$(tr -d '\0' < /proc/device-tree/model)"
 
 head1 "SD card and storage"
@@ -45,8 +45,16 @@ fi
 findmnt -no OPTIONS / | grep -q noatime && ok "root is mounted noatime" || warn "root is not mounted noatime (more writes to the card)"
 if command -v vcgencmd >/dev/null 2>&1; then
   T=$(vcgencmd get_throttled 2>/dev/null | cut -d= -f2)
-  if [ "$T" = "0x0" ]; then ok "no undervoltage or throttling since boot ($(vcgencmd measure_temp 2>/dev/null))"
-  else fail "power or thermal trouble flagged since boot (get_throttled=$T): check the power supply and cable"; fi
+  TV=$((T))
+  TEMP=$(vcgencmd measure_temp 2>/dev/null)
+  if [ "$TV" -eq 0 ]; then ok "no undervoltage, throttling or temperature limit since boot ($TEMP)"
+  else
+    # bits 0-3 are happening now, bits 16-19 have happened since boot: 0 undervoltage, 1 frequency capped, 2 throttled, 3 soft temperature limit
+    if [ $((TV & 0x10001)) -ne 0 ]; then fail "undervoltage since boot (get_throttled=$T): check the power supply and cable"; fi
+    if [ $((TV & 0x60006)) -ne 0 ]; then warn "the CPU was throttled or its frequency capped since boot (get_throttled=$T, now $TEMP)"; fi
+    if [ $((TV & 0x80008)) -ne 0 ]; then warn "the soft temperature limit (60 C) was reached since boot (get_throttled=$T, now $TEMP): the clock was slowed to cool it; check shade, ventilation and a heatsink"; fi
+    [ $((TV & 0x1000F)) -eq 0 ] && note "nothing is happening right now ($TEMP); the flags above are from earlier since boot"
+  fi
 fi
 if journalctl -k -b --no-pager >/dev/null 2>&1; then
   BAD=$(journalctl -k -b --no-pager 2>/dev/null | grep -ciE "under-voltage|i/o error|ext4.*error|mmc[0-9]:.*(error|timeout)|usb.*(reset|disconnect)")
@@ -144,9 +152,10 @@ fi
 head1 "RS485, relays and the chlorinator"
 [ -e /dev/ttyUSB0 ] && ok "the RS485 adapter is at /dev/ttyUSB0" || fail "no /dev/ttyUSB0: the RS485 adapter is not seen"
 [ -e /dev/i2c-1 ] && ok "the I2C bus is present (/dev/i2c-1)" || fail "no /dev/i2c-1: the relay board bus is not seen (enable I2C?)"
-if [ -r "$PM2LOGS/REM-out.log" ]; then
-  FOUND=$(grep -a "Found I2C device" "$PM2LOGS/REM-out.log" 2>/dev/null | tail -1)
-  [ -n "$FOUND" ] && ok "REM found the relay board: $(printf '%s' "$FOUND" | cut -c1-100)" || warn "REM has not logged finding the relay board yet"
+if ls "$PM2LOGS"/REM-out*.log >/dev/null 2>&1; then
+  # the log rotates (daily and by size), so look through the newest few files
+  FOUND=$(ls -1t "$PM2LOGS"/REM-out*.log 2>/dev/null | head -3 | xargs grep -a "Found I2C device" 2>/dev/null | tail -1)
+  [ -n "$FOUND" ] && ok "REM found the relay board: $(printf '%s' "$FOUND" | sed 's/^[^:]*://' | cut -c1-100)" || warn "REM has not logged finding the relay board in its newest logs"
 fi
 if command -v curl >/dev/null 2>&1; then
   curl -s --max-time 5 localhost:4200/state/autoSwg 2>/dev/null | python3 -c '
