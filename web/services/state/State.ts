@@ -131,6 +131,10 @@ function resolveAutoSwgRunWindow(cfg: typeof sys.autoSwg): { swgStartTime: strin
 // causes (which the setpoint hook below would otherwise see, possibly again when
 // the panel echoes it back) isn't also logged as a manual one.
 let autoSwgApplyInFlight: { pct: number; at: number } | undefined;
+// Set when the settings are saved with Away protection newly turned on or off: the first automatic apply after it is something you just did on purpose, so it
+// is not flagged as an unreviewed change (the red banner) and is explained in a plain note instead.
+let autoSwgAwayToggle: { at: number; on: boolean } | undefined;
+export function noteAutoSwgAwayToggled(on: boolean) { autoSwgAwayToggle = { at: Date.now(), on: on }; }
 const AUTO_SWG_APPLY_ECHO_MS = 2 * 60 * 1000;
 
 // Logs a change to the AutoSwg chlorinator's pool setpoint that didn't come from
@@ -556,7 +560,13 @@ async function applyAutoSwgRecommendation(isAutoApply: boolean, pctOverride?: nu
     state.autoSwg.lastAppliedSettingsKey = state.autoSwg.details ? state.autoSwg.details.settingsKey : undefined;
     // A button you pressed (Check Now, Refresh, Refresh and Apply) is your own action, so it never raises the red banner, whatever the size of the change;
     // the banner is for what nobody asked for at that moment: the periodic automatic check.
-    let userStarted = trigger === 'check-now' || trigger === 'refine' || trigger === 'refresh-and-apply';
+    const awayToggle = autoSwgAwayToggle && Date.now() - autoSwgAwayToggle.at < 5 * 60 * 1000 ? autoSwgAwayToggle : undefined;
+    let userStarted = trigger === 'check-now' || trigger === 'refine' || trigger === 'refresh-and-apply' || (trigger === 'automatic-check' && !!awayToggle);
+    if (trigger === 'automatic-check' && awayToggle) {
+        state.autoSwg.awayChangeNote = `Away protection was turned ${awayToggle.on ? 'on' : 'off'}: the SWG % ${typeof previousAppliedPct === 'number' && previousAppliedPct !== pct ? `changed from ${previousAppliedPct}% to ${pct}%` : `stays at ${pct}%`}${awayToggle.on ? ' (it is never below the maintenance % while Away protection is on)' : ''}.`;
+        autoSwgAwayToggle = undefined;
+    }
+    else state.autoSwg.awayChangeNote = undefined;
     if (isAutoApply && userStarted) state.autoSwg.lastAutoApplyLargeChange = false;
     else if (isAutoApply) {
         let threshold = sys.autoSwg.autoApplyWarnThresholdPct;
@@ -654,6 +664,7 @@ export function armAutoSwgAutoCheck(minDelayMs: number = 0, firstRunMs?: number)
     state.autoSwg.nextAutoCheckAt = undefined;
     state.autoSwg.awayStatus = cfg.awayStatus;
     state.autoSwg.awayStartedAt = cfg.awayActive ? cfg.awayStartedAt : undefined;
+    state.autoSwg.awayTargetFc = cfg.awayTargetFc;
     // The periodic check runs for the automatic mode's Auto-Apply and automatic check, or while Away protection is on.
     if (!cfg.enabled || !((cfg.autoCheckEnabled && cfg.autoApplyEnabled) || cfg.awayActive) || !cfg.shareCode || cfg.chlorinatorId < 0) {
         if (wasDue) state.autoSwg.emitEquipmentChange();
@@ -943,6 +954,7 @@ function autoSwgChlorinatorPowered(cfg: typeof sys.autoSwg, body: number): boole
 function watchAutoSwg() {
     try {
         let cfg = sys.autoSwg;
+        if (state.autoSwg.awayTargetFc !== cfg.awayTargetFc) state.autoSwg.awayTargetFc = cfg.awayTargetFc;
         if (state.autoSwg.awayStatus !== cfg.awayStatus) { state.autoSwg.awayStatus = cfg.awayStatus; state.autoSwg.awayStartedAt = cfg.awayActive ? cfg.awayStartedAt : undefined; state.autoSwg.emitEquipmentChange(); }
         let put = (alerts: any[]) => {
             if (JSON.stringify(alerts) !== JSON.stringify(state.autoSwg.alerts || [])) {

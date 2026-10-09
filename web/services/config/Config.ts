@@ -27,7 +27,7 @@ import { utils } from "../../../controller/Constants";
 import { ServiceProcessError } from "../../../controller/Errors";
 import { state } from "../../../controller/State";
 import { stopPacketCaptureAsync, startPacketCapture } from '../../../app';
-import { armAutoSwgArchiveSync, armAutoSwgAutoCheck, autoSwgRunWindowInfo, awaySummary } from '../state/State';
+import { armAutoSwgArchiveSync, armAutoSwgAutoCheck, autoSwgRunWindowInfo, awaySummary, noteAutoSwgAwayToggled } from '../state/State';
 import { markLastTuneApplied } from '../../../controller/AutoSwgTuneHistory';
 import { autoSwgGateInfo } from '../../../controller/AutoSwgReadiness';
 import { snapshotAutoSwgSettings, logAutoSwgSettingChanges } from '../../../controller/AutoSwgHistory';
@@ -1061,6 +1061,7 @@ export class ConfigRoute {
                 // Saving with Away protection newly on is what starts it: its first check runs a minute later, so the target just set takes effect.
                 // Turning Away protection on (or off, with the automatic check on) acts at once, as a Check Now with a new target and an apply would, so the calculation
                 // and the dashboard show it within seconds rather than at the next check.
+                if (awayWasActive !== sys.autoSwg.awayActive) noteAutoSwgAwayToggled(sys.autoSwg.awayActive);
                 armAutoSwgAutoCheck(0, (!awayWasActive && sys.autoSwg.awayActive) || (awayWasActive && !sys.autoSwg.awayActive) ? 3 * 1000 : undefined);
                 // If the share code or pool changed, pull its history soon (a no-op otherwise).
                 armAutoSwgArchiveSync(60 * 1000);
