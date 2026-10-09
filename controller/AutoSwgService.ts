@@ -126,7 +126,7 @@ export interface AutoSwgParams {
     targetPeriodsBelow: number;
     // Away protection, for the explanation: while it is on, the Target FC is the vacation target (and goes back to originalTargetFc when it ends); for a few days
     // after it ended, what ending it did.
-    away?: { active: boolean; originalTargetFc?: number | null; endedNote?: string };
+    away?: { active: boolean; normalTargetFc?: number; endedNote?: string };
     // An already-committed target (a previous apply's FC and deadline) to stay on course
     // for instead of starting a new one, as long as the projected FC is within strayPpm of
     // targetFc. Infinity always stays on course (an explicit refresh); a finite value lets
@@ -1310,8 +1310,8 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     // grows with the age of the last reading (see AutoSwgParams.overshootPpmPerDay). Only the % that reaches the target uses it.
     const targetMarginPpm = typeof params.overshootPpmPerDay === 'number' && params.overshootPpmPerDay > 0 ? Math.min(OVERSHOOT_MARGIN_CAP_PPM, params.overshootPpmPerDay * elapsedDays) : 0;
     if (params.away && params.away.active) {
-        const orig = params.away.originalTargetFc;
-        rationale.push(`Away protection is on: the Target FC of ${params.targetFc} ppm is the vacation target${typeof orig === 'number' ? `; it was ${orig} ppm before Away protection was turned on and goes back to ${orig} ppm when it ends` : ' and stays until you change it (the target before it was set was not recorded)'}.`);
+        const normal = params.away.normalTargetFc;
+        rationale.push(`Away protection is on: the target in force is the vacation target of ${params.targetFc} ppm${typeof normal === 'number' && normal !== params.targetFc ? `, not your normal Target FC of ${normal} ppm, which applies again when Away protection ends` : ''}.`);
     }
     else if (params.away && params.away.endedNote) rationale.push(`Away protection ended: ${params.away.endedNote}`);
     if (targetMarginPpm >= 0.05) rationale.push(`Aiming ${targetMarginPpm.toFixed(2)} ppm above the ${targetFc} ppm target, because the last FC reading is ${elapsedDays.toFixed(1)} days old (${params.overshootPpmPerDay} ppm per day, at most ${OVERSHOOT_MARGIN_CAP_PPM} ppm).`);

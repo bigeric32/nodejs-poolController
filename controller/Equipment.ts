@@ -2493,8 +2493,8 @@ export class AutoSwg extends EqItem {
         if (typeof this.data.awayEnabled === 'undefined') this.data.awayEnabled = false;
         if (typeof this.data.awayStartedAt === 'undefined') this.data.awayStartedAt = '';
         if (typeof this.data.awayEndedNote === 'undefined') this.data.awayEndedNote = '';
-        // The Target FC in force before Away protection was turned on with a vacation target in the same save; it goes back when Away protection ends.
-        if (typeof this.data.awayOriginalTargetFc === 'undefined') this.data.awayOriginalTargetFc = null;
+        // The Target FC used while Away protection is on (the vacation target). The normal Target FC is untouched and applies again when Away protection ends.
+        if (typeof this.data.awayTargetFc !== 'number') this.data.awayTargetFc = (typeof this.data.targetFc === 'number' ? this.data.targetFc : 9) + 2;
         if (typeof this.data.awayEndedAt === 'undefined') this.data.awayEndedAt = '';
         // Automation also needs a Tune that was run and accepted (applied, or accepted as "your settings look good"). A Tune that was
         // applied before this existed counts.
@@ -2705,10 +2705,11 @@ export class AutoSwg extends EqItem {
     }
     public get awayStartedAt(): string { return typeof this.data.awayStartedAt === 'string' ? this.data.awayStartedAt : ''; }
     public set awayStartedAt(val: string) { /* set only by turning Away protection on, so a saved form cannot move it */ }
-    // The Target FC to go back to when Away protection ends (null when the vacation target was not set in the same save that turned it on, so the earlier one is not known).
-    public get awayOriginalTargetFc(): number | null { return typeof this.data.awayOriginalTargetFc === 'number' ? this.data.awayOriginalTargetFc : null; }
-    public set awayOriginalTargetFc(val: number | null) { /* set only by rememberAwayOriginalTarget, so a saved form cannot move it */ }
-    public rememberAwayOriginalTarget(val: number | null | undefined) { this.setDataVal('awayOriginalTargetFc', typeof val === 'number' ? val : null); }
+    // The vacation target: the Target FC the plan uses while Away protection is on. Target FC itself is not changed by it.
+    public get awayTargetFc(): number { return typeof this.data.awayTargetFc === 'number' ? this.data.awayTargetFc : this.data.targetFc + 2; }
+    public set awayTargetFc(val: number) { this.setDataVal('awayTargetFc', val); }
+    // The target the calculation uses now: the vacation target while Away protection is on, otherwise the Target FC.
+    public get effectiveTargetFc(): number { return this.awayActive ? this.awayTargetFc : this.targetFc; }
     // Records that Away protection ended and what that did (including a Target FC put back), shown in the next calculations for a few days and in the status line.
     public noteAwayEnded(note: string) { this.setDataVal('awayEndedNote', note); this.setDataVal('awayEndedAt', new Date().toISOString()); }
     public get awayEndedAt(): string { return typeof this.data.awayEndedAt === 'string' ? this.data.awayEndedAt : ''; }
