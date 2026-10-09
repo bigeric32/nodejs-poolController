@@ -1238,6 +1238,7 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
     let targetDays: number;
     let targetDate: Date;
     let refreshed = false;
+    let longerDeadlineNote: string | undefined;
     const inFlight = params.inFlight;
     const strayedBy = Math.abs(projectedCurrentFc - params.targetFc);
     if (inFlight && strayedBy <= inFlight.strayPpm) {
@@ -1248,6 +1249,15 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         const when = `${formatLocalDateTime(targetDate, params.timezone)} ${params.timezone}`;
         if (isFinite(inFlight.strayPpm)) rationale.push(`Projected current FC is within ${inFlight.strayPpm} ppm of the ${params.targetFc} ppm target: refreshing against the original ${targetFc} ppm target by ${when} (same deadline as the last apply).`);
         else rationale.push(`Refreshed against the original target of ${targetFc} ppm by ${when} (same deadline as the last apply, recalculated with fresh PoolMath data).`);
+        // A deadline kept from an earlier apply can be much further out than the Run Periods to Target setting, for instance after it was moved out when FC started
+        // well above the target. Say so, since the setting is not what is being used here.
+        const keptAbove = projectedCurrentFc > params.targetFc;
+        const configuredKept = keptAbove ? params.targetPeriodsAbove : params.targetPeriodsBelow;
+        if (swgHours > 0 && typeof configuredKept === 'number' && isFinite(configuredKept)) {
+            const periodsLeft = runWindowHoursBetween(rightNow, targetDate, swgStart, swgStop, params.timezone) / swgHours;
+            const setting = Math.max(0.5, configuredKept);
+            if (periodsLeft > setting + 0.25) longerDeadlineNote = `The deadline in force (${when}) is ${periodsLeft.toFixed(1)} run periods away, longer than your ${setting} run period${Math.abs(setting - 1) < 0.005 ? '' : 's'} setting for FC ${keptAbove ? 'above' : 'below'} target. It was set at an earlier check (a deadline is pushed out when consumption alone needs longer to bring FC to the target) and is kept while FC stays within ${isFinite(inFlight.strayPpm) ? inFlight.strayPpm + ' ppm' : 'range'} of the target. Check Now starts a new target with your setting.`;
+        }
     }
     else {
         const above = projectedCurrentFc > params.targetFc;
@@ -1290,6 +1300,7 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         rationale.push(`NOTE: ${targetInfo}`);
     }
 
+    if (longerDeadlineNote) rationale.push(`NOTE: ${longerDeadlineNote}`);
     // Duty cycle needed to reach targetFc in targetDays.
     const targetHours = targetDays * 24;
     // FC a little high is the safer miss, and an old reading is a less certain place to start from, so the target is raised by a margin that
