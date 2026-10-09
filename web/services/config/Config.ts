@@ -1346,11 +1346,11 @@ export class ConfigRoute {
         // The solar decision's settings (config.json controller.solar), shown on the dashPanel heater page. They apply at once.
         app.get('/config/solar/settings', (req, res) => {
             const c = config.getSection('controller.solar');
-            return res.status(200).send({ settleMinutes: c.settleMinutes, hysteresis: c.hysteresis });
+            return res.status(200).send({ settleMinutes: c.settleMinutes, hysteresis: c.hysteresis, valveDelaySeconds: c.valveDelaySeconds });
         });
         app.put('/config/solar/settings', (req, res) => {
             const out: any = config.getSection('controller.solar');
-            const limits = { settleMinutes: 60, hysteresis: 10 };
+            const limits = { settleMinutes: 60, hysteresis: 10, valveDelaySeconds: 600 };
             for (const name of Object.keys(limits)) {
                 if (typeof req.body[name] === 'undefined') continue;
                 const v = parseFloat(req.body[name]);
@@ -1358,7 +1358,7 @@ export class ConfigRoute {
                 out[name] = v;
             }
             config.setSection('controller.solar', out);
-            return res.status(200).send({ settleMinutes: out.settleMinutes, hysteresis: out.hysteresis });
+            return res.status(200).send({ settleMinutes: out.settleMinutes, hysteresis: out.hysteresis, valveDelaySeconds: out.valveDelaySeconds });
         });
         app.put('/app/config/reload', (req, res) => {
             sys.board.reloadConfig();

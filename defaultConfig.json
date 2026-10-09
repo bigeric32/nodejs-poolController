@@ -39,7 +39,8 @@
     },
     "solar": {
       "settleMinutes": 5,
-      "hysteresis": 1
+      "hysteresis": 1,
+      "valveDelaySeconds": 120
     },
     "txDelays": {
       "idleBeforeTxMs": 0,
