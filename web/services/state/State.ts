@@ -244,6 +244,9 @@ async function runAutoSwgStep() {
         return;
     }
     logger.info(`AutoSwg: stepped SWG ${direction} to the maintenance ${pct}% now that the target period has ended.`);
+    // A step is an apply too: the notes about the end of Away protection have done their job by now.
+    state.autoSwg.awayChangeNote = undefined;
+    if (!cfg.awayActive && cfg.awayEndedNote) cfg.clearAwayEnded();
     state.autoSwg.lastAppliedAt = new Date().toISOString();
     state.autoSwg.lastAppliedPct = pct;
     state.autoSwg.currentPct = pct;
@@ -563,11 +566,15 @@ async function applyAutoSwgRecommendation(isAutoApply: boolean, pctOverride?: nu
     // the banner is for what nobody asked for at that moment: the periodic automatic check.
     const awayToggle = autoSwgAwayToggle && Date.now() - autoSwgAwayToggle.at < 5 * 60 * 1000 ? autoSwgAwayToggle : undefined;
     let userStarted = trigger === 'check-now' || trigger === 'refine' || trigger === 'refresh-and-apply' || (trigger === 'automatic-check' && !!awayToggle);
-    if (trigger === 'automatic-check' && awayToggle) {
-        state.autoSwg.awayChangeNote = `Away protection was turned ${awayToggle.on ? 'on' : 'off'}: the SWG % ${typeof previousAppliedPct === 'number' && previousAppliedPct !== pct ? `changed from ${previousAppliedPct}% to ${pct}%` : `stays at ${pct}%`}${awayToggle.on ? ' (it is never below the maintenance % while Away protection is on)' : ''}.`;
+    if (awayToggle) {
+        state.autoSwg.awayChangeNote = `Away protection ${awayToggle.on ? 'was turned on' : 'ended'}: the SWG % ${typeof previousAppliedPct === 'number' && previousAppliedPct !== pct ? `changed from ${previousAppliedPct}% to ${pct}%` : `stays at ${pct}%`}${awayToggle.on ? ' (it is never below the maintenance % while Away protection is on)' : ''}.`;
         autoSwgAwayToggle = undefined;
     }
-    else state.autoSwg.awayChangeNote = undefined;
+    else {
+        state.autoSwg.awayChangeNote = undefined;
+        // Any apply after the one that followed turning Away protection off settles it: the notes about its end have done their job.
+        if (!sys.autoSwg.awayActive && sys.autoSwg.awayEndedNote) sys.autoSwg.clearAwayEnded();
+    }
     if (isAutoApply && userStarted) state.autoSwg.lastAutoApplyLargeChange = false;
     else if (isAutoApply) {
         let threshold = sys.autoSwg.autoApplyWarnThresholdPct;
@@ -893,6 +900,7 @@ function endAwayOnNewReading(reading?: { value: number; ts: string }): boolean {
         targetNote = ` The target in force went back from the vacation target of ${cfg.awayTargetFc} to the Target FC of ${cfg.targetFc} ppm.`;
         targetRestored = true;
     }
+    noteAutoSwgAwayToggled(false);   // the apply that follows is the one this explains
     cfg.noteAwayEnded(`Away protection ended by itself: a new FC reading (${reading.value} ppm, ${formatLocalDateTime(new Date(reading.ts), cfg.timezone)}) was logged in PoolMath after it was turned on. Your other settings apply again.${targetNote}`);
     try { logAutoSwgSettingChanges(before, snapshotAutoSwgSettings(cfg), 'away-ended', summary); } catch (err) { logger.warn(`AutoSwg: could not log the end of Away protection: ${err.message}`); }
     logger.info(`AutoSwg: ${cfg.awayEndedNote}`);

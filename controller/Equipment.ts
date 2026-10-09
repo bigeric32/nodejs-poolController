@@ -2711,6 +2711,8 @@ export class AutoSwg extends EqItem {
     // The target the calculation uses now: the vacation target while Away protection is on, otherwise the Target FC.
     public get effectiveTargetFc(): number { return this.awayActive ? this.awayTargetFc : this.targetFc; }
     // Records that Away protection ended and what that did (including a Target FC put back), shown in the next calculations for a few days and in the status line.
+    // Cleared by the first apply after the one that followed the end (see applyAutoSwgRecommendation), so the note does not outlive what it explained.
+    public clearAwayEnded() { this.setDataVal('awayEndedNote', ''); this.setDataVal('awayEndedAt', ''); }
     public noteAwayEnded(note: string) { this.setDataVal('awayEndedNote', note); this.setDataVal('awayEndedAt', new Date().toISOString()); }
     public get awayEndedAt(): string { return typeof this.data.awayEndedAt === 'string' ? this.data.awayEndedAt : ''; }
     public set awayEndedAt(val: string) { /* set only by noteAwayEnded */ }
