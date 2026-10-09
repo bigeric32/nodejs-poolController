@@ -4071,6 +4071,11 @@ export class AutoSwgState extends EqState {
     public set awayStatus(val: string) { this.setDataVal('awayStatus', val); }
     public get awayStartedAt(): string { return this.data.awayStartedAt; }
     public set awayStartedAt(val: string) { this.setDataVal('awayStartedAt', val); }
+    // The vacation target while Away protection is on (for the dashboard), and what the check made when it was turned on or off did to the SWG %.
+    public get awayTargetFc(): number { return this.data.awayTargetFc; }
+    public set awayTargetFc(val: number) { this.setDataVal('awayTargetFc', val); }
+    public get awayChangeNote(): string { return this.data.awayChangeNote; }
+    public set awayChangeNote(val: string) { this.setDataVal('awayChangeNote', val); }
     public get alerts(): any[] { return this.data.alerts; }
     public set alerts(val: any[]) { this.setDataVal('alerts', val); }
     public get stormStartPct(): number { return this.data.stormStartPct; }
