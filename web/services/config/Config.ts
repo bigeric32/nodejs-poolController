@@ -1032,18 +1032,10 @@ export class ConfigRoute {
                 let settingsBefore = snapshotAutoSwgSettings(sys.autoSwg);
                 let awayWasActive = sys.autoSwg.awayActive;
                 let awayWasOn = sys.autoSwg.awayEnabled, awayStartedBefore = sys.autoSwg.awayStartedAt;
-                const targetFcBefore = sys.autoSwg.targetFc;
+                const vacationTargetBefore = sys.autoSwg.awayTargetFc;
                 sys.autoSwg.set(req.body);
-                // The Target FC in force before this save is the one to go back to when Away protection ends, when this same save set the vacation target. Unchecking
-                // it by hand puts that target back too, unless this save also set a target of its own.
-                if (!awayWasOn && sys.autoSwg.awayEnabled) sys.autoSwg.rememberAwayOriginalTarget(sys.autoSwg.targetFc !== targetFcBefore ? targetFcBefore : null);
-                else if (awayWasOn && !sys.autoSwg.awayEnabled) {
-                    const original = sys.autoSwg.awayOriginalTargetFc;
-                    let restored = false;
-                    if (typeof original === 'number' && sys.autoSwg.targetFc === targetFcBefore && original !== targetFcBefore) { sys.autoSwg.targetFc = original; restored = true; }
-                    sys.autoSwg.rememberAwayOriginalTarget(null);
-                    sys.autoSwg.noteAwayEnded(`Away protection was turned off.${restored ? ` The Target FC went back from ${targetFcBefore} to ${original} ppm, what it was before Away protection was turned on.` : ''}`);
-                }
+                // Unchecking Away protection by hand: the plan goes back to the normal Target FC (the vacation target is left as it is for next time).
+                if (awayWasOn && !sys.autoSwg.awayEnabled) sys.autoSwg.noteAwayEnded(`Away protection was turned off.${vacationTargetBefore !== sys.autoSwg.targetFc ? ` The target in force went back from the vacation target of ${vacationTargetBefore} to the Target FC of ${sys.autoSwg.targetFc} ppm.` : ''}`);
                 // Keep a record of what changed (target, days to target, tuning ...) in the AutoSwg history, so the
                 // calculation's results can be lined up against the settings in force at the time. A failure here
                 // must not fail the save.

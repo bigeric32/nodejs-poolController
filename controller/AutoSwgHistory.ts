@@ -57,7 +57,7 @@ export const AUTO_SWG_LOGGED_SETTINGS = [
     'windowDays', 'daytimeLossSharePct', 'creditChlorineAdditions', 'fcAnomalyTolerancePpm',
     'projectionWeight', 'projectionTaperStartDays', 'projectionTaperEndDays', 'overshootPpmPerDay', 'protectOvernightLow', 'nightBurnRatio', 'burnTempAdjust',
     'mode', 'autoTuneEnabled', 'autoTuneAfterFcReadings', 'autoTuneApplyEnabled', 'autoTuneApplyAfterManual',
-    'stormResponseEnabled', 'stormMaxExtraPct', 'stormMaxDays', 'awayEnabled',
+    'stormResponseEnabled', 'stormMaxExtraPct', 'stormMaxDays', 'awayEnabled', 'awayTargetFc',
     'shareCode', 'poolName'
 ];
 // Logged as "changed" only: the values are private, but a different pool's data changes everything after it.

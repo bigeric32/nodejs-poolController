@@ -86,7 +86,8 @@ week is workable and daily is ideal, and more readings make the recommendation s
 * A sharp fall in the chlorinator's salt reading is noted in the recommendation: the pool was probably diluted by rain or a
   water change, and some of the FC lost may not be consumption. On its own, nothing is adjusted for it.
 * **Away protection (optional, off until you turn it on for a trip).** In the settings, under "Vacation: Away protection",
-  set your vacation **Target FC** (a normal 7 might become 10), check the box and **save the settings**: saving starts it. Log
+  set the **Vacation Target FC** (a normal Target FC of 7 might go with a vacation target of 10), check the box and **save the settings**: saving starts it. Your
+  normal Target FC is never changed; Away protection just uses the vacation target while it is on. Log
   your last FC test before you save, because a test logged afterward ends it (see below). While it is on, AutoSwg checks
   PoolMath every 12 hours by itself and applies the SWG % that glides the projected FC up to your vacation target, after which
   the return to the maintenance % lets it coast. The glide is not limited. On top of that it may add chlorine to make up for FC
@@ -97,12 +98,10 @@ week is workable and daily is ideal, and more readings make the recommendation s
   protection takes over from Auto-Apply, the automatic check and auto tune while it is on: their settings are kept and shown
   grayed out, but they do not act. **It ends when you uncheck it and save, or by itself when a new FC reading is logged in
   PoolMath after you turned it on**, so if you forget to turn it off, your first test when you are back does it, and your other
-  settings then apply again. **Your Target FC goes back to what it was** when it ends (either way), as long as you set the
-  vacation target and checked the box in the same save: that save is what records the earlier target. Saving with the box checked
+  settings then apply again. **The normal Target FC applies again** the moment it ends (either way). Saving with the box checked
   acts at once, as a Check Now with a new target and an apply would (within a few seconds), so the calculation and the dashboard
-  show it; unchecking it does the same when the automatic check is on, putting the target back and calculating against it. The checkbox's tooltip, the
-  note under it and the calculation details say what the vacation target is and what it returns to, and the calculation says
-  when the target was put back. A note on the card says when it is on. This is the one case, besides the return to the maintenance %,
+  show it; unchecking it does the same when the automatic check is on, calculating against the normal target. The checkbox's tooltip, the
+  note under it and the calculation details name the vacation target and the normal one, and say when the plan went back. A note on the card says when it is on. This is the one case, besides the return to the maintenance %,
   where AutoSwg changes the SWG % without you pressing Apply, and it only does so while you have turned it on.
 * **What is recorded for looking back.** Every check while you are away is in Show History (what it recommended, what it
   applied, and the numbers behind them, including the projected FC with and without the storm and outage correction). When Away
@@ -117,8 +116,8 @@ week is workable and daily is ideal, and more readings make the recommendation s
 **When you are back: recovery to steady state**
 1. Test FC and log it. This ends Away protection, if you left it on, the next time AutoSwg reads PoolMath (a check, or
    the read it does at least once a day in every mode). Press Check Now to have it happen right away.
-2. Away protection has put **Target FC** back to what it was before the trip, if the vacation target was set in the same save that
-   turned it on; check it, and set it yourself if it still shows the vacation value. Then press Check Now (it applies at once with Auto-Apply on, or press Apply).
+2. Away protection has ended and the plan uses your normal **Target FC** again (it was never changed). Press Check Now if you want
+   a fresh target right away (it applies at once with Auto-Apply on, or press Apply).
 3. If FC is above the target, the SWG is cut back (to 0% if need be) and consumption brings FC down over **Run Periods (days) to Target (FC
    above target)**, the gentle direction. If it is below, the SWG pushes up over **Run Periods (days) to Target (FC below target)**. When
    the period ends, the % returns to the maintenance %, if the checkbox is on, and you are at steady state with nothing more
