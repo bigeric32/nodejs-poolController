@@ -2493,6 +2493,9 @@ export class AutoSwg extends EqItem {
         if (typeof this.data.awayEnabled === 'undefined') this.data.awayEnabled = false;
         if (typeof this.data.awayStartedAt === 'undefined') this.data.awayStartedAt = '';
         if (typeof this.data.awayEndedNote === 'undefined') this.data.awayEndedNote = '';
+        // The Target FC in force before Away protection was turned on with a vacation target in the same save; it goes back when Away protection ends.
+        if (typeof this.data.awayOriginalTargetFc === 'undefined') this.data.awayOriginalTargetFc = null;
+        if (typeof this.data.awayEndedAt === 'undefined') this.data.awayEndedAt = '';
         // Automation also needs a Tune that was run and accepted (applied, or accepted as "your settings look good"). A Tune that was
         // applied before this existed counts.
         if (typeof this.data.tuneAcceptedAt === 'undefined' && typeof this.data.lastTuneAppliedAt !== 'undefined') this.data.tuneAcceptedAt = this.data.lastTuneAppliedAt;
@@ -2702,6 +2705,14 @@ export class AutoSwg extends EqItem {
     }
     public get awayStartedAt(): string { return typeof this.data.awayStartedAt === 'string' ? this.data.awayStartedAt : ''; }
     public set awayStartedAt(val: string) { /* set only by turning Away protection on, so a saved form cannot move it */ }
+    // The Target FC to go back to when Away protection ends (null when the vacation target was not set in the same save that turned it on, so the earlier one is not known).
+    public get awayOriginalTargetFc(): number | null { return typeof this.data.awayOriginalTargetFc === 'number' ? this.data.awayOriginalTargetFc : null; }
+    public set awayOriginalTargetFc(val: number | null) { /* set only by rememberAwayOriginalTarget, so a saved form cannot move it */ }
+    public rememberAwayOriginalTarget(val: number | null | undefined) { this.setDataVal('awayOriginalTargetFc', typeof val === 'number' ? val : null); }
+    // Records that Away protection ended and what that did (including a Target FC put back), shown in the next calculations for a few days and in the status line.
+    public noteAwayEnded(note: string) { this.setDataVal('awayEndedNote', note); this.setDataVal('awayEndedAt', new Date().toISOString()); }
+    public get awayEndedAt(): string { return typeof this.data.awayEndedAt === 'string' ? this.data.awayEndedAt : ''; }
+    public set awayEndedAt(val: string) { /* set only by noteAwayEnded */ }
     public get awayEndedNote(): string { return typeof this.data.awayEndedNote === 'string' ? this.data.awayEndedNote : ''; }
     public set awayEndedNote(val: string) { this.setDataVal('awayEndedNote', typeof val === 'string' ? val : ''); }
     // 'off', 'needs-step' (the return to the maintenance % is off, so it cannot act) or 'active'.
