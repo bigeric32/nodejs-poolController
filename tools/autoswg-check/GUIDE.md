@@ -1,8 +1,12 @@
 # AutoSwg guide (DRAFT)
 
-Part 1 says what AutoSwg is for and how to use it. Part 2 is for anyone who wants to understand it after seeing how it is used:
-how the numbers are made, what protects the pool when something goes wrong, and how it was tested. Part 3 is for coders. The
-non-standard modes (the trip runbook first) are in [MODES.md](MODES.md). The evidence behind the method is in [Method and evidence](METHOD_AND_EVIDENCE.md).
+[Part 1](#part-1-what-it-is-for-and-how-to-use-it) says what AutoSwg is for and how to use it. 
+
+[Part 2](#part-2-how-it-works) is for anyone who wants to understand it after seeing how it is used: how the numbers are made, what protects the pool when something goes wrong, and how it was tested. 
+
+[Part 3](#part-3-for-coders) is for coders. 
+
+The evidence behind the algorithms is in [Method and evidence](METHOD_AND_EVIDENCE.md).
 
 ---
 
@@ -13,18 +17,18 @@ non-standard modes (the trip runbook first) are in [MODES.md](MODES.md). The evi
 AutoSwg helps you run a saltwater pool the Trouble Free Pool (TFP) way. It embraces those methods and does not replace them: you
 choose your target FC as the TFP methods describe, you test FC, and you log it in PoolMath. What AutoSwg adds is the part that is
 tedious by hand: setting the SWG % so that FC follows your target more closely, using your own test log and your own pool's
-chlorine use. When sun, rain or swimmers change how fast chlorine is used, the next test in your log moves the plan.
+chlorine use. When sun, rain or swimmers change how fast chlorine is used, the next test adjusts the right amount to get back to the target according to your plan (settings).
 
 It is built for two things:
 
 1. **Closer to the FC you want, with less guesswork.** Test and log as usual, press **Check Now**, read the recommendation and
    press **Apply**. AutoSwg sets the SWG % that brings FC to your target, then returns it to the **maintenance %**, the level that
    just holds FC steady. It is semi-automated: you still test, log and press Apply.
-2. **Vacations of moderate length with less worry.** Before you go, raise the target and turn on Away protection. While you are
+2. **Vacations of moderate length with less worry.** Before you go, set your vacation target, which may be above your normal target to improve the ability to withstand unforseen weather events, and turn on Away protection. While you are
    away, the SWG never drops below what your pool normally uses, the dashboard raises an alert if something stops the chlorinator
    making chlorine, and the plan allows for dilution from heavy rain and for a power outage. When you are back, your first test
-   takes FC back to steady state. It is meant for a week or two away, not for replacing testing on a long trip. See
-   [MODES.md](MODES.md) for the runbook.
+   takes FC back to steady state. It is meant for a week or two away, not for replacing testing on a very long trip. See
+   "Vacations: Away protection" below for the runbook.
 
 AutoSwg does not suggest a different target, does not replace testing, and has no connection to or endorsement from the TFP
 community. It runs on your own controller. The only outside input is your PoolMath log.
@@ -35,7 +39,7 @@ AutoSwg began as a way to make the vacation routine easier: raise the target bef
 return, without working out the SWG % by hand each time. It was also a way to see what was possible with a pool's own data run
 locally on a Raspberry Pi, without depending on external tools such as AI, as a starting point as those capabilities mature,
 while embracing the TFP methods and not diverging from them. It has been checked closely on one pool so far, and
-[Method and evidence](METHOD_AND_EVIDENCE.md) says what that does and does not show, so you can judge it for yours.
+[Method and evidence](METHOD_AND_EVIDENCE.md) says what that does and does not show, so you can judge it for yourself.
 
 ## About this fork
 
@@ -83,7 +87,7 @@ liquid chlorine, Night Burn vs Day and the water-temperature adjustment. Part 2 
 
 ## Day to day
 
-1. Test FC and log it in PoolMath, at about the same time of day.
+1. Test FC and log it in PoolMath, at about the same time of day is not necessary, the calculations adjust for different test times.
 2. Press **Check Now**. It shows a recommended SWG % and the reasons for it, and where the next FC test is likely to read (about
    90% of the time). That range is wide on purpose: part of it is the test itself and part is real day-to-day differences in how
    much chlorine the pool uses (sun, rain, temperature, swimmers). A reading a little off the projection is expected and is not a
@@ -96,7 +100,7 @@ liquid chlorine, Night Burn vs Day and the water-temperature adjustment. Part 2 
 A number of changes were made so that it is clear what AutoSwg is doing and why, and so that you can check it at a glance.
 
 **On the home panel (the Auto SWG block under the chlorinator)**
-* One fact to a line: the % last applied and when, the pending step with its date and time, and when the next automatic check is due.
+* One fact to a line: the % last applied and when, the pending step with its date and time, and, while Away protection is on, when the next check is due.
 * Click it for the **Automatic SWG % Status** popup, a wide window with the notes in order and the calculation details expanded.
 * Plain colored notes, so you can tell a problem from a note at a glance: red or orange for alerts, blue for information (a target
   that was moved, a change made by Away protection).
@@ -108,7 +112,7 @@ A number of changes were made so that it is clear what AutoSwg is doing and why,
 * A one-line statement under the run times of what the SWG can make per day at 100% over its run window.
 * **Run Periods (days) to Target** in half steps, a **Vacation Target FC** next to Away protection, and tooltips that show the
   live values (for example, the vacation target and the normal target).
-* **Check Now: New Target** and **Refresh and Apply** side by side, and the page refreshes itself when a newer calculation is made.
+* **Check Now: New Target** and **Refresh: Adjust %** side by side, and the page refreshes itself when a newer calculation is made.
 * **Display History** and downloads of the history for looking back.
 * The notes explain themselves: why a deadline was kept or moved, what the aim above the target covers, and what Away protection
   did to the % when you turned it on or off.
@@ -130,8 +134,8 @@ numbers behind each are made.
   window already underway counts for what is left of it.
 * If FC is far above the target and even 0% would not bring it down by then, the deadline moves out to when consumption alone
   gets there. The SWG then stays at 0% until that time.
-* If FC is within the **New Target Date Threshold** of the target, a refresh keeps the deadline already in force. Close enough
-  counts. A change to the target in force, a Check Now, or FC straying further than the threshold starts a new target instead.
+* **Check Now: New Target** always starts a new target from today's settings. **Refresh: Adjust %** re-works the % with fresh PoolMath
+  data against the same deadline, for as long as that deadline is still ahead.
 * If even 100% cannot reach the target, the report says so, how long it would take, and what to try first: a longer SWG run
   window, then longer run periods or a lower target.
 * **Keep FC at the target through the night.** The target is a floor, and FC is lowest just before the SWG starts. When the
@@ -156,7 +160,7 @@ numbers behind each are made.
 * the chlorinator has not answered njsPC for 5 minutes while it should have power (the SWG's power is the SWG schedule's relay,
   so it is silent by design outside its run window);
 * the chlorinator reports a fault, or no output while set above 0%, during its run window (for 30 and 45 minutes);
-* a planned step did not happen, or an automatic check is overdue or failed;
+* a planned step did not happen, or a check made while Away protection is on is overdue or failed;
 * njsPC was not running for 25 minutes or more, so the equipment it controls was off;
 * none of the temperatures has changed for 15 minutes (the readings stopped arriving);
 * the SWG run window read from the schedule looks wrong (over 16 or under 1 hour a day), or the schedule is missing or disabled.
@@ -166,16 +170,75 @@ dashboard only: nothing is sent to a phone, so look at it or reach it remotely.
 
 **R5. What is recorded.**
 * Every recommendation and apply, with the numbers behind it, and every change to the settings: Show History.
-* What the chlorinator actually did, one line an hour, in every mode: `data/autoSwgOutputLog.jsonl`, kept for 18 months.
+* What the chlorinator actually did, one line an hour, at all times: `data/autoSwgOutputLog.jsonl`, kept for 18 months.
 * The chlorinator's salt reading, and an archive of your PoolMath history.
 
-## Vacations
+## Vacations: Away protection
 
-See [MODES.md](MODES.md). In short: log a test, set the Vacation Target FC, turn on Away protection, and do a dry run beforehand.
+**What it is for.** A trip of a week or two. You raise the target before you go, and AutoSwg keeps FC safe while nobody is
+testing: the SWG never drops below what the pool normally uses, it allows for dilution from heavy rain and for a power outage,
+and the dashboard raises an alert if something stops the chlorinator making chlorine. When you are back, your first test takes
+FC back to steady state. It does not replace testing, and it is not meant for a long absence.
+
+### Before you leave
+
+**Before you go, set your vacation target and turn on Away protection.** In order:
+
+1. **Log your last FC test in PoolMath, then turn Away protection on.** A test logged after you turn it on ends it (see "When you
+   are back"), so test first.
+2. **Check the settings** under "Vacation: Away protection" and above it:
+   * **Return to the maintenance % when the target period ends** must be checked. Away protection needs it, so each boost ends
+     by itself. If it is off, Away protection stays off and the status line under the checkbox says so.
+   * **Vacation Target FC**: the FC to aim for while you are away, higher than your normal Target FC so FC is a little high when
+     you are back (a normal 8 might go with a vacation target of 10). Your normal Target FC is not changed.
+   * **Storm or outage adds at most**: how many points a storm or outage may add to the SWG % the plan would have used (20 by
+     default).
+3. **Check "Away protection: keep FC safe while I am away" and save the settings.** Saving starts it, and the first check runs within
+   a few seconds. You should see:
+   * an **Away Mode Active** badge on the home panel, with the vacation target;
+   * a blue note on the home panel saying what the first check did to the SWG % (it is never below the maintenance % while
+     Away protection is on, so it may rise at once);
+   * the calculation details saying that the target in force is the vacation target, not your normal one.
+4. **Do a dry run before a real vacation.** It is a best practice to do a dry run of this before a real vacation, to be sure you are
+   comfortable with it. A few days before you go, turn it on, check those three things, then uncheck it and save and check that the plan
+   goes back to your normal target and the badge disappears.
+5. **Before you leave the house:** make sure you can see the dashboard from outside your network, and note the SWG's own setting
+   (the number it falls back to if njsPC cannot reach it).
+
+### While you are away
+
+* AutoSwg checks PoolMath every 12 hours on its own and applies what it finds, with these limits:
+  * The glide up to the vacation target is not limited.
+  * The SWG % is never below the maintenance %.
+  * A storm (a sharp fall in the chlorinator's salt reading) or an outage (njsPC was not running, so the equipment was off) may
+    add chlorine, but only when your last test is 3 days old or more, by at most the points set above, and one event acts for
+    at most 3 days.
+  * Each boost ends by itself when its target period does, returning to the maintenance %.
+* **What shows on the dashboard** (look at it once or twice a day):
+  * the Away Mode Active badge and the Auto SWG status;
+  * a red or orange alert for what the SWG cannot fix by itself: the chlorinator has not answered for 5 minutes while it should
+    have power, a bad chlorinator status or no output in its run window, a planned step that did not happen, a stale or failed
+    check, temperatures that stopped changing, an SWG run window that looks wrong, or a stretch when njsPC was not running;
+  * the red "automatic change exceeded threshold" banner when an unattended check moved the SWG % by the warning threshold or
+    more (10 points by default). Open the status popup to see why, then press Dismiss.
+
+### When you are back
+
+1. **Test FC and log it in PoolMath.** The next time AutoSwg reads PoolMath (a check, or the read it makes at least once a day)
+   it ends Away protection by itself. Or press Check Now, or uncheck the box and save.
+2. **The plan then uses your normal Target FC again and recalculates** against it, using the Run Periods setting for FC above or
+   below the target. The SWG % is set for that, then returns to the maintenance % when the target period ends.
+3. The notes about the end of Away protection clear at the next apply after that one.
+
+### Things to know
+
+* The vacation target is a separate setting, so your normal Target FC is never changed or lost.
+* If you forget to turn it off, your first test when you are back ends it.
+* Away protection acts for you only while it is on.
 
 ## Good habits and limits
 
-* Test FC at about the same time of day, and correct a mistyped reading in PoolMath.
+* Test FC as frequently as possible, and correct a mistyped reading in PoolMath.
 * Only the pool SWG % is managed, not the spa's.
 * Do a dry run of anything new, such as Away protection, before you rely on it.
 * None of this tests FC for you. Heavy rain, debris or an equipment failure can still lower it.
@@ -231,15 +294,15 @@ AutoSwg is built so that its failures are small and visible, and so that when it
   unlogged addition or a mistyped reading) is left out of the average, and the report says so.
 * **Timing is counted in SWG on-time**, so a deadline can never fall in a stretch when the SWG cannot act, and the step back to
   the maintenance % is moved to one minute after the SWG next starts when it would fall while the SWG is off.
-* **Nothing changes the SWG % without a clear path.** Only Apply, the step back to the maintenance %, and the optional modes set
-  the %. A manual change by hand cancels a pending step.
+* **Nothing changes the SWG % without a clear path.** Only Apply, the step back to the maintenance %, and Away protection (while you
+  have turned it on) set the %. A manual change by hand cancels a pending step.
 * **Watching the equipment.** The alerts in R4 cover the chlorinator, the schedule that powers it, the checks, outages and the
   temperature feed.
 * **Recording what actually happened.** The hourly output log lets the output the SWG really made be compared with what the plan
   assumed.
 * **Recovery by itself.** If the polling of the chlorinator stalls, njsPC limits that cycle to 30 seconds, resets the serial
   port, logs a severe error and posts a message, then polls again.
-* **Away protection** has its own limits (see [MODES.md](MODES.md)): a floor at the maintenance %, a cap on the storm and outage
+* **Away protection** has its own limits (see "Vacations: Away protection" in Part 1): a floor at the maintenance %, a cap on the storm and outage
   extra, a 3-day limit on any one event, an end on the first new FC reading, and a return to your normal target.
 
 ## How it was tested
@@ -308,14 +371,13 @@ most of these effects. The reasons and numbers are in [Method and evidence](METH
 | Keep FC at the target through the night | on | The overnight aim (R1) |
 | Aim Above Target as the Last Test Ages | 0.15 ppm per day, at most 1 | The margin (R3) |
 | Return to the maintenance % | off | The step (R2) |
-| New Target Date Threshold | 1 ppm | Kept or new target (R1) |
 | Averaging Window | 21 days | The burn |
 | Projection Weighting, taper | 0.5, 3 to 8 days | The projection |
 | FC Anomaly Tolerance | 2 ppm | Data left out |
 | Credit liquid chlorine | on | The burn |
 | Night Burn vs Day | 0.5 | Daylight share |
 | Adjust the burn for the water temperature | off | The burn |
-| Vacation Target FC, Storm or outage adds at most | normal target plus 2, 20 points | Away protection ([MODES.md](MODES.md)) |
+| Vacation Target FC, Storm or outage adds at most | normal target plus 2, 20 points | Away protection (see "Vacations: Away protection") |
 
 ---
 
@@ -355,10 +417,10 @@ issue log of its repository. The defect fixes and the general enhancements will 
 |---|---|
 | `controller/AutoSwgService.ts` | The calculation (`computeRecommendation`): capacity, burn, projection, targets and deadlines, the overnight floor |
 | `controller/AutoSwgWatch.ts` | The alerts and their thresholds |
-| `controller/AutoSwgHistory.ts`, `AutoSwgOutputLog.ts`, `AutoSwgAutoTune.ts` | History and the logged settings, the hourly output log, auto tune |
+| `controller/AutoSwgHistory.ts`, `AutoSwgOutputLog.ts`, `AutoSwgAutoTune.ts` | History and the logged settings, the hourly output log, tuning support |
 | `controller/Equipment.ts` (class `AutoSwg`) | The settings, their defaults, and the Away protection status |
 | `controller/State.ts` (class `AutoSwgState`) | The saved calculation and apply state shown on the dashboard |
-| `web/services/state/State.ts` | The flows: Check Now, apply, the step, the automatic check, Away protection, the alert watch |
+| `web/services/state/State.ts` | The flows: Check Now, apply, the step, the checks, Away protection, the alert watch |
 | `web/services/config/Config.ts` | The settings routes |
 | dashPanel `scripts/config/autoSwg.js`, `scripts/chemistry.js` | The settings page, the home panel and the status popup |
 | `tools/autoswg-check/` | The standalone script and these documents |
@@ -369,5 +431,5 @@ issue log of its repository. The defect fixes and the general enhancements will 
   PoolMath history without njsPC. See the [README](README.md).
 * **Build.** njsPC is TypeScript: `npm run build`. dashPanel is plain browser JavaScript with no build step; a syntax error shows
   only as a browser console error, so load each changed script in a browser before pushing.
-* **On the pool.** Do a dry run on the real system, as in [MODES.md](MODES.md), and read the njsPC log for lines that begin
+* **On the pool.** Do a dry run on the real system, as in the dry run under "Vacations: Away protection", and read the njsPC log for lines that begin
   `AutoSwg:`, `SEVERE` and `Inactivity timeout`.
