@@ -31,4 +31,8 @@ and the switching but not the reasons solar stayed off or what the settle delays
 - **Settle delays:** the delays that held a start, and the waits before a stop (`controller.solar.settleMinutes`, default 5): solar
   stops for the water only after it has stayed a hysteresis (`controller.solar.hysteresis`, default 1 degree) past the setpoint for the
   whole delay, and restarts a hysteresis back the other side.
+- **Valve delay:** with `controller.solar.valveDelaySeconds` above 0 (default 120), a start first runs the pump at its solar speed with the
+  valve relay off and is checked again. The report counts the checks, how many went on to start solar and how many were turned down
+  (and why), what the speed-up did to the water and collector readings, the minutes the pump ran at solar speed with the valve closed
+  (before starts, and with no start), whether pump relay 2 followed each check, and starts that stopped again within 10 minutes.
 - **Cycling:** three or more runs under 10 minutes, which the hysteresis is there to prevent.

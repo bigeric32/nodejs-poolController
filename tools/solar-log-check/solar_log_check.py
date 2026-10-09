@@ -20,7 +20,10 @@ settle delay lines, log.solar.explain on), and reports:
     run delta, reheat guard, ...), and whether it sat off with the collector well above the water;
   - bursts of repeated commands to the relay manager;
   - water temperature jumps right after the pump starts or solar switches (warm water standing in
-    the pipes), and what the settle delays held back.
+    the pipes), and what the settle delays held back;
+  - the valve delay (controller.solar.valveDelaySeconds): the checks, how many went on to start solar,
+    what the speed-up did to the readings, the pump time spent at solar speed with the valve closed, and
+    starts that stopped again within 10 minutes.
 """
 import argparse
 import glob
@@ -50,6 +53,12 @@ OFFWHY = re.compile(r'^Solar (?P<heater>.+?) \((?P<body>[^)]+)\) turned off beca
 SETTLE = re.compile(r'^Solar (?P<heater>.+?) \((?P<body>[^)]+)\) settle delay (?P<what>(?:after|waiting) .*?)(?P<ended> ended)?(?:, (?P<left>\d+) s left of (?P<of>\d+) s)?: '
                     r'water ' + N('water') + r'(?: \(compared as -?\d+\))?, solar ' + N('solar') + r', collector minus water ' + N('diff'))
 DEFERRED = re.compile(r'turn-on deferred: (.*)$')
+# The valve delay (controller.solar.valveDelaySeconds): the pump runs at its solar speed with the valve relay off, then the start is checked again.
+VD_START = re.compile(r'^Solar (?P<heater>.+?) \((?P<body>[^)]+)\): a start looks worthwhile')
+VD_DONE = re.compile(r'^Solar (?P<heater>.+?) \((?P<body>[^)]+)\): still worthwhile after (?P<s>\d+) s')
+VD_FAIL = re.compile(r'^Solar (?P<heater>.+?) \((?P<body>[^)]+)\): not started: after (?P<s>\d+) s (?P<why>.*?) \(water')
+VD_CANCEL = re.compile(r'^Solar (?P<heater>.+?): the valve delay was cancelled after (?P<s>\d+) s')
+VD_CHG = re.compile(r'water (?P<w>[+-]\d+(?:\.\d+)?|n/a), collector (?P<c>[+-]\d+(?:\.\d+)?|n/a) since the pump sped up')
 RELAY = re.compile(r'^NCP: Setting Pump .*Relay 2: (on|off)')
 
 
@@ -158,8 +167,26 @@ def analyze(events, timeline):
     decisions, notrun, offwhy, settle = [], [], [], []
     switches, confirms, failures, deferrals = [], [], [], []
     relay = []
+    vd = []
     for e in events:
         msg = e['msg']
+        kind = None
+        m = VD_START.match(msg)
+        if m:
+            kind = 'start'
+        else:
+            for k, rx in (('done', VD_DONE), ('fail', VD_FAIL), ('cancel', VD_CANCEL)):
+                m = rx.match(msg)
+                if m:
+                    kind = k
+                    break
+        if kind:
+            c = VD_CHG.search(msg)
+            num = lambda v: None if v is None or v == 'n/a' else float(v)
+            vd.append(dict(t=e['t'], kind=kind, secs=int(m.group('s')) if kind != 'start' else 0,
+                           w=num(c.group('w')) if c else None, c=num(c.group('c')) if c else None,
+                           why=m.groupdict().get('why') or ''))
+            continue
         m = DECISION.match(msg)
         if m:
             decisions.append(dict(t=e['t'], state=m.group('state'), heater=m.group('heater'), mode=m.group('mode'),
@@ -358,6 +385,54 @@ def analyze(events, timeline):
                 P('  %s %s: water %.2f, collector %.1f, collector minus water %.1f%s' % (
                     fmt_t(s['t']), s['what'] + (' ended' if s['ended'] else ''), s['water'], s['solar'], s['diff'],
                     '' if s['ended'] else ', %s s left' % s['left']))
+
+    # ---- valve delay
+    P('')
+    P('== Valve delay ==')
+    vstarts = [v for v in vd if v['kind'] == 'start']
+    if not vd:
+        P('No valve delay lines (controller.solar.valveDelaySeconds is 0, or no start came up in this log).')
+    else:
+        went = [v for v in vd if v['kind'] == 'done']
+        down = [v for v in vd if v['kind'] == 'fail']
+        canc = [v for v in vd if v['kind'] == 'cancel']
+        P('%d check(s): %d went on to switch the valve relay on, %d turned the start down, %d cancelled (the body, mode or heater changed).' % (
+            len(vstarts), len(went), len(down), len(canc)))
+        P('  Pump at its solar speed with the valve closed: %s before starts, %s with no start.' % (
+            fmt_dur(sum(v['secs'] for v in went)), fmt_dur(sum(v['secs'] for v in down + canc))))
+        for label, key in (('water', 'w'), ('collector', 'c')):
+            vals = sorted(v[key] for v in went + down if v[key] is not None)
+            if vals:
+                P('  %s reading change since the pump sped up: %+.2f to %+.2f, median %+.2f (%d check(s)).' % (
+                    label.capitalize(), vals[0], vals[-1], vals[len(vals) // 2], len(vals)))
+        why = Counter(v['why'] for v in down)
+        if why:
+            P('  turned down because: ' + '; '.join('%s x%d' % (k, n) for k, n in why.most_common()))
+        if vstarts:
+            followed = sum(1 for v in vstarts if any(r[1] == 'on' and 0 <= (r[0] - v['t']).total_seconds() <= 15 for r in relay))
+            P('  Pump relay 2 came on within 15 s of %d of %d check start(s)%s' % (
+                followed, len(vstarts), '.' if followed == len(vstarts) else
+                ': for the others the pump speed did not follow the solar circuit (no speed tied to it, or relay 2 was already on).'))
+        brief = []
+        for v in went:
+            r = next((r for r in runs if abs((r['start'] - v['t']).total_seconds()) <= 90), None)
+            if r is not None and (r['end'] - r['start']).total_seconds() < 600:
+                brief.append((v, r))
+        if brief:
+            P('  ATTENTION: %d start(s) after a valve delay stopped again within 10 minutes:' % len(brief))
+            for v, r in brief:
+                P('    on %s -> off %s (%s)' % (fmt_t(r['start']), fmt_t(r['end']), fmt_dur((r['end'] - r['start']).total_seconds())))
+        else:
+            P('  No start after a valve delay stopped again within 10 minutes.')
+        if timeline:
+            for v in vd:
+                if v['kind'] == 'start':
+                    P('  %s check started' % fmt_t(v['t']))
+                else:
+                    P('  %s %s after %d s%s%s' % (
+                        fmt_t(v['t']), {'done': 'valve relay on', 'fail': 'turned down', 'cancel': 'cancelled'}[v['kind']], v['secs'],
+                        '' if v['w'] is None else ' (water %+.2f, collector %s)' % (v['w'], 'n/a' if v['c'] is None else '%+.2f' % v['c']),
+                        ': ' + v['why'] if v['why'] else ''))
     if relay:
         P('')
         P('Pump relay 2 changed %d time(s).' % len(relay))
