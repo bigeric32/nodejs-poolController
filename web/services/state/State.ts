@@ -316,8 +316,8 @@ function windowKeyTime(t: string): string {
 // calculation uses, whether typed in or taken from the selected SWG schedule, to the nearest 10
 // minutes: editing the schedule counts, the daily drift of a sunrise or sunset based window does not.
 // What the calculation says about Away protection: while it is on, the vacation target and what it goes back to; for three days after it ended, what ending it did.
-function autoSwgAwayParams(cfg: typeof sys.autoSwg): { active: boolean; originalTargetFc?: number | null; endedNote?: string } {
-    if (cfg.awayActive) return { active: true, originalTargetFc: cfg.awayOriginalTargetFc };
+function autoSwgAwayParams(cfg: typeof sys.autoSwg): { active: boolean; normalTargetFc?: number; endedNote?: string } {
+    if (cfg.awayActive) return { active: true, normalTargetFc: cfg.targetFc };
     const endedAt = cfg.awayEndedAt ? new Date(cfg.awayEndedAt).getTime() : NaN;
     if (cfg.awayEndedNote && !isNaN(endedAt) && Date.now() - endedAt < 3 * 86400000) return { active: false, endedNote: cfg.awayEndedNote };
     return { active: false };
@@ -328,7 +328,7 @@ function autoSwgSettingsKey(): string {
     try { const win = resolveAutoSwgRunWindow(cfg); start = win.swgStartTime; stop = win.swgStopTime; }
     catch (err) { /* the typed-in window is the fallback */ }
     return [
-        cfg.targetFc, cfg.targetPeriodsAbove, cfg.targetPeriodsBelow, cfg.newTargetDateThresholdPpm,
+        cfg.effectiveTargetFc, cfg.targetPeriodsAbove, cfg.targetPeriodsBelow, cfg.newTargetDateThresholdPpm,
         cfg.windowDays, cfg.gallons, cfg.swgLbsPerDay, cfg.timezone, cfg.daytimeLossSharePct, cfg.creditChlorineAdditions, cfg.fcAnomalyTolerancePpm, cfg.projectionWeight, cfg.projectionTaperStartDays, cfg.projectionTaperEndDays, cfg.overshootPpmPerDay, cfg.protectOvernightLow, cfg.nightBurnRatio, cfg.burnTempAdjust, cfg.stormResponseEnabled, cfg.stormMaxExtraPct, cfg.awayStatus,
         cfg.shareCode, cfg.poolName, cfg.scheduleId, windowKeyTime(start), windowKeyTime(stop)
     ].join('|');
@@ -355,8 +355,8 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
         // the pending step would keep naming the old target). Refine is the explicit "stay on the in-flight target" and keeps it.
         let lastTarget = state.autoSwg.lastAppliedTargetFc;
         let lastPeriods = state.autoSwg.lastAppliedPeriodsKey;
-        if (mode === 'auto' && typeof lastTarget === 'number' && Math.abs(cfg.targetFc - lastTarget) > 1e-9) {
-            targetChangeNote = `The Target FC was changed from ${lastTarget} to ${cfg.targetFc} ppm since the last apply, so this starts a new target instead of staying on course for the old one.`;
+        if (mode === 'auto' && typeof lastTarget === 'number' && Math.abs(cfg.effectiveTargetFc - lastTarget) > 1e-9) {
+            targetChangeNote = `The target in force changed from ${lastTarget} to ${cfg.effectiveTargetFc} ppm since the last apply${cfg.awayActive ? ' (the vacation target, with Away protection on)' : ''}, so this starts a new target instead of staying on course for the old one.`;
         }
         else if (mode === 'auto' && typeof lastPeriods === 'string' && lastPeriods !== `${cfg.targetPeriodsAbove}|${cfg.targetPeriodsBelow}`) {
             targetChangeNote = `The Run Periods to Target were changed (above|below: ${lastPeriods.replace('|', ' | ')} to ${cfg.targetPeriodsAbove} | ${cfg.targetPeriodsBelow}) since the last apply, so this starts a new target instead of staying on course for the old one.`;
@@ -395,7 +395,7 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
         swgStopTime: swgStopTime,
         timezone: cfg.timezone,
         windowDays: cfg.windowDays,
-        targetFc: cfg.targetFc,
+        targetFc: cfg.effectiveTargetFc,
         targetPeriodsAbove: cfg.targetPeriodsAbove,
         targetPeriodsBelow: cfg.targetPeriodsBelow,
         away: autoSwgAwayParams(cfg),
@@ -540,7 +540,7 @@ async function applyAutoSwgRecommendation(isAutoApply: boolean, pctOverride?: nu
     // runAutoSwgRecommendation (shouldn't normally happen, since /apply requires
     // state.autoSwg.pending, which only that function sets) there's no date to record, and
     // none is invented -- so no refine is offered and no step is scheduled off it.
-    state.autoSwg.lastAppliedTargetFc = typeof state.autoSwg.pendingTargetFc === 'number' ? state.autoSwg.pendingTargetFc : sys.autoSwg.targetFc;
+    state.autoSwg.lastAppliedTargetFc = typeof state.autoSwg.pendingTargetFc === 'number' ? state.autoSwg.pendingTargetFc : sys.autoSwg.effectiveTargetFc;
     state.autoSwg.lastAppliedTargetDate = state.autoSwg.pendingTargetDate;
     state.autoSwg.lastAppliedPeriodsKey = state.autoSwg.pendingPeriodsKey;
     state.autoSwg.lastAppliedTargetWarning = state.autoSwg.targetWarning;
@@ -728,7 +728,7 @@ function autoSwgReportParams(cfg: typeof sys.autoSwg): AutoSwgParams {
         swgStopTime: swgStopTime,
         timezone: cfg.timezone,
         windowDays: cfg.windowDays,
-        targetFc: cfg.targetFc,
+        targetFc: cfg.effectiveTargetFc,
         targetPeriodsAbove: cfg.targetPeriodsAbove,
         targetPeriodsBelow: cfg.targetPeriodsBelow,
         away: autoSwgAwayParams(cfg),
@@ -865,7 +865,7 @@ export function awaySummary(startedAt: string, reading?: { value: number; ts: st
 
 // Away protection ends by itself when an FC reading logged in PoolMath after it was turned on shows up (see runAutoSwgRecommendation). Called after
 // every read of PoolMath: each check and the daily top-up.
-// Returns true when it ended Away protection and put the Target FC back (so a calculation made against the vacation target is out of date).
+// Returns true when it ended Away protection and the target in force changed with it (so a calculation made against the vacation target is out of date).
 function endAwayOnNewReading(reading?: { value: number; ts: string }): boolean {
     let cfg = sys.autoSwg;
     if (!cfg.awayEnabled || !cfg.awayStartedAt || !reading) return false;
@@ -875,15 +875,12 @@ function endAwayOnNewReading(reading?: { value: number; ts: string }): boolean {
     let before = snapshotAutoSwgSettings(cfg);
     let summary = awaySummary(cfg.awayStartedAt, reading);
     cfg.awayEnabled = false;
-    // The Target FC goes back to what it was before the vacation target was set (known when the same save set it and turned Away protection on).
+    // The plan goes back to the normal Target FC; a calculation made against the vacation target is out of date when the two differ.
     let targetNote = '';
-    const originalTarget = cfg.awayOriginalTargetFc;
-    if (typeof originalTarget === 'number' && originalTarget !== cfg.targetFc) {
-        targetNote = ` The Target FC went back from ${cfg.targetFc} to ${originalTarget} ppm, what it was before Away protection was turned on.`;
-        cfg.targetFc = originalTarget;
+    if (cfg.awayTargetFc !== cfg.targetFc) {
+        targetNote = ` The target in force went back from the vacation target of ${cfg.awayTargetFc} to the Target FC of ${cfg.targetFc} ppm.`;
         targetRestored = true;
     }
-    cfg.rememberAwayOriginalTarget(null);
     cfg.noteAwayEnded(`Away protection ended by itself: a new FC reading (${reading.value} ppm, ${formatLocalDateTime(new Date(reading.ts), cfg.timezone)}) was logged in PoolMath after it was turned on. Your other settings apply again.${targetNote}`);
     try { logAutoSwgSettingChanges(before, snapshotAutoSwgSettings(cfg), 'away-ended', summary); } catch (err) { logger.warn(`AutoSwg: could not log the end of Away protection: ${err.message}`); }
     logger.info(`AutoSwg: ${cfg.awayEndedNote}`);
