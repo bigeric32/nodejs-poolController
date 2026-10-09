@@ -101,7 +101,7 @@ week is workable and daily is ideal, and more readings make the recommendation s
   settings then apply again. **The normal Target FC applies again** the moment it ends (either way). Saving with the box checked
   acts at once, as a Check Now with a new target and an apply would (within a few seconds), so the calculation and the dashboard
   show it; unchecking it does the same when the automatic check is on, calculating against the normal target. The checkbox's tooltip, the
-  note under it and the calculation details name the vacation target and the normal one, and say when the plan went back. A note on the card says when it is on. This is the one case, besides the return to the maintenance %,
+  note under it and the calculation details name the vacation target and the normal one, and say when the plan went back. The home panel shows an **Away Mode Active** badge (with the vacation target) while it is on. The first check after you turn it on or off is something you did on purpose, so it shows a plain blue note ("the SWG % changed from 8% to 23%") instead of the red unreviewed-change warning; later checks while you are away still raise the red warning when they move the % a lot. This is the one case, besides the return to the maintenance %,
   where AutoSwg changes the SWG % without you pressing Apply, and it only does so while you have turned it on.
 * **What is recorded for looking back.** Every check while you are away is in Show History (what it recommended, what it
   applied, and the numbers behind them, including the projected FC with and without the storm and outage correction). When Away
