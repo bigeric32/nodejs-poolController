@@ -1339,7 +1339,7 @@ export async function computeRecommendation(params: AutoSwgParams, html?: string
         const unclampedPct = (neededPpm / producibleAtFull) * 100;
         recommendedPctForTarget = Math.max(0, Math.min(100, unclampedPct));
         if (neededPpm <= 0) rationale.push(`Already at/above ${targetFc} ppm target given ongoing consumption.`);
-        else rationale.push(`Recommended SWG duty cycle to reach ${targetFc} ppm FC in ${Math.round(targetHours * 10) / 10}h: ${recommendedPctForTarget.toFixed(1)}%.`);
+        else rationale.push(`Recommended SWG duty cycle to reach ${targetFc} ppm FC at the deadline${troughAddPpm >= 0.05 ? ` and keep it at or above ${targetFc} ppm until the SWG next starts (the ${troughAddPpm.toFixed(2)} ppm aim above)` : ''}, ${Math.round(targetHours * 10) / 10}h away: ${recommendedPctForTarget.toFixed(1)}%.`);
         // The glide note above is written before the margin above the target is known; when that margin leaves a small % to run, say so instead of "0%".
         if (typeof targetInfo === 'string' && roundDutyCyclePct(recommendedPctForTarget) > 0) {
             const heldPct = roundDutyCyclePct(recommendedPctForTarget);
