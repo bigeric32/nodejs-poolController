@@ -98,7 +98,9 @@ week is workable and daily is ideal, and more readings make the recommendation s
   grayed out, but they do not act. **It ends when you uncheck it and save, or by itself when a new FC reading is logged in
   PoolMath after you turned it on**, so if you forget to turn it off, your first test when you are back does it, and your other
   settings then apply again. **Your Target FC goes back to what it was** when it ends (either way), as long as you set the
-  vacation target and checked the box in the same save: that save is what records the earlier target. The checkbox's tooltip, the
+  vacation target and checked the box in the same save: that save is what records the earlier target. Saving with the box checked
+  acts at once, as a Check Now with a new target and an apply would (within a few seconds), so the calculation and the dashboard
+  show it; unchecking it does the same when the automatic check is on, putting the target back and calculating against it. The checkbox's tooltip, the
   note under it and the calculation details say what the vacation target is and what it returns to, and the calculation says
   when the target was put back. A note on the card says when it is on. This is the one case, besides the return to the maintenance %,
   where AutoSwg changes the SWG % without you pressing Apply, and it only does so while you have turned it on.

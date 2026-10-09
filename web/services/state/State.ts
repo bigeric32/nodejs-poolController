@@ -419,7 +419,9 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
     }, undefined, toLocalSwgEntries(readAutoSwgHistory()), refreshAutoSwgArchiveFromPage);
     // Away protection ends by itself when an FC reading logged in PoolMath after it was turned on shows up: the test you take when you are back, or any test
     // while you are away. Everything it was holding back (Auto-Apply and the rest) acts again from here, on a fresh reading.
-    endAwayOnNewReading(result.mostRecentFc);
+    // When ending Away protection put the Target FC back, this calculation was made against the vacation target: do it again against the target now in force,
+    // so what is shown and applied is what the restored target calls for.
+    if (endAwayOnNewReading(result.mostRecentFc)) return await runAutoSwgRecommendation(mode, extraRationaleNote);
     // A Refresh works from fresh PoolMath data; if the data it read (readings, additions, SWG entries)
     // is exactly what the last apply used -- the newest FC reading is the very one it was based on,
     // and nothing was added, edited or deleted -- there is nothing new and re-running would only restate
@@ -864,11 +866,13 @@ export function awaySummary(startedAt: string, reading?: { value: number; ts: st
 
 // Away protection ends by itself when an FC reading logged in PoolMath after it was turned on shows up (see runAutoSwgRecommendation). Called after
 // every read of PoolMath: each check and the daily top-up.
-function endAwayOnNewReading(reading?: { value: number; ts: string }) {
+// Returns true when it ended Away protection and put the Target FC back (so a calculation made against the vacation target is out of date).
+function endAwayOnNewReading(reading?: { value: number; ts: string }): boolean {
     let cfg = sys.autoSwg;
-    if (!cfg.awayEnabled || !cfg.awayStartedAt || !reading) return;
+    if (!cfg.awayEnabled || !cfg.awayStartedAt || !reading) return false;
     let readingAt = new Date(reading.ts).getTime(), startedAt = new Date(cfg.awayStartedAt).getTime();
-    if (isNaN(readingAt) || isNaN(startedAt) || readingAt <= startedAt) return;
+    if (isNaN(readingAt) || isNaN(startedAt) || readingAt <= startedAt) return false;
+    let targetRestored = false;
     let before = snapshotAutoSwgSettings(cfg);
     let summary = awaySummary(cfg.awayStartedAt, reading);
     cfg.awayEnabled = false;
@@ -878,6 +882,7 @@ function endAwayOnNewReading(reading?: { value: number; ts: string }) {
     if (typeof originalTarget === 'number' && originalTarget !== cfg.targetFc) {
         targetNote = ` The Target FC went back from ${cfg.targetFc} to ${originalTarget} ppm, what it was before Away protection was turned on.`;
         cfg.targetFc = originalTarget;
+        targetRestored = true;
     }
     cfg.rememberAwayOriginalTarget(null);
     cfg.noteAwayEnded(`Away protection ended by itself: a new FC reading (${reading.value} ppm, ${formatLocalDateTime(new Date(reading.ts), cfg.timezone)}) was logged in PoolMath after it was turned on. Your other settings apply again.${targetNote}`);
@@ -887,6 +892,7 @@ function endAwayOnNewReading(reading?: { value: number; ts: string }) {
     state.autoSwg.awayStartedAt = undefined;
     armAutoSwgAutoCheck();
     state.autoSwg.emitEquipmentChange();
+    return targetRestored;
 }
 
 // The ways the SWG can fail to hold FC that no recommendation can fix (a bad chlorinator status or no output in the run window, an automatic check that

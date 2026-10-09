@@ -1067,7 +1067,9 @@ export class ConfigRoute {
                 // "Your settings look good" has nothing to apply: accepting that result is what counts as accepting the Tune.
                 if (req.body && req.body.tuneAccepted === true && sys.autoSwg.tuningAvailable) sys.autoSwg.tuneAcceptedAt = new Date().toISOString();
                 // Saving with Away protection newly on is what starts it: its first check runs a minute later, so the target just set takes effect.
-                armAutoSwgAutoCheck(0, !awayWasActive && sys.autoSwg.awayActive ? 60 * 1000 : undefined);
+                // Turning Away protection on (or off, with the automatic check on) acts at once, as a Check Now with a new target and an apply would, so the calculation
+                // and the dashboard show it within seconds rather than at the next check.
+                armAutoSwgAutoCheck(0, (!awayWasActive && sys.autoSwg.awayActive) || (awayWasActive && !sys.autoSwg.awayActive) ? 3 * 1000 : undefined);
                 // If the share code or pool changed, pull its history soon (a no-op otherwise).
                 armAutoSwgArchiveSync(60 * 1000);
                 return res.status(200).send(Object.assign({}, sys.autoSwg.get(true), { automationAvailable: sys.autoSwg.automationAvailable, gate: autoSwgGateInfo(sys.autoSwg), awayStatus: sys.autoSwg.awayStatus, swgWindow: autoSwgRunWindowInfo() }));
