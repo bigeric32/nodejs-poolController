@@ -316,6 +316,13 @@ function windowKeyTime(t: string): string {
 // so it shouldn't be skipped for want of a new FC reading. That includes the run window the
 // calculation uses, whether typed in or taken from the selected SWG schedule, to the nearest 10
 // minutes: editing the schedule counts, the daily drift of a sunrise or sunset based window does not.
+// What the calculation says about Away protection: while it is on, the vacation target and what it goes back to; for three days after it ended, what ending it did.
+function autoSwgAwayParams(cfg: typeof sys.autoSwg): { active: boolean; originalTargetFc?: number | null; endedNote?: string } {
+    if (cfg.awayActive) return { active: true, originalTargetFc: cfg.awayOriginalTargetFc };
+    const endedAt = cfg.awayEndedAt ? new Date(cfg.awayEndedAt).getTime() : NaN;
+    if (cfg.awayEndedNote && !isNaN(endedAt) && Date.now() - endedAt < 3 * 86400000) return { active: false, endedNote: cfg.awayEndedNote };
+    return { active: false };
+}
 function autoSwgSettingsKey(): string {
     let cfg = sys.autoSwg;
     let start = cfg.swgStartTime, stop = cfg.swgStopTime;
@@ -392,6 +399,7 @@ async function runAutoSwgRecommendation(mode: AutoSwgCheckMode, extraRationaleNo
         targetFc: cfg.targetFc,
         targetPeriodsAbove: cfg.targetPeriodsAbove,
         targetPeriodsBelow: cfg.targetPeriodsBelow,
+        away: autoSwgAwayParams(cfg),
         inFlight: inFlight,
         sunriseTime: sunTimes.sunrise,
         sunsetTime: sunTimes.sunset,
@@ -722,6 +730,7 @@ function autoSwgReportParams(cfg: typeof sys.autoSwg): AutoSwgParams {
         targetFc: cfg.targetFc,
         targetPeriodsAbove: cfg.targetPeriodsAbove,
         targetPeriodsBelow: cfg.targetPeriodsBelow,
+        away: autoSwgAwayParams(cfg),
         sunriseTime: sunTimes.sunrise,
         sunsetTime: sunTimes.sunset,
         daytimeSharePct: cfg.daytimeLossSharePct,
@@ -863,7 +872,15 @@ function endAwayOnNewReading(reading?: { value: number; ts: string }) {
     let before = snapshotAutoSwgSettings(cfg);
     let summary = awaySummary(cfg.awayStartedAt, reading);
     cfg.awayEnabled = false;
-    cfg.awayEndedNote = `Away protection ended by itself: a new FC reading (${reading.value} ppm, ${formatLocalDateTime(new Date(reading.ts), cfg.timezone)}) was logged in PoolMath after it was turned on. Your other settings apply again.`;
+    // The Target FC goes back to what it was before the vacation target was set (known when the same save set it and turned Away protection on).
+    let targetNote = '';
+    const originalTarget = cfg.awayOriginalTargetFc;
+    if (typeof originalTarget === 'number' && originalTarget !== cfg.targetFc) {
+        targetNote = ` The Target FC went back from ${cfg.targetFc} to ${originalTarget} ppm, what it was before Away protection was turned on.`;
+        cfg.targetFc = originalTarget;
+    }
+    cfg.rememberAwayOriginalTarget(null);
+    cfg.noteAwayEnded(`Away protection ended by itself: a new FC reading (${reading.value} ppm, ${formatLocalDateTime(new Date(reading.ts), cfg.timezone)}) was logged in PoolMath after it was turned on. Your other settings apply again.${targetNote}`);
     try { logAutoSwgSettingChanges(before, snapshotAutoSwgSettings(cfg), 'away-ended', summary); } catch (err) { logger.warn(`AutoSwg: could not log the end of Away protection: ${err.message}`); }
     logger.info(`AutoSwg: ${cfg.awayEndedNote}`);
     state.autoSwg.awayStatus = cfg.awayStatus;
