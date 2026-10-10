@@ -4573,6 +4573,7 @@ export class HeaterCommands extends BoardCommands {
                                                         solarCheckTemp = Math.round(t.water * 10) / 10;
                                                         solarCheckTime = new Date(t.at).toISOString();
                                                         solarChecking = true;
+                                                        if (nowMs - t.noteAt >= 30000) logger.verbose(`Solar ${body.name}: valve delay check, ${Math.ceil(leftMs / 1000)} s left: the temperature shown is still ${solarCheckTemp}; the sensor reads ${Math.round(body.temp * 100) / 100} at the solar pump speed.`);
                                                         heatNote = `Solar valve opens in ${Math.ceil(leftMs / 1000)} s (the pump runs at its solar speed first)`;
                                                         if (nowMs - t.noteAt >= 30000) {
                                                             t.noteAt = nowMs;
@@ -4917,6 +4918,14 @@ export class HeaterCommands extends BoardCommands {
                 }
                 else HeaterCommands._warnedNoTemp.delete(body.id);
                 body.heatNote = heatNote;
+                // At log level verbose, each change in the temperature a dashboard is given to show, with what the sensor reads at that moment, so it can
+                // be confirmed that the number held still while a check ran and changed once when it was over.
+                if (body.solarCheckTemp !== solarCheckTemp || body.solarChecking !== solarChecking) {
+                    const sensor = typeof body.temp === 'number' ? Math.round(body.temp * 100) / 100 : body.temp;
+                    logger.verbose(typeof solarCheckTemp === 'undefined' ? `Solar ${body.name}: the temperature shown is the live reading again (the sensor reads ${sensor}).`
+                        : solarChecking === true ? `Solar ${body.name}: the temperature shown holds at ${solarCheckTemp}, read before the pump sped up, while the valve delay check runs (the sensor reads ${sensor}).`
+                            : `Solar ${body.name}: the temperature shown is now ${solarCheckTemp}*, read at the solar pump speed, until the next check (the sensor reads ${sensor}).`);
+                }
                 body.solarCheckTemp = solarCheckTemp;
                 body.solarCheckTime = solarCheckTime;
                 body.solarChecking = solarChecking;
