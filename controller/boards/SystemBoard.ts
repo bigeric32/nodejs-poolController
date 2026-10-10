@@ -4011,7 +4011,7 @@ function solarValveDelayMs(): number {
 // delay is over and the valve relay is being switched on, the water and collector readings when the pump sped up (to show what the speed-up did to
 // them), when the progress was last logged, and the temperature a dashboard is to show while the check runs: the reading at the solar pump speed
 // from the check before, when that was still being shown (star), and otherwise the reading from just before the pump sped up.
-const solarValveTrial: Map<number, { at: number; bodyId: number; pass: number; done: boolean; water: number; solar: number; noteAt: number; shown: { temp: number; at: number; star: boolean } }> = new Map<number, { at: number; bodyId: number; pass: number; done: boolean; water: number; solar: number; noteAt: number; shown: { temp: number; at: number; star: boolean } }>();
+const solarValveTrial: Map<number, { at: number; bodyId: number; pass: number; done: boolean; water: number; solar: number; noteAt: number; cool?: boolean; shown: { temp: number; at: number; star: boolean } }> = new Map<number, { at: number; bodyId: number; pass: number; done: boolean; water: number; solar: number; noteAt: number; cool?: boolean; shown: { temp: number; at: number; star: boolean } }>();
 // The start the valve delay check last turned down, per heater: when, what the water read at the solar pump speed, and the setpoints it was judged
 // against. The start is not checked again until the solar check period is over (solarCheckPeriodMs), so the pump is not sped up again and again.
 const solarValveFailed: Map<number, { at: number; water: number; heatSet: number; coolSet: number }> = new Map<number, { at: number; water: number; heatSet: number; coolSet: number }>();
@@ -4564,6 +4564,10 @@ export class HeaterCommands extends BoardCommands {
                                             // pool, where the pump draws from the main drain and the skimmer and probably takes a different mix of the two at a different speed), and a
                                             // start turned down on that jump was tried and turned down again every few minutes.
                                             let valveWait = false;
+                                            // A start the check has decided on stands until the heater reports it is on. Switching the valve relay on takes a moment, and a pass made
+                                            // in that moment sees the heater still off; with the water reading right at the setpoint it used to judge the start again, turn it down,
+                                            // and switch solar off a fraction of a second after it came on.
+                                            let committed: string = undefined;
                                             if (valveMs > 0) {
                                                 const trial = solarValveTrial.get(heater.id);
                                                 const rd = (v: any) => typeof v === 'number' && isFinite(v) ? Math.round(v * 10) / 10 : v;
@@ -4600,10 +4604,11 @@ export class HeaterCommands extends BoardCommands {
                                                             logger.solar(`Solar ${heater.name} (${body.name}): valve delay, ${Math.ceil(leftMs / 1000)} s left and ${ok ? 'still worthwhile' : 'not worthwhile on these readings (the start is judged when the delay is over)'} (${since}): ${lead}.`);
                                                         }
                                                     }
-                                                    else if (ok) {
-                                                        if (t.done) { /* the valve relay is already being switched on */ }
+                                                    else if (ok || t.done) {
+                                                        if (t.done) committed = t.cool === true ? 'cool' : 'heat';   // the valve relay is already being switched on
                                                         else {
                                                             t.done = true;
+                                                            t.cool = !heatOk && coolOk;
                                                             const secs = Math.round((nowMs - t.at) / 1000);
                                                             logger.solar(`Solar ${heater.name} (${body.name}): still worthwhile after ${secs} s at the solar pump speed (${since}), so the valve relay is switched on: ${lead}; ${solarValveTally(heater.id, 'started', secs)}.`);
                                                         }
@@ -4624,12 +4629,12 @@ export class HeaterCommands extends BoardCommands {
                                                     }
                                                 }
                                             }
-                                            if (heatOk && !blockStart && !valveWait) {
+                                            if ((heatOk || committed === 'heat') && committed !== 'cool' && !blockStart && !valveWait) {
                                                 isOn = true;
                                                 body.heatStatus = sys.board.valueMaps.heatStatus.getValue('solar');
                                                 isHeating = true;
                                             }
-                                            else if (!heatOk && coolOk && !blockStart && !valveWait) {
+                                            else if (((!heatOk && coolOk) || committed === 'cool') && !blockStart && !valveWait) {
                                                 isOn = true;
                                                 body.heatStatus = sys.board.valueMaps.heatStatus.getValue('cooling');
                                                 isHeating = true;
