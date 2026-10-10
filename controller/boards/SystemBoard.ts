@@ -4391,7 +4391,12 @@ export class HeaterCommands extends BoardCommands {
                 if (!body.isOn) solarBodyOnAt.delete(body.id);
                 else if (!solarBodyOnAt.has(body.id)) solarBodyOnAt.set(body.id, new Date().getTime());
                 // While a pump is priming (its status says so) the readings are not the ones solar runs on, so the settle delay starts when priming is over.
-                else if (typeof state.pumps.find(elem => elem.status > 0 && sys.board.valueMaps.pumpStatus.transform(elem.status).name === 'priming') !== 'undefined') solarBodyOnAt.set(body.id, new Date().getTime());
+                else {
+                    for (let p = 0; p < state.pumps.length; p++) {
+                        const pstatus = state.pumps.getItemByIndex(p).status;
+                        if (pstatus > 0 && sys.board.valueMaps.pumpStatus.transform(pstatus).name === 'priming') { solarBodyOnAt.set(body.id, new Date().getTime()); break; }
+                    }
+                }
                 if (body.isOn) {
                     if (typeof body.temp === 'undefined' && heaters.length > 0) {
                         if (!HeaterCommands._warnedNoTemp.has(body.id)) {
