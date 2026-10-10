@@ -406,7 +406,7 @@ export class State implements IState {
             for (let i = 0; i < sdata.heaters.length; i++) { sdata.heaters[i].prevHeaterOffTemp = undefined; sdata.heaters[i].targetStop = undefined; }
         }
         // The note on why solar is waiting belongs to the process that wrote it.
-        if (typeof sdata.temps !== 'undefined' && typeof sdata.temps.bodies !== 'undefined') for (let i = 0; i < sdata.temps.bodies.length; i++) { sdata.temps.bodies[i].heatNote = undefined; sdata.temps.bodies[i].solarCheckTemp = undefined; sdata.temps.bodies[i].solarCheckTime = undefined; }
+        if (typeof sdata.temps !== 'undefined' && typeof sdata.temps.bodies !== 'undefined') for (let i = 0; i < sdata.temps.bodies.length; i++) { sdata.temps.bodies[i].heatNote = undefined; sdata.temps.bodies[i].solarCheckTemp = undefined; sdata.temps.bodies[i].solarCheckTime = undefined; sdata.temps.bodies[i].solarChecking = undefined; }
         var self = this;
         let pnlTime = typeof sdata.time !== 'undefined' && sdata.time !== '' ? new Date(sdata.time) : new Date();
         if (isNaN(pnlTime.getTime())) pnlTime = new Date();
@@ -1827,6 +1827,11 @@ export class BodyTempState extends EqState {
     public set solarCheckTemp(val: number) { this.setDataVal('solarCheckTemp', val); }
     public get solarCheckTime(): string { return this.data.solarCheckTime; }
     public set solarCheckTime(val: string) { this.setDataVal('solarCheckTime', val); }
+    // True while the valve delay check itself is running (the pump is at its solar speed and the start has not been judged yet). solarCheckTemp is
+    // then the reading from just before the pump sped up, and solarCheckTime when that was, so the temperature shown does not jump about while
+    // the check is under way; it changes when the check is over.
+    public get solarChecking(): boolean { return this.data.solarChecking; }
+    public set solarChecking(val: boolean) { this.setDataVal('solarChecking', val); }
     public get heatStatus(): number { return typeof (this.data.heatStatus) !== 'undefined' ? this.data.heatStatus.val : -1; }
     public set heatStatus(val: number) {
         if (this.heatStatus !== val) {

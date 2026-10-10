@@ -4381,7 +4381,7 @@ export class HeaterCommands extends BoardCommands {
                 let hstatus = sys.board.valueMaps.heatStatus.getName(body.heatStatus);
                 let mode = sys.board.valueMaps.heatModes.getName(body.heatMode);
                 let heatNote: string = undefined;
-                let solarCheckTemp: number = undefined, solarCheckTime: string = undefined;
+                let solarCheckTemp: number = undefined, solarCheckTime: string = undefined, solarChecking: boolean = undefined;
                 if (!body.isOn) solarBodyOnAt.delete(body.id);
                 else if (!solarBodyOnAt.has(body.id)) solarBodyOnAt.set(body.id, new Date().getTime());
                 if (body.isOn) {
@@ -4568,6 +4568,11 @@ export class HeaterCommands extends BoardCommands {
                                                     const since = `water ${chg(t.water, body.temp)}, collector ${chg(t.solar, state.temps.solar)} since the pump sped up`;
                                                     if (leftMs > 0) {
                                                         valveWait = true;
+                                                        // The temperature shown does not follow the reading while the check is under way: it stays the reading from before the pump sped
+                                                        // up, with that time, and changes when the check is over.
+                                                        solarCheckTemp = Math.round(t.water * 10) / 10;
+                                                        solarCheckTime = new Date(t.at).toISOString();
+                                                        solarChecking = true;
                                                         heatNote = `Solar valve opens in ${Math.ceil(leftMs / 1000)} s (the pump runs at its solar speed first)`;
                                                         if (nowMs - t.noteAt >= 30000) {
                                                             t.noteAt = nowMs;
@@ -4585,6 +4590,8 @@ export class HeaterCommands extends BoardCommands {
                                                     else {
                                                         solarValveTrial.delete(heater.id);
                                                         solarValveFailed.set(heater.id, { at: nowMs, water: body.temp, heatSet: cfgBody.heatSetpoint, coolSet: cfgBody.coolSetpoint });
+                                                        solarCheckTemp = Math.round(body.temp * 10) / 10;
+                                                        solarCheckTime = new Date(nowMs).toISOString();
                                                         const retryMs = Math.max(solarCheckPeriodMs(), settleMs, valveMs);
                                                         const secs = Math.round((nowMs - t.at) / 1000);
                                                         const why = (heater.coolingEnabled && state.heliotrope.isNight) ? 'the readings at the solar pump speed no longer support heating or nocturnal cooling'
@@ -4912,6 +4919,7 @@ export class HeaterCommands extends BoardCommands {
                 body.heatNote = heatNote;
                 body.solarCheckTemp = solarCheckTemp;
                 body.solarCheckTime = solarCheckTime;
+                body.solarChecking = solarChecking;
                 if (sys.controllerType === ControllerType.Nixie && !isHeating && !isCooling && hstatus !== 'cooldown') body.heatStatus = sys.board.valueMaps.heatStatus.getValue('off');
                 //else if (sys.controllerType === ControllerType.Nixie) body.heatStatus = 0;
             }
