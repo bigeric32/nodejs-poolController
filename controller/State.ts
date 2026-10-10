@@ -406,7 +406,7 @@ export class State implements IState {
             for (let i = 0; i < sdata.heaters.length; i++) { sdata.heaters[i].prevHeaterOffTemp = undefined; sdata.heaters[i].targetStop = undefined; }
         }
         // The note on why solar is waiting belongs to the process that wrote it.
-        if (typeof sdata.temps !== 'undefined' && typeof sdata.temps.bodies !== 'undefined') for (let i = 0; i < sdata.temps.bodies.length; i++) sdata.temps.bodies[i].heatNote = undefined;
+        if (typeof sdata.temps !== 'undefined' && typeof sdata.temps.bodies !== 'undefined') for (let i = 0; i < sdata.temps.bodies.length; i++) { sdata.temps.bodies[i].heatNote = undefined; sdata.temps.bodies[i].solarCheckTemp = undefined; sdata.temps.bodies[i].solarCheckTime = undefined; }
         var self = this;
         let pnlTime = typeof sdata.time !== 'undefined' && sdata.time !== '' ? new Date(sdata.time) : new Date();
         if (isNaN(pnlTime.getTime())) pnlTime = new Date();
@@ -1793,7 +1793,13 @@ export class BodyTempState extends EqState {
     public get name(): string { return this.data.name; }
     public set name(val: string) { this.setDataVal('name', val); }
     public get temp(): number { return this.data.temp; }
-    public set temp(val: number) { this.setDataVal('temp', val); }
+    public set temp(val: number) {
+        this.setDataVal('temp', val);
+        // When the temperature was last fed, to the minute (so it changes, and is sent out, once a minute at most). A dashboard shows it as the
+        // time the reading is as of: a body that is off, or a feed that has stopped, keeps its old time.
+        if (typeof val === 'number' && !isNaN(val)) { const fed = new Date(); fed.setSeconds(0, 0); this.setDataVal('tempTime', fed.toISOString()); }
+    }
+    public get tempTime(): string { return this.data.tempTime; }
     public get type(): number { return typeof (this.data.type) !== 'undefined' ? this.data.type.val : -1; }
     public set type(val: number) {
         if (this.type !== val) {
@@ -1813,6 +1819,14 @@ export class BodyTempState extends EqState {
     // A short note on why solar heating is waiting (a delay, a guard, a hysteresis), shown on the dashboard. Set by HeaterCommands.syncHeaterStates().
     public get heatNote(): string { return this.data.heatNote; }
     public set heatNote(val: string) { this.setDataVal('heatNote', val === '' ? undefined : val); }
+    // What the water read at the solar pump speed when the valve delay check last turned a start down, and when that was, while the solar check
+    // period is running. The reading at the normal pump speed can be lower (the flow rate changes what reaches the sensor), so this is the
+    // temperature the solar decision went by. A dashboard shows it, marked and with its time, in place of the live reading. Both are undefined
+    // when no check period is running.
+    public get solarCheckTemp(): number { return this.data.solarCheckTemp; }
+    public set solarCheckTemp(val: number) { this.setDataVal('solarCheckTemp', val); }
+    public get solarCheckTime(): string { return this.data.solarCheckTime; }
+    public set solarCheckTime(val: string) { this.setDataVal('solarCheckTime', val); }
     public get heatStatus(): number { return typeof (this.data.heatStatus) !== 'undefined' ? this.data.heatStatus.val : -1; }
     public set heatStatus(val: number) {
         if (this.heatStatus !== val) {
