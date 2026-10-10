@@ -1290,7 +1290,7 @@ export class ConfigRoute {
         // The solar decision's settings (config.json controller.solar), shown on the dashPanel heater page. They apply at once.
         app.get('/config/solar/settings', (req, res) => {
             const c = config.getSection('controller.solar');
-            return res.status(200).send({ settleMinutes: c.settleMinutes, hysteresis: c.hysteresis, valveDelaySeconds: c.valveDelaySeconds, checkPeriodMinutes: c.checkPeriodMinutes });
+            return res.status(200).send({ settleMinutes: c.settleMinutes, hysteresis: c.hysteresis, valveDelaySeconds: c.valveDelaySeconds, checkPeriodMinutes: c.checkPeriodMinutes, returnSensor: c.returnSensor || '' });
         });
         app.put('/config/solar/settings', (req, res) => {
             const out: any = config.getSection('controller.solar');
@@ -1301,8 +1301,13 @@ export class ConfigRoute {
                 if (!isFinite(v) || v < 0 || v > limits[name]) return res.status(400).send({ message: `${name} must be a number from 0 to ${limits[name]}` });
                 out[name] = v;
             }
+            // The input the solar return sensor is on, or '' for none.
+            if (typeof req.body.returnSensor !== 'undefined') {
+                if (['', 'solarSensor2', 'solarSensor3', 'solarSensor4'].indexOf(req.body.returnSensor) < 0) return res.status(400).send({ message: `returnSensor must be solarSensor2, solarSensor3, solarSensor4 or empty` });
+                out.returnSensor = req.body.returnSensor;
+            }
             config.setSection('controller.solar', out);
-            return res.status(200).send({ settleMinutes: out.settleMinutes, hysteresis: out.hysteresis, valveDelaySeconds: out.valveDelaySeconds, checkPeriodMinutes: out.checkPeriodMinutes });
+            return res.status(200).send({ settleMinutes: out.settleMinutes, hysteresis: out.hysteresis, valveDelaySeconds: out.valveDelaySeconds, checkPeriodMinutes: out.checkPeriodMinutes, returnSensor: out.returnSensor || '' });
         });
         app.put('/app/config/reload', (req, res) => {
             sys.board.reloadConfig();

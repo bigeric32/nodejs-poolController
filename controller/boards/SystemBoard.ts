@@ -1459,8 +1459,15 @@ export class SystemCommands extends BoardCommands {
             }
             else {
                 sensors.push({ name: 'Water Sensor', temp: state.temps.waterSensor1, tempAdj: sys.equipment.tempSensors.getCalibration('water1'), binding: 'waterTempAdj1' });
-                if (sys.board.heaters.isSolarInstalled())
+                if (sys.board.heaters.isSolarInstalled()) {
                     sensors.push({ name: 'Solar Sensor', temp: state.temps.solar, tempAdj: sys.equipment.tempSensors.getCalibration('solar1'), binding: 'solarTempAdj1' });
+                    // The solar return sensor (controller.solar.returnSensor), when one is named, is calibrated like the others.
+                    const ret = solarReturnSensor();
+                    if (typeof ret !== 'undefined') {
+                        const n = ret.charAt(ret.length - 1);
+                        sensors.push({ name: 'Solar Return Sensor', temp: state.temps[ret], tempAdj: sys.equipment.tempSensors.getCalibration(`solar${n}`), binding: `solarTempAdj${n}` });
+                    }
+                }
             }
         }
         return sensors;
@@ -4020,6 +4027,27 @@ const solarValveFailed: Map<number, { at: number; water: number; heatSet: number
 // is needed after the valve opens too. Per heater: when solar turned on, the readings then, and when a line was last logged.
 const solarStartWatch: Map<number, { at: number; water: number; solar: number; noteAt: number }> = new Map<number, { at: number; water: number; solar: number; noteAt: number }>();
 const SOLAR_START_WATCH_MS = 10 * 60 * 1000;
+// controller.solar.returnSensor in config.json ('' by default; 'solarSensor2', 'solarSensor3' or 'solarSensor4'): the temperature input that sits on
+// the pipe coming back from the solar collector. The collector sensor is usually in the air beside the panels; the return sensor reads what solar
+// is actually delivering. For now it is shown and logged, with its gain over the water going in, and takes no part in the decision.
+const SOLAR_RETURN_SENSORS = ['solarSensor2', 'solarSensor3', 'solarSensor4'];
+function solarReturnSensor(): string {
+    try {
+        const slot = config.getSection('controller.solar').returnSensor;
+        return SOLAR_RETURN_SENSORS.indexOf(slot) >= 0 ? slot : undefined;
+    } catch (err) { return undefined; }
+}
+// The return reading, or undefined when there is no return sensor or it is not reading: nothing has arrived, the value is exactly 0 (an input with
+// nothing converting it), or it is further from the water than any collector could put it (an input with no probe on it).
+function solarReturnTemp(waterTemp: number): number {
+    const slot = solarReturnSensor();
+    if (typeof slot === 'undefined') return undefined;
+    const v = state.temps[slot];
+    if (typeof v !== 'number' || !isFinite(v) || v === 0) return undefined;
+    const far = sys.board.valueMaps.tempUnits.getName(state.temps.units) === 'C' ? 35 : 60;
+    if (typeof waterTemp === 'number' && isFinite(waterTemp) && Math.abs(v - waterTemp) > far) return undefined;
+    return v;
+}
 // The water reading from the last pass on which solar was running, per heater, and when that was. After solar turns off the pump goes back to its
 // normal speed and the sensor reads lower, so a dashboard is given this reading (marked, with its time) in place of the live one until the next
 // valve delay check replaces it, or for the solar check period at most.
@@ -4392,6 +4420,7 @@ export class HeaterCommands extends BoardCommands {
                 let mode = sys.board.valueMaps.heatModes.getName(body.heatMode);
                 let heatNote: string = undefined;
                 let solarCheckTemp: number = undefined, solarCheckTime: string = undefined, solarChecking: boolean = undefined;
+                let solarReturn: number = undefined, solarGain: number = undefined;
                 if (!body.isOn) solarBodyOnAt.delete(body.id);
                 else if (!solarBodyOnAt.has(body.id)) solarBodyOnAt.set(body.id, new Date().getTime());
                 // While a pump is priming (its status says so) the readings are not the ones solar runs on, so the settle delay starts when priming is over.
@@ -4659,6 +4688,14 @@ export class HeaterCommands extends BoardCommands {
                                                     }
                                                 }
                                             }
+                                            // The return sensor: its reading whenever it has one, and its gain over the water going in while solar is running.
+                                            {
+                                                const ret = solarReturnTemp(body.temp);
+                                                if (typeof ret !== 'undefined') {
+                                                    solarReturn = Math.round(ret * 10) / 10;
+                                                    if (isOn && hState.isOn) solarGain = Math.round((ret - body.temp) * 10) / 10;
+                                                }
+                                            }
                                             if (isOn) solarOffNoted.delete(heater.id);
                                             if (isOn && !hState.isOn) hState.targetStop = undefined;
                                             if (!isOn) solarStartWatch.delete(heater.id);
@@ -4672,7 +4709,7 @@ export class HeaterCommands extends BoardCommands {
                                                 else if (typeof w !== 'undefined' && nowMs - w.at <= SOLAR_START_WATCH_MS && nowMs - w.noteAt >= 30000) {
                                                     w.noteAt = nowMs;
                                                     const d = (from: number, to: number) => `${to - from >= 0 ? '+' : ''}${Math.round((to - from) * 100) / 100}`;
-                                                    logger.verbose(`Solar ${heater.name} (${body.name}): ${Math.round((nowMs - w.at) / 1000)} s after turning on: water ${Math.round(body.temp * 100) / 100} (${d(w.water, body.temp)}), collector ${Math.round(state.temps.solar * 10) / 10} (${d(w.solar, state.temps.solar)}).`);
+                                                    logger.verbose(`Solar ${heater.name} (${body.name}): ${Math.round((nowMs - w.at) / 1000)} s after turning on: water ${Math.round(body.temp * 100) / 100} (${d(w.water, body.temp)}), collector ${Math.round(state.temps.solar * 10) / 10} (${d(w.solar, state.temps.solar)})${typeof solarReturn !== 'undefined' ? `, return ${solarReturn} (${solarReturn - body.temp >= 0 ? '+' : ''}${Math.round((solarReturn - body.temp) * 10) / 10} over the water)` : ''}.`);
                                                 }
                                             }
                                             if (hstate.isOn && !isOn) {
@@ -4688,6 +4725,7 @@ export class HeaterCommands extends BoardCommands {
                                                 const restartAt = hState.isCooling ? (cfgBody.coolSetpoint + heater.stopTempDelta + hysteresis) : (cfgBody.heatSetpoint - hysteresis);
                                                 const firstOffPass = !solarOffNoted.has(heater.id);
                                                 solarOffNoted.add(heater.id);
+                                                if (firstOffPass && typeof solarReturn !== 'undefined') logger.solar(`Solar ${heater.name} (${body.name}): as it turned off the return read ${solarReturn}, ${Math.abs(Math.round((solarReturn - body.temp) * 10) / 10)} ${solarReturn - body.temp >= 0 ? 'above' : 'below'} the water at ${Math.round(body.temp * 100) / 100}.`);
                                                 if (logger.solarExplain && firstOffPass) logger.solar(`Solar ${heater.name} (${body.name}) turned off because ${collectorStop ? 'the collector lead over the water fell to the run delta ' + heater.stopTempDelta + ' (reheat guard set: the collector must rise ' + heater.startTempDelta + ' above ' + (Math.round(solarT * 10) / 10) + ')' : 'the water was ' + (hState.isCooling ? 'at or below ' : 'at or above ') + stopAt + (stopFar ? ' by ' + Math.max(hysteresis, 1) + ' or more, so there was no wait' : ' for ' + Math.round(settleMs / 1000) + ' s') + ' (no reheat guard set; solar restarts when the water is ' + (hState.isCooling ? 'above ' : 'below ') + restartAt + ')'}.`);
                                             } // 6  
                                             // With log.solar.explain on, the readings while a settle delay is holding the decision, once a minute, and when it ends.
@@ -4987,6 +5025,8 @@ export class HeaterCommands extends BoardCommands {
                 body.solarCheckTemp = solarCheckTemp;
                 body.solarCheckTime = solarCheckTime;
                 body.solarChecking = solarChecking;
+                body.solarReturnTemp = solarReturn;
+                body.solarGain = solarGain;
                 if (sys.controllerType === ControllerType.Nixie && !isHeating && !isCooling && hstatus !== 'cooldown') body.heatStatus = sys.board.valueMaps.heatStatus.getValue('off');
                 //else if (sys.controllerType === ControllerType.Nixie) body.heatStatus = 0;
             }

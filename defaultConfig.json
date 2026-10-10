@@ -41,7 +41,8 @@
       "settleMinutes": 5,
       "hysteresis": 1,
       "valveDelaySeconds": 120,
-      "checkPeriodMinutes": 60
+      "checkPeriodMinutes": 60,
+      "returnSensor": ""
     },
     "txDelays": {
       "idleBeforeTxMs": 0,
