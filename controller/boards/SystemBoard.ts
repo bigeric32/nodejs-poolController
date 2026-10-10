@@ -4384,6 +4384,8 @@ export class HeaterCommands extends BoardCommands {
                 let solarCheckTemp: number = undefined, solarCheckTime: string = undefined, solarChecking: boolean = undefined;
                 if (!body.isOn) solarBodyOnAt.delete(body.id);
                 else if (!solarBodyOnAt.has(body.id)) solarBodyOnAt.set(body.id, new Date().getTime());
+                // While a pump is priming (its status says so) the readings are not the ones solar runs on, so the settle delay starts when priming is over.
+                else if (typeof state.pumps.find(elem => elem.status > 0 && sys.board.valueMaps.pumpStatus.transform(elem.status).name === 'priming') !== 'undefined') solarBodyOnAt.set(body.id, new Date().getTime());
                 if (body.isOn) {
                     if (typeof body.temp === 'undefined' && heaters.length > 0) {
                         if (!HeaterCommands._warnedNoTemp.has(body.id)) {
@@ -4574,7 +4576,7 @@ export class HeaterCommands extends BoardCommands {
                                                         solarCheckTime = new Date(t.at).toISOString();
                                                         solarChecking = true;
                                                         if (nowMs - t.noteAt >= 30000) logger.verbose(`Solar ${body.name}: valve delay check, ${Math.ceil(leftMs / 1000)} s left: the temperature shown is still ${solarCheckTemp}; the sensor reads ${Math.round(body.temp * 100) / 100} at the solar pump speed.`);
-                                                        heatNote = `Solar valve opens in ${Math.ceil(leftMs / 1000)} s (the pump runs at its solar speed first)`;
+                                                        heatNote = `Solar check in ${Math.ceil(leftMs / 1000)} s (the pump runs at its solar speed first)`;
                                                         if (nowMs - t.noteAt >= 30000) {
                                                             t.noteAt = nowMs;
                                                             logger.solar(`Solar ${heater.name} (${body.name}): valve delay, ${Math.ceil(leftMs / 1000)} s left and ${ok ? 'still worthwhile' : 'not worthwhile on these readings (the start is judged when the delay is over)'} (${since}): ${lead}.`);
